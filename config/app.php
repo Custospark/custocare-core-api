@@ -27,6 +27,11 @@ return [
     */
 
     'env' => env('APP_ENV', 'production'),
+    /**
+     * App versioning
+     */
+    'version' => env('APP_VERSION', '0.0.0'),
+
 
     /*
     |--------------------------------------------------------------------------

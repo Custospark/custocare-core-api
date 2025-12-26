@@ -52,6 +52,8 @@ return new class extends Migration
             $table->string('national_id_hash', 128)->unique()->comment('SHA-256 hashed national ID for privacy');
             $table->string('national_id_encrypted', 512)->comment('AES-256 encrypted national ID');
             $table->string('national_id_country_code', 3)->index();
+            $table->string('national_id_country_code', 3)->index();
+            $table->string('national_id_country_code', 3)->index();
             
             // Identity verification
             $table->enum('identity_state', ['pending', 'verified', 'suspended', 'archived'])->default('pending')->index();
@@ -69,6 +71,23 @@ return new class extends Migration
             $table->string('email_hash', 128)->nullable()->index();
             $table->string('phone_encrypted', 512)->nullable();
             $table->string('phone_hash', 128)->nullable()->index();
+            //Profile.
+            $table->string('first_name')->nullable();
+            $table->string('last_name')->nullable();
+            $table->string('title')->nullable();
+            $table->string('display_name')->nullable(); // optional
+            
+            $table->date('dob')->nullable();
+            $table->enum('gender', ['male', 'female', 'other'])->nullable();
+            
+            $table->string('address_line1')->nullable();
+            $table->string('address_line2')->nullable();
+            $table->string('city')->nullable();
+            $table->string('state')->nullable();
+            $table->string('country')->nullable();
+            $table->string('postal_code')->nullable();
+            
+            $table->json('metadata')->nullable(); // flexible extension
             
             // Account management
             $table->string('password_hash', 255)->nullable()->comment('For patient portal access');

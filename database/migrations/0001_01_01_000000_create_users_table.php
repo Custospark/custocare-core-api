@@ -66,7 +66,7 @@ return new class extends Migration
             $table->index(['created_at', 'identity_state']);
             $table->index('created_from_facility_id');
         });
-
+                   
         Schema::create('password_reset_tokens', function (Blueprint $table) {
             $table->string('email')->primary();
             $table->string('token');

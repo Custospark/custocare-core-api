@@ -5,35 +5,167 @@ declare(strict_types=1);
 namespace App\Services\User;
 
 use App\Models\User;
-use App\Repositories\User\Contracts\UserRepositoryInterface;
+use App\Repositories\Contracts\UserRepositoryInterface;
+use App\Repositories\User\UserRepository;
 use App\Services\User\Contracts\UserServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Str;
+use ParagonIE\ConstantTime\Base32;
+use PragmaRX\Google2FA\Google2FA;
 
 class UserService implements UserServiceInterface
 {
     /**
-     * Constructor.
+     * Maximum failed login attempts before lockout.
+     */
+    private const MAX_FAILED_ATTEMPTS = 5;
+
+    /**
+     * Account lockout duration in minutes.
+     */
+    private const LOCKOUT_DURATION = 30;
+
+    /**
+     * Create a new service instance.
      *
      * @param UserRepositoryInterface $userRepository
      */
-    public function __construct(
-        private readonly UserRepositoryInterface $userRepository
-    ) {}
+   protected UserRepository $userRepository;
+
+        public function __construct(UserRepository $userRepository)
+        {
+            $this->userRepository = $userRepository;
+        }
+
+    /**
+     * Register a new user.
+     *
+     * @param array $data
+     * @return User
+     * @throws \Exception
+     */
+    public function register(array $data): User
+    {
+        return DB::transaction(function () use ($data) {
+            // Encrypt sensitive data before storing
+            $data['global_user_uuid'] = Str::uuid()->toString();
+            
+            // Hash national ID for lookup (not reversible)
+            if (isset($data['national_id'])) {
+                $data['national_id_hash'] = hash('sha256', $data['national_id']);
+                // In production, you'd use Laravel's encryption here
+                $data['national_id_encrypted'] = encrypt($data['national_id']);
+                unset($data['national_id']);
+            }
+
+            // Hash email for lookup
+            if (isset($data['email'])) {
+                $data['email_hash'] = hash('sha256', strtolower($data['email']));
+                $data['email_encrypted'] = encrypt($data['email']);
+                unset($data['email']);
+            }
+
+            // Hash phone for lookup
+            if (isset($data['phone'])) {
+                $data['phone_hash'] = hash('sha256', $data['phone']);
+                $data['phone_encrypted'] = encrypt($data['phone']);
+                unset($data['phone']);
+            }
+
+            // Hash password
+            if (isset($data['password'])) {
+                $data['password_hash'] = Hash::make($data['password']);
+                $data['password_changed_at'] = now();
+                unset($data['password']);
+            }
+
+            // Set default values
+            $data['identity_state'] = 'pending';
+            $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
+
+            return $this->userRepository->create($data);
+        });
+    }
+
+    /**
+     * Authenticate user login.
+     *
+     * @param array $credentials
+     * @param string $ip
+     * @param string $userAgent
+     * @return array
+     * @throws \Exception
+     */
+    public function login(array $credentials, string $ip, string $userAgent): array
+    {
+        // Find user by email hash
+        $emailHash = hash('sha256', strtolower($credentials['email']));
+        $user = $this->userRepository->findByEmailHash($emailHash);
+
+        if (!$user) {
+            throw new \Exception('Invalid credentials', 401);
+        }
+
+        // Check if account is locked
+        if ($user->isAccountLocked()) {
+            throw new \Exception('Account is locked. Please try again later.', 423);
+        }
+
+        // Verify password
+        if (!Hash::check($credentials['password'], $user->password_hash)) {
+            $this->userRepository->incrementFailedAttempts($user);
+
+            // Lock account if max attempts reached
+            if ($user->failed_login_attempts >= self::MAX_FAILED_ATTEMPTS) {
+                $lockUntil = Carbon::now()->addMinutes(self::LOCKOUT_DURATION);
+                $this->userRepository->lockAccount($user, $lockUntil);
+                throw new \Exception('Account locked due to too many failed attempts.', 423);
+            }
+
+            throw new \Exception('Invalid credentials', 401);
+        }
+
+        // Reset failed attempts on successful login
+        $this->userRepository->resetFailedAttempts($user);
+
+        // Update last login info
+        $this->userRepository->updateLastLogin($user, $ip, $userAgent);
+
+        // Generate token
+        $token = $user->createToken('auth-token')->plainTextToken;
+
+        return [
+            'user' => $user,
+            'token' => $token,
+            'requires_mfa' => $user->mfa_enabled,
+        ];
+    }
+
+    /**
+     * Logout user.
+     *
+     * @param User $user
+     * @return bool
+     */
+    public function logout(User $user): bool
+    {
+        $user->tokens()->delete();
+        return true;
+    }
 
     /**
      * Get all users with pagination.
      *
-     * @param int $perPage
      * @param array $filters
+     * @param int $perPage
      * @return LengthAwarePaginator
      */
-    public function getAllUsers(int $perPage = 15, array $filters = []): LengthAwarePaginator
+    public function getAllUsers(array $filters = [], int $perPage = 20): LengthAwarePaginator
     {
-        return $this->userRepository->paginate($perPage, $filters);
+        return $this->userRepository->getAllPaginated($filters, $perPage);
     }
 
     /**
@@ -41,14 +173,14 @@ class UserService implements UserServiceInterface
      *
      * @param int $id
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \Exception
      */
     public function getUserById(int $id): User
     {
-        $user = $this->userRepository->find($id);
+        $user = $this->userRepository->findById($id);
 
         if (!$user) {
-            throw new \Illuminate\Database\Eloquent\ModelNotFoundException("User with ID {$id} not found.");
+            throw new \Exception('User not found', 404);
         }
 
         return $user;
@@ -59,53 +191,28 @@ class UserService implements UserServiceInterface
      *
      * @param string $uuid
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \Exception
      */
     public function getUserByUuid(string $uuid): User
     {
         $user = $this->userRepository->findByUuid($uuid);
 
         if (!$user) {
-            throw new \Illuminate\Database\Eloquent\ModelNotFoundException("User with UUID {$uuid} not found.");
+            throw new \Exception('User not found', 404);
         }
 
         return $user;
     }
 
     /**
-     * Create a new user.
+     * Create a new user (admin function).
      *
      * @param array $data
      * @return User
-     * @throws ValidationException
      */
     public function createUser(array $data): User
     {
-        // Validate input data
-        $validator = Validator::make($data, [
-            'national_id_hash' => 'required|string|max:128|unique:users',
-            'national_id_encrypted' => 'required|string|max:512',
-            'national_id_country_code' => 'required|string|size:3',
-            'data_residency_region' => 'required|string|max:10',
-            'allowed_processing_regions' => 'nullable|array',
-            'created_from_facility_id' => 'nullable|integer',
-        ]);
-
-        if ($validator->fails()) {
-            throw new ValidationException($validator);
-        }
-
-        // Generate UUID if not provided
-        if (!isset($data['global_user_uuid'])) {
-            $data['global_user_uuid'] = \Illuminate\Support\Str::uuid()->toString();
-        }
-
-        // Set default identity state
-        if (!isset($data['identity_state'])) {
-            $data['identity_state'] = User::IDENTITY_STATE_PENDING;
-        }
-
-        return $this->userRepository->create($data);
+        return $this->register($data);
     }
 
     /**
@@ -114,40 +221,62 @@ class UserService implements UserServiceInterface
      * @param int $id
      * @param array $data
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \Exception
      */
     public function updateUser(int $id, array $data): User
     {
         $user = $this->getUserById($id);
 
-        // Validate update data
-        $validator = Validator::make($data, [
-            'national_id_hash' => 'sometimes|string|max:128|unique:users,national_id_hash,' . $id,
-            'data_residency_region' => 'sometimes|string|max:10',
-            'allowed_processing_regions' => 'nullable|array',
-            'identity_state' => 'sometimes|in:pending,verified,suspended,archived',
-            'email_hash' => 'nullable|string|max:128|unique:users,email_hash,' . $id,
-            'phone_hash' => 'nullable|string|max:128|unique:users,phone_hash,' . $id,
-        ]);
-
-        if ($validator->fails()) {
-            throw new ValidationException($validator);
+        // Handle email update
+        if (isset($data['email'])) {
+            $data['email_hash'] = hash('sha256', strtolower($data['email']));
+            $data['email_encrypted'] = encrypt($data['email']);
+            unset($data['email']);
         }
 
-        return $this->userRepository->update($user, $data);
+        // Handle phone update
+        if (isset($data['phone'])) {
+            $data['phone_hash'] = hash('sha256', $data['phone']);
+            $data['phone_encrypted'] = encrypt($data['phone']);
+            unset($data['phone']);
+        }
+
+        $this->userRepository->update($user, $data);
+
+        return $user->fresh();
     }
 
     /**
      * Delete a user (soft delete).
      *
      * @param int $id
-     * @return void
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @return bool
+     * @throws \Exception
      */
-    public function deleteUser(int $id): void
+    public function deleteUser(int $id): bool
     {
         $user = $this->getUserById($id);
-        $this->userRepository->delete($user);
+        return $this->userRepository->delete($user);
+    }
+
+    /**
+     * Restore a soft-deleted user.
+     *
+     * @param int $id
+     * @return User
+     * @throws \Exception
+     */
+    public function restoreUser(int $id): User
+    {
+        $user = User::withTrashed()->find($id);
+
+        if (!$user) {
+            throw new \Exception('User not found', 404);
+        }
+
+        $this->userRepository->restore($user);
+
+        return $user->fresh();
     }
 
     /**
@@ -157,141 +286,113 @@ class UserService implements UserServiceInterface
      * @param int $staffId
      * @param string $method
      * @return User
+     * @throws \Exception
      */
     public function verifyIdentity(int $userId, int $staffId, string $method): User
     {
         $user = $this->getUserById($userId);
 
-        $verificationData = [
-            'identity_state' => User::IDENTITY_STATE_VERIFIED,
+        $this->userRepository->update($user, [
+            'identity_state' => 'verified',
+            'identity_verified_at' => now(),
             'identity_verification_method' => $method,
             'identity_verified_by_staff_id' => $staffId,
-        ];
-
-        return $this->userRepository->updateIdentityVerification($user, $verificationData);
-    }
-
-    /**
-     * Suspend user.
-     *
-     * @param int $userId
-     * @return User
-     */
-    public function suspendUser(int $userId): User
-    {
-        $user = $this->getUserById($userId);
-        return $this->userRepository->update($user, [
-            'identity_state' => User::IDENTITY_STATE_SUSPENDED,
         ]);
+
+        return $user->fresh();
     }
 
     /**
-     * Restore suspended user.
+     * Update user password.
      *
      * @param int $userId
-     * @return User
+     * @param string $newPassword
+     * @param string|null $currentPassword
+     * @return bool
+     * @throws \Exception
      */
-    public function restoreUser(int $userId): User
-    {
-        $user = $this->getUserById($userId);
-        return $this->userRepository->update($user, [
-            'identity_state' => User::IDENTITY_STATE_VERIFIED,
-        ]);
-    }
-
-    /**
-     * Archive user.
-     *
-     * @param int $userId
-     * @return User
-     */
-    public function archiveUser(int $userId): User
-    {
-        $user = $this->getUserById($userId);
-        return $this->userRepository->update($user, [
-            'identity_state' => User::IDENTITY_STATE_ARCHIVED,
-        ]);
-    }
-
-    /**
-     * Update password.
-     *
-     * @param int $userId
-     * @param string $password
-     * @return User
-     */
-    public function updatePassword(int $userId, string $password): User
+    public function updatePassword(int $userId, string $newPassword, ?string $currentPassword = null): bool
     {
         $user = $this->getUserById($userId);
 
+        // Verify current password if provided (for self-password change)
+        if ($currentPassword && !Hash::check($currentPassword, $user->password_hash)) {
+            throw new \Exception('Current password is incorrect', 401);
+        }
+
         return $this->userRepository->update($user, [
-            'password_hash' => Hash::make($password),
+            'password_hash' => Hash::make($newPassword),
             'password_changed_at' => now(),
             'requires_password_change' => false,
         ]);
     }
 
     /**
-     * Record successful login.
+     * Enable MFA for user.
      *
-     * @param User $user
-     * @param string $ip
-     * @param string $userAgent
-     * @return User
+     * @param int $userId
+     * @return array
+     * @throws \Exception
      */
-    public function recordSuccessfulLogin(User $user, string $ip, string $userAgent): User
+    public function enableMfa(int $userId): array
     {
-        $data = [
-            'last_login_at' => now(),
-            'last_login_ip' => $ip,
-            'last_login_user_agent' => $userAgent,
-            'failed_login_attempts' => 0,
-            'account_locked_until' => null,
-        ];
+        $user = $this->getUserById($userId);
 
-        return $this->userRepository->update($user, $data);
+        $google2fa = new Google2FA();
+        $secret = $google2fa->generateSecretKey();
+        $qrCodeUrl = $google2fa->getQRCodeUrl(
+            config('app.name'),
+            $user->email_hash,
+            $secret
+        );
+
+        $this->userRepository->update($user, [
+            'mfa_enabled' => true,
+            'mfa_secret_encrypted' => encrypt($secret),
+        ]);
+
+        return [
+            'secret' => $secret,
+            'qr_code_url' => $qrCodeUrl,
+        ];
     }
 
     /**
-     * Record failed login attempt.
+     * Disable MFA for user.
      *
-     * @param User $user
-     * @return User
+     * @param int $userId
+     * @return bool
+     * @throws \Exception
      */
-    public function recordFailedLoginAttempt(User $user): User
+    public function disableMfa(int $userId): bool
     {
-        $failedAttempts = $user->failed_login_attempts + 1;
-        
-        $data = [
-            'failed_login_attempts' => $failedAttempts,
-        ];
+        $user = $this->getUserById($userId);
 
-        // Lock account after 5 failed attempts for 15 minutes
-        if ($failedAttempts >= 5) {
-            $data['account_locked_until'] = now()->addMinutes(15);
+        return $this->userRepository->update($user, [
+            'mfa_enabled' => false,
+            'mfa_secret_encrypted' => null,
+        ]);
+    }
+
+    /**
+     * Validate MFA code.
+     *
+     * @param int $userId
+     * @param string $code
+     * @return bool
+     * @throws \Exception
+     */
+    public function validateMfa(int $userId, string $code): bool
+    {
+        $user = $this->getUserById($userId);
+
+        if (!$user->mfa_enabled || !$user->mfa_secret_encrypted) {
+            throw new \Exception('MFA is not enabled for this user', 400);
         }
 
-        return $this->userRepository->update($user, $data);
-    }
+        $secret = decrypt($user->mfa_secret_encrypted);
+        $google2fa = new Google2FA();
 
-    /**
-     * Get users by data residency region.
-     *
-     * @param string $region
-     * @return Collection
-     */
-    public function getUsersByDataResidencyRegion(string $region): Collection
-    {
-        return $this->userRepository->getByDataResidencyRegion($region);
-    }
-
-    /**
-     * Get users pending identity verification.
-     *
-     * @return Collection
-     */
-    public function getPendingIdentityVerificationUsers(): Collection
-    {
-        return $this->userRepository->findByIdentityState(User::IDENTITY_STATE_PENDING);
+        return $google2fa->verifyKey($secret, $code);
     }
 }

@@ -11,15 +11,15 @@ use Illuminate\Database\Eloquent\Collection;
 interface UserRepositoryInterface
 {
     /**
-     * Find a user by ID.
+     * Find user by ID.
      *
      * @param int $id
      * @return User|null
      */
-    public function find(int $id): ?User;
+    public function findById(int $id): ?User;
 
     /**
-     * Find a user by global UUID.
+     * Find user by global UUID.
      *
      * @param string $uuid
      * @return User|null
@@ -27,7 +27,15 @@ interface UserRepositoryInterface
     public function findByUuid(string $uuid): ?User;
 
     /**
-     * Find a user by national ID hash.
+     * Find user by email hash.
+     *
+     * @param string $emailHash
+     * @return User|null
+     */
+    public function findByEmailHash(string $emailHash): ?User;
+
+    /**
+     * Find user by national ID hash.
      *
      * @param string $nationalIdHash
      * @return User|null
@@ -35,22 +43,13 @@ interface UserRepositoryInterface
     public function findByNationalIdHash(string $nationalIdHash): ?User;
 
     /**
-     * Find users by identity state.
-     *
-     * @param string $identityState
-     * @param array $relations
-     * @return Collection
-     */
-    public function findByIdentityState(string $identityState, array $relations = []): Collection;
-
-    /**
      * Get all users with pagination.
      *
-     * @param int $perPage
      * @param array $filters
+     * @param int $perPage
      * @return LengthAwarePaginator
      */
-    public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator;
+    public function getAllPaginated(array $filters = [], int $perPage = 20): LengthAwarePaginator;
 
     /**
      * Create a new user.
@@ -65,9 +64,9 @@ interface UserRepositoryInterface
      *
      * @param User $user
      * @param array $data
-     * @return User
+     * @return bool
      */
-    public function update(User $user, array $data): User;
+    public function update(User $user, array $data): bool;
 
     /**
      * Delete a user (soft delete).
@@ -86,43 +85,45 @@ interface UserRepositoryInterface
     public function restore(User $user): bool;
 
     /**
-     * Permanently delete a user.
+     * Update user's last login information.
+     *
+     * @param User $user
+     * @param string $ip
+     * @param string $userAgent
+     * @return bool
+     */
+    public function updateLastLogin(User $user, string $ip, string $userAgent): bool;
+
+    /**
+     * Increment failed login attempts.
      *
      * @param User $user
      * @return bool
      */
-    public function forceDelete(User $user): bool;
+    public function incrementFailedAttempts(User $user): bool;
 
     /**
-     * Update user's identity verification status.
+     * Reset failed login attempts.
      *
      * @param User $user
-     * @param array $verificationData
-     * @return User
-     */
-    public function updateIdentityVerification(User $user, array $verificationData): User;
-
-    /**
-     * Get users by data residency region.
-     *
-     * @param string $region
-     * @return Collection
-     */
-    public function getByDataResidencyRegion(string $region): Collection;
-
-    /**
-     * Check if email hash exists.
-     *
-     * @param string $emailHash
      * @return bool
      */
-    public function emailHashExists(string $emailHash): bool;
+    public function resetFailedAttempts(User $user): bool;
 
     /**
-     * Check if phone hash exists.
+     * Lock user account.
      *
-     * @param string $phoneHash
+     * @param User $user
+     * @param \DateTimeInterface $until
      * @return bool
      */
-    public function phoneHashExists(string $phoneHash): bool;
+    public function lockAccount(User $user, \DateTimeInterface $until): bool;
+
+    /**
+     * Unlock user account.
+     *
+     * @param User $user
+     * @return bool
+     */
+    public function unlockAccount(User $user): bool;
 }

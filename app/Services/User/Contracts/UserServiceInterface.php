@@ -6,25 +6,51 @@ namespace App\Services\User\Contracts;
 
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Database\Eloquent\Collection;
 
 interface UserServiceInterface
 {
     /**
+     * Register a new user.
+     *
+     * @param array $data
+     * @return User
+     */
+    public function register(array $data): User;
+
+    /**
+     * Authenticate user login.
+     *
+     * @param array $credentials
+     * @param string $ip
+     * @param string $userAgent
+     * @return array
+     * @throws \Exception
+     */
+    public function login(array $credentials, string $ip, string $userAgent): array;
+
+    /**
+     * Logout user.
+     *
+     * @param User $user
+     * @return bool
+     */
+    public function logout(User $user): bool;
+
+    /**
      * Get all users with pagination.
      *
-     * @param int $perPage
      * @param array $filters
+     * @param int $perPage
      * @return LengthAwarePaginator
      */
-    public function getAllUsers(int $perPage = 15, array $filters = []): LengthAwarePaginator;
+    public function getAllUsers(array $filters = [], int $perPage = 20): LengthAwarePaginator;
 
     /**
      * Get user by ID.
      *
      * @param int $id
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \Exception
      */
     public function getUserById(int $id): User;
 
@@ -33,16 +59,15 @@ interface UserServiceInterface
      *
      * @param string $uuid
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \Exception
      */
     public function getUserByUuid(string $uuid): User;
 
     /**
-     * Create a new user.
+     * Create a new user (admin function).
      *
      * @param array $data
      * @return User
-     * @throws \Illuminate\Validation\ValidationException
      */
     public function createUser(array $data): User;
 
@@ -52,7 +77,6 @@ interface UserServiceInterface
      * @param int $id
      * @param array $data
      * @return User
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
      */
     public function updateUser(int $id, array $data): User;
 
@@ -60,10 +84,17 @@ interface UserServiceInterface
      * Delete a user (soft delete).
      *
      * @param int $id
-     * @return void
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @return bool
      */
-    public function deleteUser(int $id): void;
+    public function deleteUser(int $id): bool;
+
+    /**
+     * Restore a soft-deleted user.
+     *
+     * @param int $id
+     * @return User
+     */
+    public function restoreUser(int $id): User;
 
     /**
      * Verify user identity.
@@ -76,68 +107,37 @@ interface UserServiceInterface
     public function verifyIdentity(int $userId, int $staffId, string $method): User;
 
     /**
-     * Suspend user.
+     * Update user password.
      *
      * @param int $userId
-     * @return User
+     * @param string $newPassword
+     * @param string|null $currentPassword
+     * @return bool
      */
-    public function suspendUser(int $userId): User;
+    public function updatePassword(int $userId, string $newPassword, ?string $currentPassword = null): bool;
 
     /**
-     * Restore suspended user.
+     * Enable MFA for user.
      *
      * @param int $userId
-     * @return User
+     * @return array
      */
-    public function restoreUser(int $userId): User;
+    public function enableMfa(int $userId): array;
 
     /**
-     * Archive user.
+     * Disable MFA for user.
      *
      * @param int $userId
-     * @return User
+     * @return bool
      */
-    public function archiveUser(int $userId): User;
+    public function disableMfa(int $userId): bool;
 
     /**
-     * Update password.
+     * Validate MFA code.
      *
      * @param int $userId
-     * @param string $password
-     * @return User
+     * @param string $code
+     * @return bool
      */
-    public function updatePassword(int $userId, string $password): User;
-
-    /**
-     * Record successful login.
-     *
-     * @param User $user
-     * @param string $ip
-     * @param string $userAgent
-     * @return User
-     */
-    public function recordSuccessfulLogin(User $user, string $ip, string $userAgent): User;
-
-    /**
-     * Record failed login attempt.
-     *
-     * @param User $user
-     * @return User
-     */
-    public function recordFailedLoginAttempt(User $user): User;
-
-    /**
-     * Get users by data residency region.
-     *
-     * @param string $region
-     * @return Collection
-     */
-    public function getUsersByDataResidencyRegion(string $region): Collection;
-
-    /**
-     * Get users pending identity verification.
-     *
-     * @return Collection
-     */
-    public function getPendingIdentityVerificationUsers(): Collection;
+    public function validateMfa(int $userId, string $code): bool;
 }

@@ -17,7 +17,11 @@ return new class extends Migration
          */
          Schema::create('users', function (Blueprint $table) {
             $table->id();
+            
+            // Global identifier
             $table->uuid('global_user_uuid')->unique()->index();
+            
+            // National ID handling (encrypted + hashed for privacy)
             $table->string('national_id_hash', 128)->unique()->comment('SHA-256 hashed national ID for privacy');
             $table->string('national_id_encrypted', 512)->comment('AES-256 encrypted national ID');
             $table->string('national_id_country_code', 3)->index();
@@ -39,7 +43,25 @@ return new class extends Migration
             $table->string('phone_encrypted', 512)->nullable();
             $table->string('phone_hash', 128)->nullable()->index();
             
-            // Account management
+            // Profile information
+            $table->string('first_name')->nullable();
+            $table->string('last_name')->nullable();
+            $table->string('title')->nullable();
+            $table->string('display_name')->nullable();
+            
+            // Personal details
+            $table->date('dob')->nullable();
+            $table->enum('gender', ['male', 'female', 'other'])->nullable();
+            
+            // Address
+            $table->string('address_line1')->nullable();
+            $table->string('address_line2')->nullable();
+            $table->string('city')->nullable();
+            $table->string('state')->nullable();
+            $table->string('country')->nullable();
+            $table->string('postal_code')->nullable();
+            
+            // Account security
             $table->string('password_hash', 255)->nullable()->comment('For patient portal access');
             $table->timestamp('password_changed_at')->nullable();
             $table->boolean('requires_password_change')->default(false);

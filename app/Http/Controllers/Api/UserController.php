@@ -8,48 +8,41 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
 use App\Http\Resources\UserResource;
-use App\Services\User\Contracts\UserServiceInterface;
+use App\Services\Contracts\UserServiceInterface;
+use App\Services\User\Contracts\UserServiceInterface as ContractsUserServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Symfony\Component\HttpFoundation\Response;
-use Illuminate\Foundation\Auth\Access\AuthorizesRequests; // for authorize()
-
 
 class UserController extends Controller
 {
-
-    use AuthorizesRequests;
-
     /**
-     * Constructor.
+     * Create a new controller instance.
      *
      * @param UserServiceInterface $userService
      */
     public function __construct(
-        private readonly UserServiceInterface $userService
-    ) {
-        $this->authorizeResource(\App\Models\User::class, 'user');
-    }
+        private readonly ContractsUserServiceInterface $userService
+    ) {}
 
     /**
-     * Display a listing of users.
+     * Display a listing of the resource.
      *
      * @param Request $request
      * @return AnonymousResourceCollection
      */
     public function index(Request $request): AnonymousResourceCollection
     {
-        $perPage = $request->input('per_page', 15);
-        $filters = $request->only(['identity_state', 'data_residency_region', 'national_id_country_code', 'search']);
+        $filters = $request->only(['identity_state', 'data_residency_region', 'search']);
+        $perPage = $request->input('per_page', 20);
 
-        $users = $this->userService->getAllUsers($perPage, $filters);
+        $users = $this->userService->getAllUsers($filters, $perPage);
 
         return UserResource::collection($users);
     }
 
     /**
-     * Store a newly created user.
+     * Store a newly created resource in storage.
      *
      * @param StoreUserRequest $request
      * @return JsonResponse
@@ -58,40 +51,43 @@ class UserController extends Controller
     {
         $user = $this->userService->createUser($request->validated());
 
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(Response::HTTP_CREATED);
+        return response()->json([
+            'message' => 'User created successfully',
+            'user' => new UserResource($user),
+        ], 201);
     }
 
     /**
-     * Display the specified user.
+     * Display the specified resource.
      *
-     * @param string $uuid
-     * @return UserResource
-     */
-    public function show(string $uuid): UserResource
-    {
-        $user = $this->userService->getUserByUuid($uuid);
-
-        return new UserResource($user);
-    }
-
-    /**
-     * Update the specified user.
-     *
-     * @param UpdateUserRequest $request
      * @param int $id
      * @return UserResource
      */
-    public function update(UpdateUserRequest $request, int $id): UserResource
+    public function show(int $id): UserResource
     {
-        $user = $this->userService->updateUser($id, $request->validated());
-
+        $user = $this->userService->getUserById($id);
         return new UserResource($user);
     }
 
     /**
-     * Remove the specified user.
+     * Update the specified resource in storage.
+     *
+     * @param UpdateUserRequest $request
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function update(UpdateUserRequest $request, int $id): JsonResponse
+    {
+        $user = $this->userService->updateUser($id, $request->validated());
+
+        return response()->json([
+            'message' => 'User updated successfully',
+            'user' => new UserResource($user),
+        ]);
+    }
+
+    /**
+     * Remove the specified resource from storage.
      *
      * @param int $id
      * @return JsonResponse
@@ -100,7 +96,25 @@ class UserController extends Controller
     {
         $this->userService->deleteUser($id);
 
-        return response()->json(null, Response::HTTP_NO_CONTENT);
+        return response()->json([
+            'message' => 'User deleted successfully',
+        ]);
+    }
+
+    /**
+     * Restore the specified soft-deleted resource.
+     *
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function restore(int $id): JsonResponse
+    {
+        $user = $this->userService->restoreUser($id);
+
+        return response()->json([
+            'message' => 'User restored successfully',
+            'user' => new UserResource($user),
+        ]);
     }
 
     /**
@@ -110,106 +124,76 @@ class UserController extends Controller
      * @param int $id
      * @return JsonResponse
      */
-    public function verify(Request $request, int $id): JsonResponse
+    public function verifyIdentity(Request $request, int $id): JsonResponse
     {
-        $this->authorize('verifyIdentity', \App\Models\User::class);
-
-        $validated = $request->validate([
-            'staff_id' => 'required|integer|exists:staff,id',
-            'method' => 'required|string|max:50',
+        $request->validate([
+            'method' => 'required|string|in:passport,biometric,government_id,other',
         ]);
 
-        $user = $this->userService->verifyIdentity(
-            $id,
-            $validated['staff_id'],
-            $validated['method']
-        );
+        $staffId = $request->user()->id;
+        $method = $request->input('method');
 
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(Response::HTTP_OK);
+        $user = $this->userService->verifyIdentity($id, $staffId, $method);
+
+        return response()->json([
+            'message' => 'User identity verified successfully',
+            'user' => new UserResource($user),
+        ]);
     }
 
     /**
-     * Suspend user.
+     * Update user password.
+     *
+     * @param Request $request
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function updatePassword(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'current_password' => 'sometimes|string',
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $currentPassword = $request->input('current_password');
+        $newPassword = $request->input('new_password');
+
+        $this->userService->updatePassword($id, $newPassword, $currentPassword);
+
+        return response()->json([
+            'message' => 'Password updated successfully',
+        ]);
+    }
+
+    /**
+     * Enable MFA for user.
      *
      * @param int $id
      * @return JsonResponse
      */
-    public function suspend(int $id): JsonResponse
+    public function enableMfa(int $id): JsonResponse
     {
-        $user = $this->userService->getUserById($id);
-        $this->authorize('suspend', $user);
+        $result = $this->userService->enableMfa($id);
 
-        $user = $this->userService->suspendUser($id);
-
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(Response::HTTP_OK);
+        return response()->json([
+            'message' => 'MFA enabled successfully',
+            'secret' => $result['secret'],
+            'qr_code_url' => $result['qr_code_url'],
+        ]);
     }
 
     /**
-     * Restore suspended user.
+     * Disable MFA for user.
      *
      * @param int $id
      * @return JsonResponse
      */
-    public function restoreSuspended(int $id): JsonResponse
+    public function disableMfa(int $id): JsonResponse
     {
-        $user = $this->userService->getUserById($id);
-        $this->authorize('restoreFromSuspension', $user);
+        $this->userService->disableMfa($id);
 
-        $user = $this->userService->restoreUser($id);
-
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(Response::HTTP_OK);
-    }
-
-    /**
-     * Archive user.
-     *
-     * @param int $id
-     * @return JsonResponse
-     */
-    public function archive(int $id): JsonResponse
-    {
-        $user = $this->userService->getUserById($id);
-        $this->authorize('archive', $user);
-
-        $user = $this->userService->archiveUser($id);
-
-        return (new UserResource($user))
-            ->response()
-            ->setStatusCode(Response::HTTP_OK);
-    }
-
-    /**
-     * Get users pending identity verification.
-     *
-     * @return AnonymousResourceCollection
-     */
-    public function pendingVerification(): AnonymousResourceCollection
-    {
-        $this->authorize('viewAny', \App\Models\User::class);
-
-        $users = $this->userService->getPendingIdentityVerificationUsers();
-
-        return UserResource::collection($users);
-    }
-
-    /**
-     * Get users by data residency region.
-     *
-     * @param string $region
-     * @return AnonymousResourceCollection
-     */
-    public function byRegion(string $region): AnonymousResourceCollection
-    {
-        $this->authorize('viewAny', \App\Models\User::class);
-
-        $users = $this->userService->getUsersByDataResidencyRegion($region);
-
-        return UserResource::collection($users);
+        return response()->json([
+            'message' => 'MFA disabled successfully',
+        ]);
     }
 }

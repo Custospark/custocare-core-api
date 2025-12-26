@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Requests\User;
+namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class StoreUserRequest extends FormRequest
+class RegisterRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -16,7 +16,7 @@ class StoreUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->can('create', \App\Models\User::class);
+        return true;
     }
 
     /**
@@ -38,22 +38,8 @@ class StoreUserRequest extends FormRequest
             'phone' => 'nullable|string|max:20',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
-            'title' => 'nullable|string|max:50',
-            'display_name' => 'nullable|string|max:100',
-            'dob' => 'nullable|date|before:today',
-            'gender' => 'nullable|in:male,female,other',
-            'address_line1' => 'nullable|string|max:255',
-            'address_line2' => 'nullable|string|max:255',
-            'city' => 'nullable|string|max:100',
-            'state' => 'nullable|string|max:100',
-            'country' => 'nullable|string|max:100',
-            'postal_code' => 'nullable|string|max:20',
             'password' => 'required|string|min:8|confirmed',
             'data_residency_region' => 'required|string|in:EU,US,APAC,MEA,SA',
-            'allowed_processing_regions' => 'nullable|array',
-            'allowed_processing_regions.*' => 'string|in:EU,US,APAC,MEA,SA',
-            'created_from_facility_id' => 'nullable|integer|exists:facilities,id',
-            'metadata' => 'nullable|array',
         ];
     }
 
@@ -64,9 +50,7 @@ class StoreUserRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
-        if ($this->has('email')) {
-            $this->merge(['email' => strtolower($this->email)]);
-        }
+        $this->merge(['email' => strtolower($this->email)]);
     }
 
     /**

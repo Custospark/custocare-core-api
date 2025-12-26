@@ -4,11 +4,40 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-/** @mixin User */
+/**
+ * @property int $id
+ * @property string $global_user_uuid
+ * @property string $national_id_country_code
+ * @property string $identity_state
+ * @property string|null $identity_verified_at
+ * @property string|null $identity_verification_method
+ * @property string $data_residency_region
+ * @property array|null $allowed_processing_regions
+ * @property int|null $created_from_facility_id
+ * @property string|null $first_name
+ * @property string|null $last_name
+ * @property string|null $title
+ * @property string|null $display_name
+ * @property string|null $dob
+ * @property string|null $gender
+ * @property string|null $address_line1
+ * @property string|null $address_line2
+ * @property string|null $city
+ * @property string|null $state
+ * @property string|null $country
+ * @property string|null $postal_code
+ * @property bool $requires_password_change
+ * @property bool $mfa_enabled
+ * @property string|null $last_login_at
+ * @property int $failed_login_attempts
+ * @property string|null $account_locked_until
+ * @property array|null $metadata
+ * @property string $created_at
+ * @property string $updated_at
+ */
 class UserResource extends JsonResource
 {
     /**
@@ -21,38 +50,53 @@ class UserResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'global_user_uuid' => $this->global_user_uuid,
+            'uuid' => $this->global_user_uuid,
             'national_id_country_code' => $this->national_id_country_code,
-            'identity_state' => $this->identity_state,
-            'identity_state_label' => $this->getIdentityStates()[$this->identity_state] ?? $this->identity_state,
-            'identity_verified_at' => $this->identity_verified_at?->toIso8601String(),
-            'identity_verification_method' => $this->identity_verification_method,
-            'identity_verified_by_staff_id' => $this->identity_verified_by_staff_id,
-            'data_residency_region' => $this->data_residency_region,
-            'allowed_processing_regions' => $this->allowed_processing_regions,
-            'created_from_facility_id' => $this->created_from_facility_id,
-            'email_hash' => $this->when($request->user()->can('viewSensitiveData', $this->resource), $this->email_hash),
-            'phone_hash' => $this->when($request->user()->can('viewSensitiveData', $this->resource), $this->phone_hash),
-            'requires_password_change' => $this->requires_password_change,
-            'mfa_enabled' => $this->mfa_enabled,
-            'last_login_at' => $this->last_login_at?->toIso8601String(),
-            'last_login_ip' => $this->when($request->user()->can('viewSensitiveData', $this->resource), $this->last_login_ip),
-            'failed_login_attempts' => $this->failed_login_attempts,
-            'account_locked_until' => $this->account_locked_until?->toIso8601String(),
-            'is_account_locked' => $this->isAccountLocked(),
-            'created_at' => $this->created_at->toIso8601String(),
-            'updated_at' => $this->updated_at->toIso8601String(),
-            'created_by_staff_id' => $this->created_by_staff_id,
-            'updated_by_staff_id' => $this->updated_by_staff_id,
-            'created_ip' => $this->when($request->user()->can('viewSensitiveData', $this->resource), $this->created_ip),
-            'metadata' => $this->metadata,
-            'links' => [
-                'self' => route('api.users.show', $this->global_user_uuid),
-                'verify' => route('api.users.verify', $this->id),
-                'suspend' => route('api.users.suspend', $this->id),
-                'restore' => route('api.users.restore', $this->id),
-                'archive' => route('api.users.archive', $this->id),
+            'identity' => [
+                'state' => $this->identity_state,
+                'verified_at' => $this->identity_verified_at,
+                'verification_method' => $this->identity_verification_method,
             ],
+            'compliance' => [
+                'data_residency_region' => $this->data_residency_region,
+                'allowed_processing_regions' => $this->allowed_processing_regions,
+                'created_from_facility_id' => $this->created_from_facility_id,
+            ],
+            'profile' => [
+                'first_name' => $this->first_name,
+                'last_name' => $this->last_name,
+                'full_name' => $this->full_name,
+                'title' => $this->title,
+                'display_name' => $this->display_name,
+                'dob' => $this->dob,
+                'gender' => $this->gender,
+            ],
+            'contact' => [
+                'email' => $this->when($request->user()?->can('viewSensitiveData', $this->resource), 
+                    fn() => decrypt($this->email_encrypted)),
+                'phone' => $this->when($request->user()?->can('viewSensitiveData', $this->resource),
+                    fn() => decrypt($this->phone_encrypted)),
+            ],
+            'address' => [
+                'line1' => $this->address_line1,
+                'line2' => $this->address_line2,
+                'city' => $this->city,
+                'state' => $this->state,
+                'country' => $this->country,
+                'postal_code' => $this->postal_code,
+            ],
+            'security' => [
+                'requires_password_change' => $this->requires_password_change,
+                'mfa_enabled' => $this->mfa_enabled,
+                'failed_login_attempts' => $this->failed_login_attempts,
+                'account_locked_until' => $this->account_locked_until,
+            ],
+            'activity' => [
+                'last_login_at' => $this->last_login_at,
+                'created_at' => $this->created_at,
+                'updated_at' => $this->updated_at,
+            ],
+            'metadata' => $this->metadata,
         ];
     }
 }

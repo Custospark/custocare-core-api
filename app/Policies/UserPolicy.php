@@ -19,7 +19,7 @@ class UserPolicy
      */
     public function viewAny(User $user): bool
     {
-        return $user->hasPermission('users.view');
+        return $user->isIdentityVerified() && $user->identity_state !== 'suspended';
     }
 
     /**
@@ -31,8 +31,8 @@ class UserPolicy
      */
     public function view(User $user, User $model): bool
     {
-        return $user->hasPermission('users.view') 
-            || $user->id === $model->id;
+        return $user->id === $model->id || 
+               ($user->isIdentityVerified() && $user->identity_state !== 'suspended');
     }
 
     /**
@@ -44,7 +44,8 @@ class UserPolicy
      */
     public function viewSensitiveData(User $user, User $model): bool
     {
-        return $user->hasPermission('users.view_sensitive');
+        // Only allow viewing sensitive data for own profile or with specific permission
+        return $user->id === $model->id || $user->can('viewAllSensitiveData');
     }
 
     /**
@@ -55,7 +56,7 @@ class UserPolicy
      */
     public function create(User $user): bool
     {
-        return $user->hasPermission('users.create');
+        return $user->isIdentityVerified() && $user->identity_state !== 'suspended';
     }
 
     /**
@@ -67,8 +68,8 @@ class UserPolicy
      */
     public function update(User $user, User $model): bool
     {
-        return $user->hasPermission('users.update') 
-            || $user->id === $model->id;
+        return $user->id === $model->id || 
+               ($user->isIdentityVerified() && $user->identity_state !== 'suspended');
     }
 
     /**
@@ -80,8 +81,9 @@ class UserPolicy
      */
     public function delete(User $user, User $model): bool
     {
-        return $user->hasPermission('users.delete') 
-            && $user->id !== $model->id;
+        return $user->isIdentityVerified() && 
+               $user->identity_state !== 'suspended' &&
+               $user->id !== $model->id; // Cannot delete yourself
     }
 
     /**
@@ -93,7 +95,7 @@ class UserPolicy
      */
     public function restore(User $user, User $model): bool
     {
-        return $user->hasPermission('users.restore');
+        return $user->isIdentityVerified() && $user->identity_state !== 'suspended';
     }
 
     /**
@@ -105,56 +107,20 @@ class UserPolicy
      */
     public function forceDelete(User $user, User $model): bool
     {
-        return $user->hasPermission('users.force_delete');
+        return $user->isIdentityVerified() && $user->identity_state !== 'suspended';
     }
 
     /**
      * Determine whether the user can verify identity.
      *
      * @param User $user
-     * @param User $model
      * @return bool
      */
-    public function verifyIdentity(User $user, User $model): bool
+    public function verifyIdentity(User $user): bool
     {
-        return $user->hasPermission('users.verify_identity');
-    }
-
-    /**
-     * Determine whether the user can suspend.
-     *
-     * @param User $user
-     * @param User $model
-     * @return bool
-     */
-    public function suspend(User $user, User $model): bool
-    {
-        return $user->hasPermission('users.suspend') 
-            && $user->id !== $model->id;
-    }
-
-    /**
-     * Determine whether the user can restore from suspension.
-     *
-     * @param User $user
-     * @param User $model
-     * @return bool
-     */
-    public function restoreFromSuspension(User $user, User $model): bool
-    {
-        return $user->hasPermission('users.restore_suspended');
-    }
-
-    /**
-     * Determine whether the user can archive.
-     *
-     * @param User $user
-     * @param User $model
-     * @return bool
-     */
-    public function archive(User $user, User $model): bool
-    {
-        return $user->hasPermission('users.archive');
+        // Only staff with specific permission can verify identities
+        return $user->identity_state === 'verified' && 
+               $user->hasPermissionTo('verify_identity');
     }
 
     /**
@@ -166,20 +132,18 @@ class UserPolicy
      */
     public function updatePassword(User $user, User $model): bool
     {
-        return $user->hasPermission('users.update_password') 
-            || $user->id === $model->id;
+        return $user->id === $model->id || $user->hasPermissionTo('reset_passwords');
     }
 
     /**
-     * Determine whether the user can enable MFA.
+     * Determine whether the user can manage MFA.
      *
      * @param User $user
      * @param User $model
      * @return bool
      */
-    public function enableMfa(User $user, User $model): bool
+    public function manageMfa(User $user, User $model): bool
     {
-        return $user->hasPermission('users.enable_mfa') 
-            || $user->id === $model->id;
+        return $user->id === $model->id || $user->hasPermissionTo('manage_mfa');
     }
 }

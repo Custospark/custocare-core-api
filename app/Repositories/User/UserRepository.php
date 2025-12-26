@@ -14,77 +14,60 @@ use Illuminate\Support\Facades\DB;
 class UserRepository implements UserRepositoryInterface
 {
     /**
-     * Constructor.
-     *
-     * @param User $model
-     */
-    public function __construct(
-        private readonly User $model
-    ) {}
-
-    /**
-     * Find a user by ID.
+     * Find user by ID.
      *
      * @param int $id
      * @return User|null
      */
-    public function find(int $id): ?User
+    public function findById(int $id): ?User
     {
-        return $this->model->find($id);
+        return User::find($id);
     }
 
     /**
-     * Find a user by global UUID.
+     * Find user by global UUID.
      *
      * @param string $uuid
      * @return User|null
      */
     public function findByUuid(string $uuid): ?User
     {
-        return $this->model->where('global_user_uuid', $uuid)->first();
+        return User::where('global_user_uuid', $uuid)->first();
     }
 
     /**
-     * Find a user by national ID hash.
+     * Find user by email hash.
+     *
+     * @param string $emailHash
+     * @return User|null
+     */
+    public function findByEmailHash(string $emailHash): ?User
+    {
+        return User::where('email_hash', $emailHash)->first();
+    }
+
+    /**
+     * Find user by national ID hash.
      *
      * @param string $nationalIdHash
      * @return User|null
      */
     public function findByNationalIdHash(string $nationalIdHash): ?User
     {
-        return $this->model->where('national_id_hash', $nationalIdHash)->first();
-    }
-
-    /**
-     * Find users by identity state.
-     *
-     * @param string $identityState
-     * @param array $relations
-     * @return Collection
-     */
-    public function findByIdentityState(string $identityState, array $relations = []): Collection
-    {
-        $query = $this->model->where('identity_state', $identityState);
-
-        if (!empty($relations)) {
-            $query->with($relations);
-        }
-
-        return $query->get();
+        return User::where('national_id_hash', $nationalIdHash)->first();
     }
 
     /**
      * Get all users with pagination.
      *
-     * @param int $perPage
      * @param array $filters
+     * @param int $perPage
      * @return LengthAwarePaginator
      */
-    public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator
+    public function getAllPaginated(array $filters = [], int $perPage = 20): LengthAwarePaginator
     {
-        $query = $this->model->newQuery();
+        $query = User::query();
 
-        // Apply filters
         if (isset($filters['identity_state'])) {
             $query->where('identity_state', $filters['identity_state']);
         }
@@ -93,19 +76,15 @@ class UserRepository implements UserRepositoryInterface
             $query->where('data_residency_region', $filters['data_residency_region']);
         }
 
-        if (isset($filters['national_id_country_code'])) {
-            $query->where('national_id_country_code', $filters['national_id_country_code']);
-        }
-
         if (isset($filters['search'])) {
             $query->where(function (Builder $q) use ($filters) {
-                $q->where('global_user_uuid', 'like', "%{$filters['search']}%")
-                  ->orWhere('email_hash', 'like', "%{$filters['search']}%")
-                  ->orWhere('phone_hash', 'like', "%{$filters['search']}%");
+                $q->where('first_name', 'like', "%{$filters['search']}%")
+                  ->orWhere('last_name', 'like', "%{$filters['search']}%")
+                  ->orWhere('display_name', 'like', "%{$filters['search']}%");
             });
         }
 
-        return $query->paginate($perPage);
+        return $query->orderBy('created_at', 'desc')->paginate($perPage);
     }
 
     /**
@@ -116,9 +95,7 @@ class UserRepository implements UserRepositoryInterface
      */
     public function create(array $data): User
     {
-        return DB::transaction(function () use ($data) {
-            return $this->model->create($data);
-        });
+        return User::create($data);
     }
 
     /**
@@ -126,14 +103,11 @@ class UserRepository implements UserRepositoryInterface
      *
      * @param User $user
      * @param array $data
-     * @return User
+     * @return bool
      */
-    public function update(User $user, array $data): User
+    public function update(User $user, array $data): bool
     {
-        return DB::transaction(function () use ($user, $data) {
-            $user->update($data);
-            return $user->fresh();
-        });
+        return $user->update($data);
     }
 
     /**
@@ -144,9 +118,7 @@ class UserRepository implements UserRepositoryInterface
      */
     public function delete(User $user): bool
     {
-        return DB::transaction(function () use ($user) {
-            return $user->delete();
-        });
+        return $user->delete();
     }
 
     /**
@@ -157,71 +129,69 @@ class UserRepository implements UserRepositoryInterface
      */
     public function restore(User $user): bool
     {
-        return DB::transaction(function () use ($user) {
-            return $user->restore();
-        });
+        return $user->restore();
     }
 
     /**
-     * Permanently delete a user.
+     * Update user's last login information.
+     *
+     * @param User $user
+     * @param string $ip
+     * @param string $userAgent
+     * @return bool
+     */
+    public function updateLastLogin(User $user, string $ip, string $userAgent): bool
+    {
+        return $user->update([
+            'last_login_at' => now(),
+            'last_login_ip' => $ip,
+            'last_login_user_agent' => $userAgent,
+            'failed_login_attempts' => 0, // Reset on successful login
+        ]);
+    }
+
+    /**
+     * Increment failed login attempts.
      *
      * @param User $user
      * @return bool
      */
-    public function forceDelete(User $user): bool
+    public function incrementFailedAttempts(User $user): bool
     {
-        return DB::transaction(function () use ($user) {
-            return $user->forceDelete();
-        });
+        return $user->increment('failed_login_attempts');
     }
 
     /**
-     * Update user's identity verification status.
+     * Reset failed login attempts.
      *
      * @param User $user
-     * @param array $verificationData
-     * @return User
-     */
-    public function updateIdentityVerification(User $user, array $verificationData): User
-    {
-        return DB::transaction(function () use ($user, $verificationData) {
-            $user->update(array_merge($verificationData, [
-                'identity_verified_at' => now(),
-            ]));
-            return $user->fresh();
-        });
-    }
-
-    /**
-     * Get users by data residency region.
-     *
-     * @param string $region
-     * @return Collection
-     */
-    public function getByDataResidencyRegion(string $region): Collection
-    {
-        return $this->model->where('data_residency_region', $region)->get();
-    }
-
-    /**
-     * Check if email hash exists.
-     *
-     * @param string $emailHash
      * @return bool
      */
-    public function emailHashExists(string $emailHash): bool
+    public function resetFailedAttempts(User $user): bool
     {
-        return $this->model->where('email_hash', $emailHash)->exists();
+        return $user->update(['failed_login_attempts' => 0]);
     }
 
     /**
-     * Check if phone hash exists.
+     * Lock user account.
      *
-     * @param string $phoneHash
+     * @param User $user
+     * @param \DateTimeInterface $until
      * @return bool
      */
-    public function phoneHashExists(string $phoneHash): bool
+    public function lockAccount(User $user, \DateTimeInterface $until): bool
     {
-        return $this->model->where('phone_hash', $phoneHash)->exists();
+        return $user->update(['account_locked_until' => $until]);
+    }
+
+    /**
+     * Unlock user account.
+     *
+     * @param User $user
+     * @return bool
+     */
+    public function unlockAccount(User $user): bool
+    {
+        return $user->update(['account_locked_until' => null]);
     }
 }

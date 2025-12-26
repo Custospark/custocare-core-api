@@ -100,7 +100,7 @@ interface UserRepositoryInterface
      * @param User $user
      * @return bool
      */
-    public function incrementFailedAttempts(User $user): bool;
+    public function incrementFailedAttempts(User $user): int;
 
     /**
      * Reset failed login attempts.

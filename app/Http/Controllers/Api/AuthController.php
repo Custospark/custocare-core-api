@@ -10,10 +10,10 @@ use App\Http\Requests\Auth\LogoutRequest;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Resources\LoginResource;
 use App\Http\Resources\UserResource;
-use App\Services\User\Contracts\UserServiceInterface;
 use App\Services\User\UserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
@@ -38,7 +38,7 @@ public function __construct(UserService $userService)
      */
     public function register(RegisterRequest $request): JsonResponse
     {
-        dd("Here");
+        Log::info($request);
         $user = $this->userService->register($request->validated());
 
         return response()->json([
@@ -53,38 +53,61 @@ public function __construct(UserService $userService)
      * @param LoginRequest $request
      * @return JsonResponse
      */
-    public function login(LoginRequest $request): JsonResponse
-    {
-        $credentials = $request->only(['email', 'password']);
-        $ip = $request->ip();
-        $userAgent = $request->userAgent();
+public function login(LoginRequest $request): JsonResponse
+{
+    $credentials = $request->only(['email', 'password']);
 
-        $result = $this->userService->login($credentials, $ip, $userAgent);
+    $result = $this->userService->login(
+        $credentials,
+        $request->ip(),
+        $request->userAgent()
+    );
 
-        // Handle MFA if required
-        if ($result['requires_mfa'] && !$request->has('mfa_code')) {
-            return response()->json([
-                'message' => 'MFA required',
-                'requires_mfa' => true,
-            ], 200);
-        }
+    Log::info('Login attempt', [
+        'email' => $credentials['email'],
+        'code' => $result['code'],
+    ]);
 
-        // Validate MFA code if provided
-        if ($result['requires_mfa'] && $request->has('mfa_code')) {
-            $valid = $this->userService->validateMfa(
-                $result['user']->id,
-                $request->input('mfa_code')
-            );
-
-            if (!$valid) {
-                return response()->json([
-                    'message' => 'Invalid MFA code',
-                ], 401);
-            }
-        }
-
-        return response()->json(new LoginResource($result));
+    // Failure
+    if (!$result['ok']) {
+        return response()->json([
+            'message' => $result['message'],
+            'code' => $result['code'],
+        ], $result['http']);
     }
+
+    $data = $result['payload'];
+
+    // MFA required but not provided
+    if ($data['requires_mfa'] && !$request->filled('mfa_code')) {
+        return response()->json([
+            'message' => 'MFA required',
+            'requires_mfa' => true,
+        ], 200);
+    }
+
+    // MFA validation
+    if ($data['requires_mfa']) {
+        $valid = $this->userService->validateMfa(
+            $data['user']->id,
+            $request->input('mfa_code')
+        );
+
+        if (!$valid) {
+            return response()->json([
+                'message' => 'Invalid MFA code',
+                'code' => 'INVALID_MFA',
+            ], 401);
+        }
+    }
+
+    return response()->json(
+        new LoginResource($data),
+        200
+    );
+}
+
+
 
     /**
      * Logout user.

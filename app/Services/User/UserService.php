@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Services\User;
 
 use App\Models\User;
-use App\Repositories\Contracts\UserRepositoryInterface;
-use App\Repositories\User\UserRepository;
-use App\Services\User\Contracts\UserServiceInterface;
+use App\Repositories\User\Contracts\UserRepositoryInterface;
+use App\Services\Contracts\UserServiceInterface;
+use App\Services\User\Contracts\UserServiceInterface as ContractsUserServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +16,7 @@ use Illuminate\Support\Str;
 use ParagonIE\ConstantTime\Base32;
 use PragmaRX\Google2FA\Google2FA;
 
-class UserService implements UserServiceInterface
+class UserService implements ContractsUserServiceInterface
 {
     /**
      * Maximum failed login attempts before lockout.
@@ -33,12 +33,9 @@ class UserService implements UserServiceInterface
      *
      * @param UserRepositoryInterface $userRepository
      */
-   protected UserRepository $userRepository;
-
-        public function __construct(UserRepository $userRepository)
-        {
-            $this->userRepository = $userRepository;
-        }
+    public function __construct(
+        private readonly UserRepositoryInterface $userRepository
+    ) {}
 
     /**
      * Register a new user.
@@ -86,7 +83,10 @@ class UserService implements UserServiceInterface
             $data['identity_state'] = 'pending';
             $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
 
-            return $this->userRepository->create($data);
+            $user= $this->userRepository->create($data);
+            $token = $user->createToken('auth_token')->plainTextToken;
+            return $user;
+
         });
     }
 
@@ -99,50 +99,76 @@ class UserService implements UserServiceInterface
      * @return array
      * @throws \Exception
      */
-    public function login(array $credentials, string $ip, string $userAgent): array
-    {
-        // Find user by email hash
-        $emailHash = hash('sha256', strtolower($credentials['email']));
-        $user = $this->userRepository->findByEmailHash($emailHash);
+public function login(array $credentials, string $ip, string $userAgent): array
+{
+    $emailHash = hash('sha256', strtolower($credentials['email']));
+    $user = $this->userRepository->findByEmailHash($emailHash);
 
-        if (!$user) {
-            throw new \Exception('Invalid credentials', 401);
-        }
-
-        // Check if account is locked
-        if ($user->isAccountLocked()) {
-            throw new \Exception('Account is locked. Please try again later.', 423);
-        }
-
-        // Verify password
-        if (!Hash::check($credentials['password'], $user->password_hash)) {
-            $this->userRepository->incrementFailedAttempts($user);
-
-            // Lock account if max attempts reached
-            if ($user->failed_login_attempts >= self::MAX_FAILED_ATTEMPTS) {
-                $lockUntil = Carbon::now()->addMinutes(self::LOCKOUT_DURATION);
-                $this->userRepository->lockAccount($user, $lockUntil);
-                throw new \Exception('Account locked due to too many failed attempts.', 423);
-            }
-
-            throw new \Exception('Invalid credentials', 401);
-        }
-
-        // Reset failed attempts on successful login
-        $this->userRepository->resetFailedAttempts($user);
-
-        // Update last login info
-        $this->userRepository->updateLastLogin($user, $ip, $userAgent);
-
-        // Generate token
-        $token = $user->createToken('auth-token')->plainTextToken;
-
+    if (!$user) {
         return [
-            'user' => $user,
-            'token' => $token,
-            'requires_mfa' => $user->mfa_enabled,
+            'ok' => false,
+            'code' => 'INVALID_CREDENTIALS',
+            'message' => 'Invalid credentials',
+            'http' => 401,
+            'payload' => null,
         ];
     }
+
+    if ($user->isAccountLocked()) {
+        return [
+            'ok' => false,
+            'code' => 'ACCOUNT_LOCKED',
+            'message' => 'Account is locked. Please try again later.',
+            'http' => 423,
+            'payload' => null,
+        ];
+    }
+
+    if (!Hash::check($credentials['password'], $user->password_hash)) {
+        $this->userRepository->incrementFailedAttempts($user);
+
+        if ($user->failed_login_attempts >= self::MAX_FAILED_ATTEMPTS) {
+            $this->userRepository->lockAccount(
+                $user,
+                Carbon::now()->addMinutes(self::LOCKOUT_DURATION)
+            );
+
+            return [
+                'ok' => false,
+                'code' => 'ACCOUNT_LOCKED',
+                'message' => 'Account locked due to too many failed attempts.',
+                'http' => 423,
+                'payload' => null,
+            ];
+        }
+
+        return [
+            'ok' => false,
+            'code' => 'INVALID_CREDENTIALS',
+            'message' => 'Invalid credentials',
+            'http' => 401,
+            'payload' => null,
+        ];
+    }
+
+    // Success path
+    $this->userRepository->resetFailedAttempts($user);
+    $this->userRepository->updateLastLogin($user, $ip, $userAgent);
+
+    return [
+        'ok' => true,
+        'code' => 'LOGIN_SUCCESS',
+        'message' => 'Login successful',
+        'http' => 200,
+        'payload' => [
+            'user' => $user,
+            'token' => $user->createToken('auth-token')->plainTextToken,
+            'requires_mfa' => $user->mfa_enabled,
+        ],
+    ];
+}
+
+
 
     /**
      * Logout user.

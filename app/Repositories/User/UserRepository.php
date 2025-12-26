@@ -156,7 +156,7 @@ class UserRepository implements UserRepositoryInterface
      * @param User $user
      * @return bool
      */
-    public function incrementFailedAttempts(User $user): bool
+    public function incrementFailedAttempts(User $user): int
     {
         return $user->increment('failed_login_attempts');
     }

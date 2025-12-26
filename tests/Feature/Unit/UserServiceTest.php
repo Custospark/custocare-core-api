@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Unit;
 
 use App\Models\User;
-use App\Services\User\Contracts\UserServiceInterface;
+use App\Repositories\User\Contracts\UserRepositoryInterface;
 use App\Services\User\UserService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -18,16 +18,17 @@ class UserServiceTest extends TestCase
 
     private UserService $userService;
     private $userRepositoryMock;
-protected function setUp(): void
-    {
-        parent::setUp();
+            protected function setUp(): void
+            {
+                parent::setUp();
 
-        // Create a mock of the repository interface
-        $this->userRepositoryMock = Mockery::mock(UserServiceInterface::class);
+                $this->userRepositoryMock = Mockery::mock(UserRepositoryInterface::class);
 
-        // Inject the mock into the service
-        $this->userService = new UserService($this->userRepositoryMock);
-    }
+                $this->userService = new UserService(
+                    $this->userRepositoryMock
+                );
+            }
+
     public function test_register_user_successfully(): void
     {
         $userData = [

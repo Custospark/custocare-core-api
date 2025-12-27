@@ -41,7 +41,7 @@ return new class extends Migration
         
         // ===== CORE IDENTITY TABLES =====
         
-        /**DONE
+        /**DONE++
          * USERS - Root identity table (Global Identity Anchor)
          * Shard Strategy: Hash(national_id_hash) for global distribution
          * Security: Encrypted at rest (national_id, contact_info)
@@ -118,7 +118,7 @@ return new class extends Migration
             $table->index('created_from_facility_id');
         });
 
-        /**DONE
+        /**DONE++
          * PATIENTS - Medical identity and health profile
          * Shard Strategy: Co-located with user_id (same shard as users)
          * Compliance: HIPAA PHI protection, consent-based access
@@ -204,7 +204,7 @@ return new class extends Migration
             $table->index('primary_care_provider_staff_id');
         });
 
-        /**DONE.
+        /**DONE++
          * PATIENT_CONSENTS - Legal record of consent/authorization
          * Shard Strategy: Sharded by patient_id
          * Compliance: GDPR Article 7, HIPAA Authorization, 21 CFR Part 11
@@ -302,7 +302,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE.
+        /**DONE++
          * STAFF - Healthcare practitioner registry
          * Shard Strategy: Co-located with user_id
          * Compliance: State licensing verification, credentialing requirements

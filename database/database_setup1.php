@@ -1182,7 +1182,7 @@ return new class extends Migration
             $table->index(['visit_id', 'participation_type']);
         });
 
-        /**DONE.
+        /**DONE++
          * VISIT_ROUTES - Department routing history
          * Purpose: Track patient flow through facility departments
          */

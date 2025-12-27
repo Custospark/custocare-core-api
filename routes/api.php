@@ -16,4 +16,5 @@ require __DIR__.'/patients/_index.php';
 require __DIR__.'/patientConsents/_index.php';
 require __DIR__.'/staff/_index.php';
 require __DIR__.'/staffCredential/_index.php';
+require __DIR__.'/facilities/_index.php';
 

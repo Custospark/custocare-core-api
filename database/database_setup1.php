@@ -421,7 +421,7 @@ return new class extends Migration
             $table->index(['dea_expiry_date', 'employment_status']);
         });
 
-        /**DONE.
+        /**DONE++
          * STAFF_CREDENTIALS - Time-stamped credential snapshots
          * Shard Strategy: Sharded by staff_id
          * Purpose: Immutable audit trail of credentialing events

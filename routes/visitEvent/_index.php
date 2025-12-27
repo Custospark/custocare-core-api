@@ -4,7 +4,7 @@ use App\Http\Controllers\Api\VisitEventController;
 use Illuminate\Support\Facades\Route;
 
 // Visit Events API Routes
-Route::prefix('v1')->middleware(['api', 'auth:sanctum'])->group(function () {
+Route::middleware(['api', 'auth:sanctum'])->group(function () {
     // Standard RESTful routes
     Route::apiResource('visit-events', VisitEventController::class)
         ->except(['destroy']) // Destroy is handled specially

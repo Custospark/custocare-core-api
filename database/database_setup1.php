@@ -1030,7 +1030,7 @@ return new class extends Migration
             $table->index(['discharged_at', 'status']); // Cleanup queries
         });
 
-        /**DONE.
+        /**DONE++
          * VISIT_EVENTS - Immutable event log (Event Sourcing pattern)
          * Purpose: Complete audit trail of all visit state changes
          */

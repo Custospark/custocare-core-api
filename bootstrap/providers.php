@@ -11,6 +11,7 @@ return [
     App\Providers\StaffInvitationServiceProvider::class,
     App\Providers\StaffServiceProvider::class,
     App\Providers\UserServiceProvider::class,
+    App\Providers\VisitActorServiceProvider::class,
     App\Providers\VisitEventServiceProvider::class,
     App\Providers\VisitServiceProvider::class,
 ];

@@ -629,7 +629,7 @@ return new class extends Migration
 
         /**
          * DEPARTMENTS - Facility organizational units
-         * DONE:
+         * DONE++
          */
         Schema::create('departments', function (Blueprint $table) {
             $table->id();

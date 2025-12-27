@@ -4,5 +4,6 @@ return [
     App\Providers\AppServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
+    App\Providers\StaffServiceProvider::class,
     App\Providers\UserServiceProvider::class,
 ];

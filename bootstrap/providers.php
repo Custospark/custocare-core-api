@@ -8,6 +8,7 @@ return [
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
     App\Providers\StaffCredentialServiceProvider::class,
+    App\Providers\StaffInvitationServiceProvider::class,
     App\Providers\StaffServiceProvider::class,
     App\Providers\UserServiceProvider::class,
 ];

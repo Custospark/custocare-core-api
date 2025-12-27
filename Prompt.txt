@@ -5,7 +5,7 @@ I will provide a Laravel migration file, and you must recreate the migration if 
 
 1. Directory & Naming Conventions.In the Code,DO NOT THRUGH EXCEPTIONS when they occur,gracefully handle them and throw them as API responses to the frontend client since we are building restful API. In the request files,provide API responses for error back to the frontend client. Provide industry grade comments on logic for easy understanding.Cover all operations that must be performed on the entity.All file must have single responsibily and should be able to work seamlessly with one another.Use best practices in laravel and follow modern approaches.DO NOT THROW EXCEPTIONS TO AVOID CRUSHING THE API,exceptions should be handled meaningfully and used returned as API responses when necessary.If exceptions are very sensitive,simply log them.FORM REQUESTS SHOULD meaningfully RETURN API VALIDATION ERRORS IN FRIENDLY WAYS TO THE API CLIENT.
 
-All generated files must follow this modular structure:
+All generated files must follow this modular structure:IF THE ENTITY HAS RELATIONSHIP WITH OTHER MODELS,RETURN THE MODELS AS WELL USING THEIR RRESOURCES IN API RESPONSES.
 app/
 ├── Models/
 │   └── [EntityName].php
@@ -222,88 +222,37 @@ Resources return consistent API responses and use nested resources for related d
 Unit and Feature tests ensure robustness and correctness
 
 Migration fully reflects the entity schema
-   /**
-         * PATIENTS - Medical identity and health profile
-         * Shard Strategy: Co-located with user_id (same shard as users)
-         * Compliance: HIPAA PHI protection, consent-based access
+          /**
+         * ------------------------------------------------------------
+         * MESSAGE ATTACHMENTS
+         * ------------------------------------------------------------
          */
-        Schema::create('patients', function (Blueprint $table) {
+        Schema::create('message_attachments', function (Blueprint $table) {
             $table->id();
-            $table->uuid('patient_uuid')->unique()->index()->comment('Facility-facing public ID');
-            $table->unsignedBigInteger('user_id')->unique();
-            
-            // Medical record identification
-            $table->string('medical_record_number_hash', 128)->unique()->comment('Hospital MRN hash');
-            $table->string('medical_record_number_encrypted', 512);
-            $table->string('previous_mrn_list_encrypted', 2048)->nullable()->comment('For merged records');
-            
-            // Demographics (critical for clinical decisions)
-            $table->date('date_of_birth')->index();
-            $table->enum('biological_sex', ['male', 'female', 'intersex', 'unknown'])->comment('Clinical sex for medical decisions');
-            $table->enum('gender_identity', ['male', 'female', 'non_binary', 'prefer_not_to_say', 'other'])->nullable();
-            $table->string('blood_type', 5)->nullable()->index();
-            $table->string('ethnicity', 100)->nullable();
-            $table->json('genetic_markers')->nullable()->comment('Relevant genetic information');
-            
-            // Emergency contacts (encrypted JSONB structure)
-            $table->json('emergency_contact_chain_encrypted')->nullable()->comment('Prioritized list of emergency contacts');
-            
-            // Clinical flags
-            $table->json('known_allergies')->nullable()->comment('Drug, food, environmental allergies');
-            $table->json('chronic_conditions')->nullable()->comment('ICD-10 codes for chronic diseases');
-            $table->json('active_medications')->nullable()->comment('Current medication list');
-            $table->boolean('is_organ_donor')->default(false);
-            $table->json('advance_directives')->nullable()->comment('DNR, living will, etc.');
-            
-            // Risk stratification
-            $table->unsignedTinyInteger('acuity_baseline')->default(1)->comment('1=Low, 5=Critical');
-            $table->json('risk_factors')->nullable()->comment('Fall risk, infection risk, etc.');
-            $table->boolean('requires_isolation')->default(false);
-            $table->string('isolation_type', 50)->nullable()->comment('Contact, droplet, airborne');
-            
-            // Consent & privacy
-            $table->enum('default_consent_level', ['full', 'restricted', 'minimal', 'none'])->default('full');
-            $table->json('privacy_flags')->comment('GDPR: right_to_erasure_requested, data_portability, etc.');
-            $table->boolean('research_participation_allowed')->default(false);
-            $table->boolean('data_sharing_allowed')->default(false);
-            
-            // Insurance & financial
-            $table->string('primary_insurance_provider', 200)->nullable();
-            $table->string('primary_insurance_id_encrypted', 512)->nullable();
-            $table->string('secondary_insurance_provider', 200)->nullable();
-            $table->string('secondary_insurance_id_encrypted', 512)->nullable();
-            $table->enum('payment_responsibility', ['self_pay', 'insurance', 'government', 'charity'])->default('self_pay');
-            
-            // Care coordination
-            $table->unsignedBigInteger('primary_care_provider_staff_id')->nullable();
-            $table->unsignedBigInteger('primary_care_facility_id')->nullable();
-            $table->timestamp('last_wellness_visit_at')->nullable();
-            $table->timestamp('next_scheduled_appointment_at')->nullable();
-            
-            // Patient portal
-            $table->boolean('portal_access_enabled')->default(true);
-            $table->timestamp('portal_terms_accepted_at')->nullable();
-            $table->string('preferred_language', 10)->default('en');
-            $table->string('preferred_communication_method', 20)->default('email')->comment('email, sms, phone, postal');
-            
-            // Status tracking
-            $table->enum('status', ['active', 'inactive', 'deceased', 'merged', 'test_patient'])->default('active')->index();
-            $table->timestamp('deceased_at')->nullable();
-            $table->unsignedBigInteger('merged_into_patient_id')->nullable()->comment('If duplicate record');
-            
-            // Audit trail
+            $table->uuid('attachment_uuid')->unique()->index();
+
+            $table->foreignId('message_id')
+                ->constrained('messages')
+                ->cascadeOnDelete();
+
+            $table->enum('attachment_type', [
+                'image',
+                'pdf',
+                'lab_result',
+                'radiology_image',
+                'audio',
+                'video',
+                'other'
+            ])->index();
+
+            $table->string('file_name', 255);
+            $table->string('mime_type', 100);
+            $table->unsignedBigInteger('file_size_bytes');
+            $table->string('storage_disk', 50);
+            $table->string('storage_path', 512);
+
+            $table->boolean('contains_phi')->default(true);
+            $table->string('checksum', 64)->index();
+
             $table->timestamps();
-            $table->softDeletes();
-            $table->unsignedBigInteger('created_by_staff_id')->nullable();
-            $table->unsignedBigInteger('updated_by_staff_id')->nullable();
-            $table->json('metadata')->nullable();
-            
-            // Foreign keys
-            $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
-            
-            // Performance indexes
-            $table->index(['status', 'primary_care_facility_id']);
-            $table->index(['date_of_birth', 'biological_sex']);
-            $table->index(['last_wellness_visit_at', 'status']);
-            $table->index('primary_care_provider_staff_id');
         });

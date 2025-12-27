@@ -41,10 +41,11 @@ return new class extends Migration
         
         // ===== CORE IDENTITY TABLES =====
         
-        /**
+        /**DONE
          * USERS - Root identity table (Global Identity Anchor)
          * Shard Strategy: Hash(national_id_hash) for global distribution
          * Security: Encrypted at rest (national_id, contact_info)
+         * DONE
          */
         Schema::create('users', function (Blueprint $table) {
             $table->id();
@@ -117,11 +118,11 @@ return new class extends Migration
             $table->index('created_from_facility_id');
         });
 
-        /**
+        /**DONE
          * PATIENTS - Medical identity and health profile
          * Shard Strategy: Co-located with user_id (same shard as users)
          * Compliance: HIPAA PHI protection, consent-based access
-         */
+         * DONE*/
         Schema::create('patients', function (Blueprint $table) {
             $table->id();
             $table->uuid('patient_uuid')->unique()->index()->comment('Facility-facing public ID');
@@ -203,7 +204,7 @@ return new class extends Migration
             $table->index('primary_care_provider_staff_id');
         });
 
-        /**
+        /**DONE.
          * PATIENT_CONSENTS - Legal record of consent/authorization
          * Shard Strategy: Sharded by patient_id
          * Compliance: GDPR Article 7, HIPAA Authorization, 21 CFR Part 11
@@ -301,10 +302,11 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE.
          * STAFF - Healthcare practitioner registry
          * Shard Strategy: Co-located with user_id
          * Compliance: State licensing verification, credentialing requirements
+         * DONE.
          */
         Schema::create('staff', function (Blueprint $table) {
             $table->id();
@@ -419,7 +421,7 @@ return new class extends Migration
             $table->index(['dea_expiry_date', 'employment_status']);
         });
 
-        /**
+        /**DONE.
          * STAFF_CREDENTIALS - Time-stamped credential snapshots
          * Shard Strategy: Sharded by staff_id
          * Purpose: Immutable audit trail of credentialing events
@@ -509,9 +511,10 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE
          * FACILITIES - Healthcare facility registry
          * Shard Strategy: Reference data (CDN-distributed, cache-first)
+         * DONE:
          */
         Schema::create('facilities', function (Blueprint $table) {
             $table->id();
@@ -626,6 +629,7 @@ return new class extends Migration
 
         /**
          * DEPARTMENTS - Facility organizational units
+         * DONE:
          */
         Schema::create('departments', function (Blueprint $table) {
             $table->id();
@@ -694,7 +698,7 @@ return new class extends Migration
             $table->index(['facility_id', 'department_type', 'status']);
         });
 
-        /**
+        /**DONE:
          * FACILITY_STAFF_ROLES - Staff assignments to facilities
          * Shard Strategy: Sharded by facility_id
          */
@@ -782,7 +786,9 @@ return new class extends Migration
             $table->index(['effective_to', 'assignment_status']); // For cleanup
         });
 
-
+/**
+ * DONE.
+ */
 
         Schema::create('staff_invitations', function (Blueprint $table) {
             $table->id();
@@ -832,7 +838,7 @@ return new class extends Migration
          * Consistency: Strong within shard, eventual across shards
          */
         
-        /**
+        /**DONE.
          * VISITS - Aggregate root for patient encounters
          * This is the core transactional table for all patient care episodes
          */
@@ -1025,7 +1031,7 @@ return new class extends Migration
             $table->index(['discharged_at', 'status']); // Cleanup queries
         });
 
-        /**
+        /**DONE.
          * VISIT_EVENTS - Immutable event log (Event Sourcing pattern)
          * Purpose: Complete audit trail of all visit state changes
          */
@@ -1108,7 +1114,7 @@ return new class extends Migration
             $table->index(['actor_type', 'actor_id', 'event_occurred_at']);
         });
 
-        /**
+        /**DONE:
          * VISIT_ACTORS - Staff participation in visits
          * Purpose: Track who did what during the visit (for billing & compliance)
          */
@@ -1177,7 +1183,7 @@ return new class extends Migration
             $table->index(['visit_id', 'participation_type']);
         });
 
-        /**
+        /**DONE.
          * VISIT_ROUTES - Department routing history
          * Purpose: Track patient flow through facility departments
          */
@@ -1257,7 +1263,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE;
          * CLINICAL_ENCOUNTERS - Core medical documentation
          * Shard Strategy: Co-located with visit (facility_id, visit_id)
          */
@@ -1382,7 +1388,7 @@ return new class extends Migration
             $table->index(['documentation_status', 'documented_at']);
         });
 
-        /**
+        /**DONE.
          * AI_ASSESSMENTS - AI/ML clinical decision support records
          * Regulatory Compliance: FDA 510(k), EU MDR for AI/ML medical devices
          */
@@ -1499,7 +1505,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE.
          * SERVICE_CATALOGS - Master service/procedure definitions
          * Shard Strategy: Reference data (cache-first, CDN-distributed)
          */
@@ -1583,7 +1589,7 @@ return new class extends Migration
             $table->index(['code_system', 'service_code']);
         });
 
-        /**
+        /**DONE
          * SERVICE_VERSIONS - Versioned pricing & terms
          * Purpose: Historical pricing accuracy for billing disputes
          */
@@ -1663,7 +1669,7 @@ return new class extends Migration
             $table->index(['facility_id', 'is_current']);
         });
 
-        /**
+        /**DONE.
          * BILLING_CYCLES - Financial period aggregation
          * Shard Strategy: Sharded by (facility_id, visit_id)
          */
@@ -1769,7 +1775,7 @@ return new class extends Migration
             $table->index(['billing_status', 'payment_due_date']);
         });
 
-        /**
+        /**DONE.
          * INVOICE_LINE_ITEMS - Detailed billing transactions
          * Purpose: Immutable snapshot of services rendered
          */
@@ -1855,7 +1861,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE
          * INVENTORY_ITEMS - Master inventory catalog
          */
         Schema::create('inventory_items', function (Blueprint $table) {
@@ -1949,7 +1955,7 @@ return new class extends Migration
             $table->index(['controlled_substance_schedule', 'status']);
         });
 
-        /**
+        /**DONE.
          * INVENTORY_LEDGER - Double-entry inventory accounting
          * Purpose: Immutable transaction log (like accounting ledger)
          */
@@ -2038,7 +2044,7 @@ return new class extends Migration
             $table->index(['transaction_type', 'transaction_timestamp']);
         });
 
-        /**
+        /**DONE
          * PRESCRIPTIONS - Medication orders
          */
         Schema::create('prescriptions', function (Blueprint $table) {
@@ -2238,7 +2244,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE.
          * VISIT_CURRENT_STATES - Real-time visit status (materialized view)
          * Refresh Strategy: CDC (Change Data Capture) from visit_events
          */
@@ -2298,7 +2304,7 @@ return new class extends Migration
             $table->index(['has_critical_alerts', 'acuity_score']);
         });
 
-        /**
+        /**DONE.
          * DEPARTMENT_QUEUE_VIEWS - Real-time department operations dashboard
          * Refresh Strategy: 30-second batch update
          */
@@ -2360,7 +2366,7 @@ return new class extends Migration
             $table->index(['department_id', 'snapshot_at']);
         });
 
-        /**
+        /**DONE
          * PATIENT_VISIT_SUMMARY_VIEWS - Patient portal & care coordination
          * Refresh Strategy: Nightly batch + real-time for active visits
          */
@@ -2426,7 +2432,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE.
          * AUDIT_LOGS - Immutable compliance audit trail
          * Shard Strategy: (entity_type, DATE(created_at))
          * Retention: 7 years minimum (HIPAA requirement)
@@ -2522,7 +2528,7 @@ return new class extends Migration
             $table->index(['legal_hold_flag', 'created_at']);
         });
 
-        /**
+        /**DONE.
          * DATA_RESIDENCY_RULES - Regional compliance policies
          * Purpose: Enforce GDPR, HIPAA, and local data protection laws
          */
@@ -2597,7 +2603,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**
+        /**DONE
          * APPOINTMENTS - Scheduled visits
          */
         Schema::create('appointments', function (Blueprint $table) {
@@ -2671,7 +2677,7 @@ return new class extends Migration
             $table->index(['provider_staff_id', 'scheduled_start_time']);
         });
 
-        /**
+        /**DONE.
          * CLINICAL_DOCUMENTS - Attached medical documents
          */
         Schema::create('clinical_documents', function (Blueprint $table) {
@@ -2730,6 +2736,227 @@ return new class extends Migration
             $table->index(['visit_id', 'document_type']);
         });
 
+      
+        /**DONE
+         * ------------------------------------------------------------
+         * CONVERSATIONS
+         * ------------------------------------------------------------
+         */
+        Schema::create('conversations', function (Blueprint $table) {
+            $table->id();
+            $table->uuid('conversation_uuid')->unique()->index();
+
+            $table->foreignId('facility_id')
+                ->constrained('facilities')
+                ->cascadeOnDelete();
+
+            $table->enum('conversation_type', [
+                'direct',
+                'group',
+                'broadcast',
+                'system',
+                'care_context'
+            ])->index();
+
+            // Optional clinical context
+            $table->foreignId('visit_id')
+                ->nullable()
+                ->constrained('visits')
+                ->nullOnDelete();
+
+            $table->foreignId('appointment_id')
+                ->nullable()
+                ->constrained('appointments')
+                ->nullOnDelete();
+
+            $table->string('department_code', 50)->nullable()->index();
+            $table->string('title', 255)->nullable();
+
+            // Compliance & priority
+            $table->boolean('contains_phi')->default(true)->index();
+            $table->boolean('is_emergency')->default(false)->index();
+
+            $table->enum('status', [
+                'active',
+                'archived',
+                'locked'
+            ])->default('active')->index();
+
+            $table->foreignId('created_by_user_id')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->timestamps();
+            $table->softDeletes();
+
+            $table->index(['facility_id', 'conversation_type']);
+        });
+
+        /**DONE
+         * ------------------------------------------------------------
+         * CONVERSATION PARTICIPANTS
+         * ------------------------------------------------------------
+         */
+        Schema::create('conversation_participants', function (Blueprint $table) {
+            $table->id();
+
+            $table->foreignId('conversation_id')
+                ->constrained('conversations')
+                ->cascadeOnDelete();
+
+            $table->enum('participant_type', ['staff', 'patient']);
+            $table->unsignedBigInteger('participant_id');
+
+            $table->enum('role', [
+                'owner',
+                'moderator',
+                'member',
+                'read_only'
+            ])->default('member');
+
+            $table->timestamp('joined_at')->nullable();
+            $table->timestamp('left_at')->nullable();
+            $table->boolean('is_muted')->default(false);
+
+            $table->timestamps();
+
+            $table->unique(
+                ['conversation_id', 'participant_type', 'participant_id'],
+                'conversation_participant_unique'
+            );
+
+            $table->index(['participant_type', 'participant_id']);
+        });
+
+        /**DONE
+         * ------------------------------------------------------------
+         * MESSAGES
+         * ------------------------------------------------------------
+         */
+        Schema::create('messages', function (Blueprint $table) {
+            $table->id();
+            $table->uuid('message_uuid')->unique()->index();
+
+            $table->foreignId('conversation_id')
+                ->constrained('conversations')
+                ->cascadeOnDelete();
+
+            // Sender
+            $table->enum('sender_type', ['staff', 'patient', 'system']);
+            $table->unsignedBigInteger('sender_id')->nullable();
+
+            // Content
+            $table->enum('message_type', [
+                'text',
+                'rich_text',
+                'system_event',
+                'clinical_note',
+                'alert',
+                'file',
+                'image'
+            ])->index();
+
+            $table->longText('content_encrypted')->nullable();
+            $table->string('content_hash', 64)->index();
+
+            // Clinical flags
+            $table->boolean('contains_phi')->default(true)->index();
+            $table->boolean('is_clinical')->default(false)->index();
+            $table->boolean('requires_acknowledgement')->default(false);
+
+            // Threading
+            $table->foreignId('parent_message_id')
+                ->nullable()
+                ->constrained('messages')
+                ->nullOnDelete();
+
+            // Delivery
+            $table->enum('delivery_status', [
+                'pending',
+                'sent',
+                'delivered',
+                'failed'
+            ])->default('pending')->index();
+
+            $table->timestamps();
+            $table->softDeletes();
+
+            $table->timestamp('edited_at')->nullable();
+            $table->foreignId('edited_by_user_id')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->index(['conversation_id', 'created_at']);
+        });
+
+        /**DONE.
+         * ------------------------------------------------------------
+         * MESSAGE RECEIPTS
+         * ------------------------------------------------------------
+         */
+        Schema::create('message_receipts', function (Blueprint $table) {
+            $table->id();
+
+            $table->foreignId('message_id')
+                ->constrained('messages')
+                ->cascadeOnDelete();
+
+            $table->enum('recipient_type', ['staff', 'patient']);
+            $table->unsignedBigInteger('recipient_id');
+
+            $table->timestamp('delivered_at')->nullable();
+            $table->timestamp('read_at')->nullable();
+            $table->timestamp('acknowledged_at')->nullable();
+
+            $table->timestamps();
+
+            $table->unique(
+                ['message_id', 'recipient_type', 'recipient_id'],
+                'message_recipient_unique'
+            );
+
+            $table->index(['recipient_type', 'recipient_id']);
+        });
+
+        /**DONE.
+         * ------------------------------------------------------------
+         * MESSAGE ATTACHMENTS
+         * ------------------------------------------------------------
+         */
+        Schema::create('message_attachments', function (Blueprint $table) {
+            $table->id();
+            $table->uuid('attachment_uuid')->unique()->index();
+
+            $table->foreignId('message_id')
+                ->constrained('messages')
+                ->cascadeOnDelete();
+
+            $table->enum('attachment_type', [
+                'image',
+                'pdf',
+                'lab_result',
+                'radiology_image',
+                'audio',
+                'video',
+                'other'
+            ])->index();
+
+            $table->string('file_name', 255);
+            $table->string('mime_type', 100);
+            $table->unsignedBigInteger('file_size_bytes');
+            $table->string('storage_disk', 50);
+            $table->string('storage_path', 512);
+
+            $table->boolean('contains_phi')->default(true);
+            $table->string('checksum', 64)->index();
+
+            $table->timestamps();
+        });
+
+
+
         // Add additional supporting tables as needed...
         
         /**
@@ -2766,6 +2993,12 @@ return new class extends Migration
     public function down()
     {
         // Drop in reverse order to respect foreign key constraints
+        
+        Schema::dropIfExists('message_attachments');
+        Schema::dropIfExists('message_receipts');
+        Schema::dropIfExists('messages');
+        Schema::dropIfExists('conversation_participants');
+        Schema::dropIfExists('conversations');
         Schema::dropIfExists('clinical_documents');
         Schema::dropIfExists('appointments');
         Schema::dropIfExists('data_residency_rules');

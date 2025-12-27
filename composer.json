@@ -12,7 +12,7 @@
         "laravel/tinker": "^2.10.1",
         "paragonie/constant_time_encoding": "^3.1",
         "pragmarx/google2fa": "^9.0",
-        "spatie/laravel-permission": "^6.24"
+        "spatie/laravel-permission": "*"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

@@ -1113,7 +1113,7 @@ return new class extends Migration
             $table->index(['actor_type', 'actor_id', 'event_occurred_at']);
         });
 
-        /**DONE:
+        /**DONE++
          * VISIT_ACTORS - Staff participation in visits
          * Purpose: Track who did what during the visit (for billing & compliance)
          */

@@ -13,5 +13,6 @@ return [
     App\Providers\UserServiceProvider::class,
     App\Providers\VisitActorServiceProvider::class,
     App\Providers\VisitEventServiceProvider::class,
+    App\Providers\VisitRouteServiceProvider::class,
     App\Providers\VisitServiceProvider::class,
 ];

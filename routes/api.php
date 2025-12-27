@@ -23,4 +23,5 @@ require __DIR__.'/staffInvitation/_index.php';
 require __DIR__.'/visit/_index.php';
 require __DIR__.'/visitEvent/_index.php';
 require __DIR__.'/visitActor/_index.php';
+require __DIR__.'/visitRoute/_index.php';
 

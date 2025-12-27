@@ -2,6 +2,7 @@
 
 return [
     App\Providers\AppServiceProvider::class,
+    App\Providers\DepartmentServiceProvider::class,
     App\Providers\FacilityServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,

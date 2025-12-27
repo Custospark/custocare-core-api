@@ -511,7 +511,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE
+        /**DONE++
          * FACILITIES - Healthcare facility registry
          * Shard Strategy: Reference data (CDN-distributed, cache-first)
          * DONE:

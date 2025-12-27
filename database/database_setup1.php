@@ -787,9 +787,8 @@ return new class extends Migration
         });
 
 /**
- * DONE.
+ * DONE++
  */
-
         Schema::create('staff_invitations', function (Blueprint $table) {
             $table->id();
             $table->uuid('invitation_uuid')->unique()->index();

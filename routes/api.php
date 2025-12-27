@@ -20,4 +20,5 @@ require __DIR__.'/facilities/_index.php';
 require __DIR__.'/department/_index.php';
 require __DIR__.'/facilityStaffRoles/_index.php';
 require __DIR__.'/staffInvitation/_index.php';
+require __DIR__.'/visit/_index.php';
 

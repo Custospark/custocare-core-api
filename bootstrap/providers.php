@@ -1,6 +1,7 @@
 <?php
 
 return [
+    App\Providers\AiAssessmentServiceProvider::class,
     App\Providers\AppServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,
     App\Providers\DepartmentServiceProvider::class,

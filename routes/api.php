@@ -25,4 +25,5 @@ require __DIR__.'/visitEvent/_index.php';
 require __DIR__.'/visitActor/_index.php';
 require __DIR__.'/visitRoute/_index.php';
 require __DIR__.'/clinicalEncounter/_index.php';
+require __DIR__.'/aiAssessment/_index.php';
 

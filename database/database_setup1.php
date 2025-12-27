@@ -837,7 +837,7 @@ return new class extends Migration
          * Consistency: Strong within shard, eventual across shards
          */
         
-        /**DONE.
+        /**DONE++
          * VISITS - Aggregate root for patient encounters
          * This is the core transactional table for all patient care episodes
          */

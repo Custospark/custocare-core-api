@@ -10,6 +10,7 @@ return [
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
     App\Providers\ServiceCatalogServiceProvider::class,
+    App\Providers\ServiceVersionServiceProvider::class,
     App\Providers\StaffCredentialServiceProvider::class,
     App\Providers\StaffInvitationServiceProvider::class,
     App\Providers\StaffServiceProvider::class,

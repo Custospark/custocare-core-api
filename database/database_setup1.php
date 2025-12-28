@@ -1504,7 +1504,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE.
+        /**DONE++
          * SERVICE_CATALOGS - Master service/procedure definitions
          * Shard Strategy: Reference data (cache-first, CDN-distributed)
          */

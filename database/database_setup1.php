@@ -2828,7 +2828,7 @@ return new class extends Migration
             $table->index(['participant_type', 'participant_id']);
         });
 
-        /**DONE
+        /**DONE++
          * ------------------------------------------------------------
          * MESSAGES
          * ------------------------------------------------------------

@@ -42,4 +42,5 @@ require __DIR__.'/api_v1/dataResidencyRule/_index.php';
 require __DIR__.'/api_v1/appointment/_index.php';
 require __DIR__.'/api_v1/clinicalDocument/_index.php';
 require __DIR__.'/api_v1/conversation/_index.php';
+require __DIR__.'/api_v1/conversationParticipant/_index.php';
 

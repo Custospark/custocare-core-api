@@ -29,4 +29,5 @@ require __DIR__.'/api_v1/aiAssessment/_index.php';
 require __DIR__.'/api_v1/serviceCatalog/_index.php';
 require __DIR__.'/api_v1/serviceVersion/_index.php';
 require __DIR__.'/api_v1/billingCycle/_index.php';
+require __DIR__.'/api_v1/invoiceLineItem/_index.php';
 

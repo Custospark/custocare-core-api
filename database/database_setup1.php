@@ -1668,7 +1668,7 @@ return new class extends Migration
             $table->index(['facility_id', 'is_current']);
         });
 
-        /**DONE.
+        /**DONE++
          * BILLING_CYCLES - Financial period aggregation
          * Shard Strategy: Sharded by (facility_id, visit_id)
          */

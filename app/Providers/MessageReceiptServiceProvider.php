@@ -50,6 +50,6 @@ class MessageReceiptServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
         
         // Load routes
-        $this->loadRoutesFrom(__DIR__ . '/../../routes/message-receipts.php');
+        // $this->loadRoutesFrom(__DIR__ . '/../../routes/message-receipts.php');
     }
 }

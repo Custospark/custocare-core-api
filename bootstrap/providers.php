@@ -19,6 +19,7 @@ return [
     App\Providers\InventoryLedgerServiceProvider::class,
     App\Providers\InvoiceLineItemServiceProvider::class,
     App\Providers\MedicationDispenseServiceProvider::class,
+    App\Providers\MessageAttachmentServiceProvider::class,
     App\Providers\MessageReceiptServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,

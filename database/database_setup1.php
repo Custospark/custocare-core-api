@@ -1860,7 +1860,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE
+        /**DONE++
          * INVENTORY_ITEMS - Master inventory catalog
          */
         Schema::create('inventory_items', function (Blueprint $table) {

@@ -36,4 +36,5 @@ require __DIR__.'/api_v1/prescription/_index.php';
 require __DIR__.'/api_v1/medicationDispense/_index.php';
 require __DIR__.'/api_v1/visitCurrentState/_index.php';
 require __DIR__.'/api_v1/departmentQueueView/_index.php';
+require __DIR__.'/api_v1/patientVisitSummaryView/_index.php';
 

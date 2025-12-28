@@ -15,6 +15,7 @@ return [
     App\Providers\MedicationDispenseServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
+    App\Providers\PatientVisitSummaryViewServiceProvider::class,
     App\Providers\PrescriptionServiceProvider::class,
     App\Providers\ServiceCatalogServiceProvider::class,
     App\Providers\ServiceVersionServiceProvider::class,

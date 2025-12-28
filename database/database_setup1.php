@@ -2303,7 +2303,7 @@ return new class extends Migration
             $table->index(['has_critical_alerts', 'acuity_score']);
         });
 
-        /**DONE
+        /**DONE++
          * DEPARTMENT_QUEUE_VIEWS - Real-time department operations dashboard
          * Refresh Strategy: 30-second batch update
          */

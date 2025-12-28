@@ -8,7 +8,7 @@ Route::prefix('service-catalogs')->name('api.service-catalogs.')->group(function
     // Public routes (if any)
     
     // Protected routes (with auth middleware)
-    Route::middleware(['auth:sunctum'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         // Standard RESTful routes
         Route::get('/', [ServiceCatalogController::class, 'index'])->name('index');
         Route::post('/', [ServiceCatalogController::class, 'store'])->name('store');

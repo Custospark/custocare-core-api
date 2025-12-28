@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\BillingCycleController;
 
-Route::middleware(['auth:sunctum'])->group(function () {
+Route::middleware(['auth:sanctum'])->group(function () {
     
     // Billing Cycles Routes
     Route::prefix('billing-cycles')->name('billing-cycles.')->group(function () {

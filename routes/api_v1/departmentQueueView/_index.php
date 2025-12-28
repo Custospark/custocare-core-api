@@ -4,7 +4,7 @@ use App\Http\Controllers\Api\DepartmentQueueViewController;
 use Illuminate\Support\Facades\Route;
 
 // Department Queue Views Routes
-Route::prefix('department-queue-views')->middleware('auth:sunctum')->name('api.department-queue-views.')->group(function () {
+Route::prefix('department-queue-views')->middleware('auth:sanctum')->name('api.department-queue-views.')->group(function () {
     // Basic CRUD operations
     Route::get('/', [DepartmentQueueViewController::class, 'index'])->name('index');
     Route::post('/', [DepartmentQueueViewController::class, 'store'])->name('store');

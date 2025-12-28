@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuditLogController;
 
 // Audit Logs Routes
-Route::prefix('audit-logs')->middleware('auth:sunctum')->name('audit-logs.')->group(function () {
+Route::prefix('audit-logs')->middleware('auth:sanctum')->name('audit-logs.')->group(function () {
     // Standard RESTful routes
     Route::get('/', [AuditLogController::class, 'index'])->name('index');
     Route::post('/', [AuditLogController::class, 'store'])->name('store');

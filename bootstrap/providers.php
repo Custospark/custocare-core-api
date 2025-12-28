@@ -3,6 +3,7 @@
 return [
     App\Providers\AiAssessmentServiceProvider::class,
     App\Providers\AppServiceProvider::class,
+    App\Providers\AppointmentServiceProvider::class,
     App\Providers\AuditLogServiceProvider::class,
     App\Providers\BillingCycleServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,

@@ -2527,7 +2527,7 @@ return new class extends Migration
             $table->index(['legal_hold_flag', 'created_at']);
         });
 
-        /**DONE.
+        /**DONE++
          * DATA_RESIDENCY_RULES - Regional compliance policies
          * Purpose: Enforce GDPR, HIPAA, and local data protection laws
          */

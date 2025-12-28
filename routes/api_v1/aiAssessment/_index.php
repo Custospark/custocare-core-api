@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AiAssessmentController;
 
 // AI Assessment Routes
-Route::prefix('ai-assessments')->middleware(['auth:api','auth:sunctum'])->group(function () {
+Route::prefix('ai-assessments')->middleware(['auth:api','auth:sanctum'])->group(function () {
     // Basic CRUD operations
     Route::get('/', [AiAssessmentController::class, 'index'])
         ->name('api.ai-assessments.index')

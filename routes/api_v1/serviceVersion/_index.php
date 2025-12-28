@@ -18,7 +18,7 @@ Route::prefix('service-versions')->name('service-versions.')->group(function () 
         ->name('history');
     
     // Protected routes (require authentication)
-    Route::middleware('auth:sunctum')->group(function () {
+    Route::middleware('auth:sanctum')->group(function () {
         // CRUD operations
         Route::post('/', [ServiceVersionController::class, 'store'])->name('store');
         Route::put('/{uuid}', [ServiceVersionController::class, 'update'])->name('update');

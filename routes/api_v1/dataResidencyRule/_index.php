@@ -13,7 +13,7 @@ use App\Http\Controllers\Api\DataResidencyRuleController;
 |
 */
 
-Route::middleware(['auth:api', 'auth:sunctum'])->group(function () {
+Route::middleware(['auth:api', 'auth:sanctum'])->group(function () {
     
     // Data Residency Rules - CRUD operations
     Route::prefix('data-residency-rules')->name('data-residency-rules.')->group(function () {

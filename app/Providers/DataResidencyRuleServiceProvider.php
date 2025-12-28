@@ -47,7 +47,7 @@ class DataResidencyRuleServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Register routes
-        $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
+        // $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
         
         // Register views if needed
         // $this->loadViewsFrom(__DIR__.'/../resources/views', 'dataResidencyRule');

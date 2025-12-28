@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Route;
 // Visit Current States API Routes
 Route::prefix('visit-current-states')->name('visit-current-states.')->group(function () {
     // Public endpoints (with authentication)
-    Route::middleware(['auth:api','auth:sunctum'])->group(function () {
+    Route::middleware(['auth:api','auth:sanctum'])->group(function () {
         // Standard CRUD operations
         Route::get('/', [VisitCurrentStateController::class, 'index'])->name('index');
         Route::post('/', [VisitCurrentStateController::class, 'store'])->name('store');

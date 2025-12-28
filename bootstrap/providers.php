@@ -11,6 +11,7 @@ return [
     App\Providers\InventoryItemServiceProvider::class,
     App\Providers\InventoryLedgerServiceProvider::class,
     App\Providers\InvoiceLineItemServiceProvider::class,
+    App\Providers\MedicationDispenseServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
     App\Providers\PrescriptionServiceProvider::class,

@@ -2043,7 +2043,7 @@ return new class extends Migration
             $table->index(['transaction_type', 'transaction_timestamp']);
         });
 
-        /**DONE
+        /**DONE++
          * PRESCRIPTIONS - Medication orders
          */
         Schema::create('prescriptions', function (Blueprint $table) {

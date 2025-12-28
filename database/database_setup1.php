@@ -1387,7 +1387,7 @@ return new class extends Migration
             $table->index(['documentation_status', 'documented_at']);
         });
 
-        /**DONE
+        /**DONE++
          * AI_ASSESSMENTS - AI/ML clinical decision support records
          * Regulatory Compliance: FDA 510(k), EU MDR for AI/ML medical devices
          */

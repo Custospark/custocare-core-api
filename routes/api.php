@@ -10,20 +10,21 @@
 |
 */
 
-require __DIR__.'/auth/_index.php';
-require __DIR__.'/users/_index.php';
-require __DIR__.'/patients/_index.php';
-require __DIR__.'/patientConsents/_index.php';
-require __DIR__.'/staff/_index.php';
-require __DIR__.'/staffCredential/_index.php';
-require __DIR__.'/facilities/_index.php';
-require __DIR__.'/department/_index.php';
-require __DIR__.'/facilityStaffRoles/_index.php';
-require __DIR__.'/staffInvitation/_index.php';
-require __DIR__.'/visit/_index.php';
-require __DIR__.'/visitEvent/_index.php';
-require __DIR__.'/visitActor/_index.php';
-require __DIR__.'/visitRoute/_index.php';
-require __DIR__.'/clinicalEncounter/_index.php';
-require __DIR__.'/aiAssessment/_index.php';
+require __DIR__.'/api_v1/auth/_index.php';
+require __DIR__.'/api_v1/users/_index.php';
+require __DIR__.'/api_v1/patients/_index.php';
+require __DIR__.'/api_v1/patientConsents/_index.php';
+require __DIR__.'/api_v1/staff/_index.php';
+require __DIR__.'/api_v1/staffCredential/_index.php';
+require __DIR__.'/api_v1/facilities/_index.php';
+require __DIR__.'/api_v1/department/_index.php';
+require __DIR__.'/api_v1/facilityStaffRoles/_index.php';
+require __DIR__.'/api_v1/staffInvitation/_index.php';
+require __DIR__.'/api_v1/visit/_index.php';
+require __DIR__.'/api_v1/visitEvent/_index.php';
+require __DIR__.'/api_v1/visitActor/_index.php';
+require __DIR__.'/api_v1/visitRoute/_index.php';
+require __DIR__.'/api_v1/clinicalEncounter/_index.php';
+require __DIR__.'/api_v1/aiAssessment/_index.php';
+require __DIR__.'/api_v1/serviceCatalog/_index.php';
 

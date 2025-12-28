@@ -2154,7 +2154,7 @@ return new class extends Migration
             $table->index(['controlled_substance_schedule', 'prescribed_at']);
         });
 
-        /**
+        /**DOMN++
          * MEDICATION_DISPENSES - Pharmacy fulfillment records
          */
         Schema::create('medication_dispenses', function (Blueprint $table) {

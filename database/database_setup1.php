@@ -1954,7 +1954,7 @@ return new class extends Migration
             $table->index(['controlled_substance_schedule', 'status']);
         });
 
-        /**DONE.
+        /**DONE++
          * INVENTORY_LEDGER - Double-entry inventory accounting
          * Purpose: Immutable transaction log (like accounting ledger)
          */

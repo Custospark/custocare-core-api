@@ -32,4 +32,5 @@ require __DIR__.'/api_v1/billingCycle/_index.php';
 require __DIR__.'/api_v1/invoiceLineItem/_index.php';
 require __DIR__.'/api_v1/inventoryItem/_index.php';
 require __DIR__.'/api_v1/inventoryLedger/_index.php';
+require __DIR__.'/api_v1/prescription/_index.php';
 

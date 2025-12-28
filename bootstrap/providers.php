@@ -13,6 +13,7 @@ return [
     App\Providers\InvoiceLineItemServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,
+    App\Providers\PrescriptionServiceProvider::class,
     App\Providers\ServiceCatalogServiceProvider::class,
     App\Providers\ServiceVersionServiceProvider::class,
     App\Providers\StaffCredentialServiceProvider::class,

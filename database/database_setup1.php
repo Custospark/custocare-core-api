@@ -2365,7 +2365,7 @@ return new class extends Migration
             $table->index(['department_id', 'snapshot_at']);
         });
 
-        /**DONE
+        /**DONE++
          * PATIENT_VISIT_SUMMARY_VIEWS - Patient portal & care coordination
          * Refresh Strategy: Nightly batch + real-time for active visits
          */

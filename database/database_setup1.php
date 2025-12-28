@@ -2243,7 +2243,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE.
+        /**DONE++
          * VISIT_CURRENT_STATES - Real-time visit status (materialized view)
          * Refresh Strategy: CDC (Change Data Capture) from visit_events
          */
@@ -2303,7 +2303,7 @@ return new class extends Migration
             $table->index(['has_critical_alerts', 'acuity_score']);
         });
 
-        /**DONE.
+        /**DONE
          * DEPARTMENT_QUEUE_VIEWS - Real-time department operations dashboard
          * Refresh Strategy: 30-second batch update
          */

@@ -5,6 +5,7 @@ return [
     App\Providers\AppServiceProvider::class,
     App\Providers\BillingCycleServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,
+    App\Providers\DepartmentQueueViewServiceProvider::class,
     App\Providers\DepartmentServiceProvider::class,
     App\Providers\FacilityServiceProvider::class,
     App\Providers\FacilityStaffRoleServiceProvider::class,

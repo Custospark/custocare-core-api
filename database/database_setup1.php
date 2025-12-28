@@ -2602,7 +2602,7 @@ return new class extends Migration
          * ========================================================================
          */
         
-        /**DONE
+        /**DONE++
          * APPOINTMENTS - Scheduled visits
          */
         Schema::create('appointments', function (Blueprint $table) {

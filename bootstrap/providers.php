@@ -6,6 +6,7 @@ return [
     App\Providers\AppointmentServiceProvider::class,
     App\Providers\AuditLogServiceProvider::class,
     App\Providers\BillingCycleServiceProvider::class,
+    App\Providers\ClinicalDocumentServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,
     App\Providers\DataResidencyRuleServiceProvider::class,
     App\Providers\DepartmentQueueViewServiceProvider::class,

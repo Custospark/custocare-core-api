@@ -2676,7 +2676,7 @@ return new class extends Migration
             $table->index(['provider_staff_id', 'scheduled_start_time']);
         });
 
-        /**DONE.
+        /**DONE++
          * CLINICAL_DOCUMENTS - Attached medical documents
          */
         Schema::create('clinical_documents', function (Blueprint $table) {

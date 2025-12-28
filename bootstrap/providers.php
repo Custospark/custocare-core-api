@@ -8,6 +8,7 @@ return [
     App\Providers\BillingCycleServiceProvider::class,
     App\Providers\ClinicalDocumentServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,
+    App\Providers\ConversationServiceProvider::class,
     App\Providers\DataResidencyRuleServiceProvider::class,
     App\Providers\DepartmentQueueViewServiceProvider::class,
     App\Providers\DepartmentServiceProvider::class,

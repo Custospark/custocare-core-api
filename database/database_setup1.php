@@ -1774,7 +1774,7 @@ return new class extends Migration
             $table->index(['billing_status', 'payment_due_date']);
         });
 
-        /**DONE.
+        /**DONE++
          * INVOICE_LINE_ITEMS - Detailed billing transactions
          * Purpose: Immutable snapshot of services rendered
          */

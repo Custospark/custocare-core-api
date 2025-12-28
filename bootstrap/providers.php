@@ -8,6 +8,7 @@ return [
     App\Providers\DepartmentServiceProvider::class,
     App\Providers\FacilityServiceProvider::class,
     App\Providers\FacilityStaffRoleServiceProvider::class,
+    App\Providers\InventoryItemServiceProvider::class,
     App\Providers\InvoiceLineItemServiceProvider::class,
     App\Providers\PatientConsentServiceProvider::class,
     App\Providers\PatientServiceProvider::class,

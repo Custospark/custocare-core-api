@@ -95,10 +95,10 @@ return new class extends Migration
             $table->foreign('reference_visit_id')->references('id')->on('visits')->onDelete('set null');
             
             // Performance indexes (critical for inventory queries)
-            $table->index(['facility_id', 'inventory_item_id', 'transaction_timestamp']);
+            $table->index(['facility_id', 'inventory_item_id', 'transaction_timestamp'],'fac_inventory_item_trans_timeestamp_unique');
             $table->index(['lot_number', 'expiry_date']);
             $table->index(['transaction_type', 'transaction_timestamp']);
-            $table->index(['facility_id', 'transaction_type', 'created_at']);
+            $table->index(['facility_id', 'transaction_type', 'created_at'],'fac_transact_type_created_at_unque');
         });
     }
 

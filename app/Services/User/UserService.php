@@ -6,17 +6,14 @@ namespace App\Services\User;
 
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
-use App\Services\Contracts\UserServiceInterface;
-use App\Services\User\Contracts\UserServiceInterface as ContractsUserServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use ParagonIE\ConstantTime\Base32;
 use PragmaRX\Google2FA\Google2FA;
 
-class UserService implements ContractsUserServiceInterface
+class UserService implements Contracts\UserServiceInterface
 {
     /**
      * Maximum failed login attempts before lockout.
@@ -53,7 +50,6 @@ class UserService implements ContractsUserServiceInterface
             // Hash national ID for lookup (not reversible)
             if (isset($data['national_id'])) {
                 $data['national_id_hash'] = hash('sha256', $data['national_id']);
-                // In production, you'd use Laravel's encryption here
                 $data['national_id_encrypted'] = encrypt($data['national_id']);
                 unset($data['national_id']);
             }
@@ -83,10 +79,9 @@ class UserService implements ContractsUserServiceInterface
             $data['identity_state'] = 'pending';
             $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
 
-            $user= $this->userRepository->create($data);
-            $token = $user->createToken('auth_token')->plainTextToken;
+            $user = $this->userRepository->create($data);
+            // Don't create token here - let the controller handle it
             return $user;
-
         });
     }
 
@@ -97,78 +92,107 @@ class UserService implements ContractsUserServiceInterface
      * @param string $ip
      * @param string $userAgent
      * @return array
-     * @throws \Exception
      */
-public function login(array $credentials, string $ip, string $userAgent): array
-{
-    $emailHash = hash('sha256', strtolower($credentials['email']));
-    $user = $this->userRepository->findByEmailHash($emailHash);
+    public function login(array $credentials, string $ip, string $userAgent): array
+    {
+        $emailHash = hash('sha256', strtolower($credentials['email']));
+        $user = $this->userRepository->findByEmailHash($emailHash);
 
-    if (!$user) {
-        return [
-            'ok' => false,
-            'code' => 'INVALID_CREDENTIALS',
-            'message' => 'Invalid credentials',
-            'http' => 401,
-            'payload' => null,
-        ];
-    }
-
-    if ($user->isAccountLocked()) {
-        return [
-            'ok' => false,
-            'code' => 'ACCOUNT_LOCKED',
-            'message' => 'Account is locked. Please try again later.',
-            'http' => 423,
-            'payload' => null,
-        ];
-    }
-
-    if (!Hash::check($credentials['password'], $user->password_hash)) {
-        $this->userRepository->incrementFailedAttempts($user);
-
-        if ($user->failed_login_attempts >= self::MAX_FAILED_ATTEMPTS) {
-            $this->userRepository->lockAccount(
-                $user,
-                Carbon::now()->addMinutes(self::LOCKOUT_DURATION)
-            );
-
+        if (!$user) {
             return [
-                'ok' => false,
-                'code' => 'ACCOUNT_LOCKED',
-                'message' => 'Account locked due to too many failed attempts.',
-                'http' => 423,
-                'payload' => null,
+                'success' => false,
+                'code' => 'INVALID_CREDENTIALS',
+                'message' => 'Invalid credentials',
+                'requires_mfa' => false,
+                'user' => null,
+                'token' => null,
             ];
         }
 
+        if ($user->isAccountLocked()) {
+            return [
+                'success' => false,
+                'code' => 'ACCOUNT_LOCKED',
+                'message' => 'Account is locked. Please try again later.',
+                'requires_mfa' => false,
+                'user' => null,
+                'token' => null,
+            ];
+        }
+
+        if (!Hash::check($credentials['password'], $user->password_hash)) {
+            $this->userRepository->incrementFailedAttempts($user);
+
+            if ($user->failed_login_attempts >= self::MAX_FAILED_ATTEMPTS) {
+                $this->userRepository->lockAccount(
+                    $user,
+                    Carbon::now()->addMinutes(self::LOCKOUT_DURATION)
+                );
+
+                return [
+                    'success' => false,
+                    'code' => 'ACCOUNT_LOCKED',
+                    'message' => 'Account locked due to too many failed attempts.',
+                    'requires_mfa' => false,
+                    'user' => null,
+                    'token' => null,
+                ];
+            }
+
+            return [
+                'success' => false,
+                'code' => 'INVALID_CREDENTIALS',
+                'message' => 'Invalid credentials',
+                'requires_mfa' => false,
+                'user' => null,
+                'token' => null,
+            ];
+        }
+
+        // Success path
+        $this->userRepository->resetFailedAttempts($user);
+        $this->userRepository->updateLastLogin($user, $ip, $userAgent);
+
+        // Check if MFA is required
+        $requiresMfa = $user->mfa_enabled;
+
+        if ($requiresMfa && !isset($credentials['mfa_code'])) {
+            return [
+                'success' => true,
+                'code' => 'MFA_REQUIRED',
+                'message' => 'Multi-factor authentication required',
+                'requires_mfa' => true,
+                'user' => $user,
+                'token' => null,
+            ];
+        }
+
+        // Validate MFA if code is provided
+        if ($requiresMfa && isset($credentials['mfa_code'])) {
+            if (!$this->validateMfa($user->id, $credentials['mfa_code'])) {
+                return [
+                    'success' => false,
+                    'code' => 'INVALID_MFA',
+                    'message' => 'Invalid MFA code',
+                    'requires_mfa' => true,
+                    'user' => null,
+                    'token' => null,
+                ];
+            }
+        }
+
+        // Generate token for successful login
+        $token = $user->createToken('auth-token')->plainTextToken;
+
         return [
-            'ok' => false,
-            'code' => 'INVALID_CREDENTIALS',
-            'message' => 'Invalid credentials',
-            'http' => 401,
-            'payload' => null,
+            'success' => true,
+            'code' => 'LOGIN_SUCCESS',
+            'message' => 'Login successful',
+            'requires_mfa' => false,
+            'user' => $user,
+            'token' => $token,
         ];
     }
-
-    // Success path
-    $this->userRepository->resetFailedAttempts($user);
-    $this->userRepository->updateLastLogin($user, $ip, $userAgent);
-
-    return [
-        'ok' => true,
-        'code' => 'LOGIN_SUCCESS',
-        'message' => 'Login successful',
-        'http' => 200,
-        'payload' => [
-            'user' => $user,
-            'token' => $user->createToken('auth-token')->plainTextToken,
-            'requires_mfa' => $user->mfa_enabled,
-        ],
-    ];
-}
-
-
 
     /**
      * Logout user.

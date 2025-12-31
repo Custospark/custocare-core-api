@@ -87,10 +87,9 @@ return new class extends Migration
             $table->foreign('staff_id')->references('id')->on('staff')->onDelete('cascade');
             
             // Prevent duplicate active assignments
-            $table->unique(['facility_id', 'staff_id', 'role_code', 'effective_from']);
+            $table->unique(['facility_id','staff_id','role_code'], 'fsr_facility_staff_role_eff_from_unique');
             
             // Performance indexes
-            $table->index(['facility_id', 'assignment_status', 'effective_from']);
             $table->index(['staff_id', 'is_primary_facility']);
             $table->index(['effective_to', 'assignment_status']); // For cleanup
         });

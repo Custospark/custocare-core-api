@@ -126,7 +126,7 @@ return new class extends Migration
             // Foreign key constraints
             $table->foreign('parent_organization_id')
                 ->references('id')
-                ->on('organizations')
+                ->on('facilities')
                 ->nullOnDelete();
                 
             $table->foreign('created_by_staff_id')

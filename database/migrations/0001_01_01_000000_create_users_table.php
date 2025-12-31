@@ -22,9 +22,9 @@ return new class extends Migration
             $table->uuid('global_user_uuid')->unique()->index();
             
             // National ID handling (encrypted + hashed for privacy)
-            $table->string('national_id_hash', 128)->unique()->comment('SHA-256 hashed national ID for privacy');
+            $table->string('national_id_hash', 128)->nullable()->unique()->comment('SHA-256 hashed national ID for privacy');
             $table->string('national_id_encrypted', 512)->comment('AES-256 encrypted national ID');
-            $table->string('national_id_country_code', 3)->index();
+            $table->string('national_id_country_code', 3)->nullable()->index();
             
             // Identity verification
             $table->enum('identity_state', ['pending', 'verified', 'suspended', 'archived'])->default('pending')->index();
@@ -33,7 +33,7 @@ return new class extends Migration
             $table->unsignedBigInteger('identity_verified_by_staff_id')->nullable();
             
             // Data residency & compliance
-            $table->string('data_residency_region', 10)->index()->comment('EU, US, APAC, etc.');
+            $table->string('data_residency_region', 10)->index()->nullable()->comment('EU, US, APAC, etc.');
             $table->json('allowed_processing_regions')->nullable()->comment('Regions where data can be processed');
             $table->unsignedBigInteger('created_from_facility_id')->nullable()->comment('First touchpoint facility');
             

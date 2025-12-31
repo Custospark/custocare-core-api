@@ -65,8 +65,8 @@ return new class extends Migration
             $table->timestamp('updated_at');
             
             // Performance indexes
-            $table->index(['last_visit_date', 'active_visits_count']);
-            $table->index(['next_appointment_at']);
+            $table->index(['last_visit_date', 'active_visits_count'],'last_visit_date_active_visit_count_unique');
+            $table->index(['next_appointment_at'],'next_appoitment_at_unque');
             
             // Foreign key constraints
             $table->foreign('patient_id')->references('id')->on('patients')->onDelete('cascade');

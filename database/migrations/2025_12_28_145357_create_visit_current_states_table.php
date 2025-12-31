@@ -65,9 +65,9 @@ return new class extends Migration
             $table->timestamp('materialized_at')->index();
             
             // Composite indexes for optimized queries
-            $table->index(['current_department_id', 'waiting_since', 'acuity_score']);
-            $table->index(['facility_id', 'current_phase', 'waiting_since']);
-            $table->index(['has_critical_alerts', 'acuity_score']);
+            $table->index(['current_department_id', 'waiting_since', 'acuity_score'],'current_dept_waiting_since_acuity_score_unique');
+            $table->index(['facility_id', 'current_phase', 'waiting_since'],'fac_current_phase_waitin_unque');
+            $table->index(['has_critical_alerts', 'acuity_score'],'has_crit_alerts_acuity_score_unque');
             
             // Foreign key constraints (if relationships exist in database)
             $table->foreign('visit_id')->references('id')->on('visits')->onDelete('cascade');
@@ -81,7 +81,7 @@ return new class extends Migration
         });
         
         // Add comment explaining CDC nature
-        DB::statement("COMMENT ON TABLE visit_current_states IS 'Materialized view for real-time visit status tracking. Updated via CDC from visit_events. Used for real-time dashboards and queue management.'");
+        // DB::statement("COMMENT ON TABLE visit_current_states IS 'Materialized view for real-time visit status tracking. Updated via CDC from visit_events. Used for real-time dashboards and queue management.'");
     }
 
     /**

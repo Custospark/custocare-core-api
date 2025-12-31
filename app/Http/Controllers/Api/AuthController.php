@@ -20,15 +20,14 @@ class AuthController extends Controller
     /**
      * Create a new controller instance.
      *
-     * @param UserServiceInterface $userService
+     * @param UserService $userService
      */
-  protected UserService $userService;
+    protected UserService $userService;
 
-public function __construct(UserService $userService)
-{
-    $this->userService = $userService;
-}
-
+    public function __construct(UserService $userService)
+    {
+        $this->userService = $userService;
+    }
 
     /**
      * Register a new user.
@@ -38,13 +37,38 @@ public function __construct(UserService $userService)
      */
     public function register(RegisterRequest $request): JsonResponse
     {
-        Log::info($request);
-        $user = $this->userService->register($request->validated());
+        Log::info('User registration attempt', ['email' => $request->input('email')]);
+        
+        try {
+            $user = $this->userService->register($request->validated());
+            
+            // Create token for immediate login after registration
+            $token = $user->createToken('auth-token')->plainTextToken;
 
-        return response()->json([
-            'message' => 'User registered successfully',
-            'user' => new UserResource($user),
-        ], 201);
+            return response()->json([
+                'success' => true,
+                'code' => 'REGISTRATION_SUCCESS',
+                'message' => 'User registered successfully',
+                'user' => new UserResource($user),
+                'token' => $token,
+                'requires_mfa' => false,
+            ], 201);
+            
+        } catch (\Exception $e) {
+            Log::error('Registration failed', [
+                'error' => $e->getMessage(),
+                'email' => $request->input('email')
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'code' => 'REGISTRATION_FAILED',
+                'message' => 'Registration failed. Please try again.',
+                'user' => null,
+                'token' => null,
+                'requires_mfa' => false,
+            ], 500);
+        }
     }
 
     /**
@@ -53,61 +77,42 @@ public function __construct(UserService $userService)
      * @param LoginRequest $request
      * @return JsonResponse
      */
-public function login(LoginRequest $request): JsonResponse
-{
-    $credentials = $request->only(['email', 'password']);
+    public function login(LoginRequest $request): JsonResponse
+    {
+        $credentials = $request->only(['email', 'password', 'mfa_code']);
 
-    $result = $this->userService->login(
-        $credentials,
-        $request->ip(),
-        $request->userAgent()
-    );
+        Log::info('Login attempt', [
+            'email' => $credentials['email'],
+            'has_mfa_code' => !empty($credentials['mfa_code'])
+        ]);
 
-    Log::info('Login attempt', [
-        'email' => $credentials['email'],
-        'code' => $result['code'],
-    ]);
-
-    // Failure
-    if (!$result['ok']) {
-        return response()->json([
-            'message' => $result['message'],
-            'code' => $result['code'],
-        ], $result['http']);
-    }
-
-    $data = $result['payload'];
-
-    // MFA required but not provided
-    if ($data['requires_mfa'] && !$request->filled('mfa_code')) {
-        return response()->json([
-            'message' => 'MFA required',
-            'requires_mfa' => true,
-        ], 200);
-    }
-
-    // MFA validation
-    if ($data['requires_mfa']) {
-        $valid = $this->userService->validateMfa(
-            $data['user']->id,
-            $request->input('mfa_code')
+        $result = $this->userService->login(
+            $credentials,
+            $request->ip(),
+            $request->userAgent()
         );
 
-        if (!$valid) {
-            return response()->json([
-                'message' => 'Invalid MFA code',
-                'code' => 'INVALID_MFA',
-            ], 401);
-        }
+        // Always return a consistent JSON structure
+        $responseData = [
+            'success' => $result['success'],
+            'code' => $result['code'],
+            'message' => $result['message'],
+            'requires_mfa' => $result['requires_mfa'],
+            'user' => $result['user'] ? new UserResource($result['user']) : null,
+            'token' => $result['token'],
+        ];
+
+        // Determine HTTP status code based on result
+        $statusCode = match($result['code']) {
+            'LOGIN_SUCCESS' => 200,
+            'MFA_REQUIRED' => 200, // Still 200 since this is a valid response
+            'ACCOUNT_LOCKED' => 423,
+            'INVALID_CREDENTIALS', 'INVALID_MFA' => 401,
+            default => 400,
+        };
+
+        return response()->json($responseData, $statusCode);
     }
-
-    return response()->json(
-        new LoginResource($data),
-        200
-    );
-}
-
-
 
     /**
      * Logout user.
@@ -120,7 +125,12 @@ public function login(LoginRequest $request): JsonResponse
         $this->userService->logout($request->user());
 
         return response()->json([
+            'success' => true,
+            'code' => 'LOGOUT_SUCCESS',
             'message' => 'Successfully logged out',
+            'requires_mfa' => false,
+            'user' => null,
+            'token' => null,
         ]);
     }
 
@@ -132,6 +142,13 @@ public function login(LoginRequest $request): JsonResponse
      */
     public function me(Request $request): JsonResponse
     {
-        return response()->json(new UserResource($request->user()));
+        return response()->json([
+            'success' => true,
+            'code' => 'USER_RETRIEVED',
+            'message' => 'User retrieved successfully',
+            'requires_mfa' => false,
+            'user' => new UserResource($request->user()),
+            'token' => null,
+        ]);
     }
 }

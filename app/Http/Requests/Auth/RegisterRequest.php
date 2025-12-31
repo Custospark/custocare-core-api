@@ -30,18 +30,18 @@ class RegisterRequest extends FormRequest
     {
         return [
             'national_id' => [
-                'required',
+                'nullable',
                 'string',
                 'max:50',
                 Rule::unique('users', 'national_id_hash')->whereNull('deleted_at')
             ],
-            'national_id_country_code' => 'required|string|size:3',
+            'national_id_country_code' => 'nullable|string|size:3',
             'email' => 'required|email|unique:users,email_hash',
-            'phone' => 'nullable|string|max:20',
+            'phone' => 'required|string|max:20',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
             'password' => 'required|string|min:8|confirmed',
-            'data_residency_region' => 'required|string|in:EU,US,APAC,MEA,SA',
+            'data_residency_region' => 'nullable|string|in:EU,US,APAC,MEA,SA',
         ];
     }
 

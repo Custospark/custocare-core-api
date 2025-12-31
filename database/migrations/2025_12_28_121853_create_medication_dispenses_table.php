@@ -104,8 +104,6 @@ return new class extends Migration
             $table->index(['status', 'dispensed_at']);
         });
         
-        // Add database-level constraint for dispense timestamp
-        DB::statement('ALTER TABLE medication_dispenses ADD CONSTRAINT chk_dispense_timestamp CHECK (dispensed_at <= CURRENT_TIMESTAMP)');
     }
 
     /**

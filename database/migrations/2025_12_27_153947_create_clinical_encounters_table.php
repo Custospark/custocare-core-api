@@ -132,7 +132,7 @@ return new class extends Migration
             // Composite indexes for common queries
             $table->index(['facility_id', 'visit_id']);
             $table->index(['patient_id', 'documented_at']);
-            $table->index(['primary_provider_staff_id', 'documented_at']);
+            $table->index(['primary_provider_staff_id', 'documented_at'],'provider_id_doc_at_unique');
             $table->index(['documentation_status', 'documented_at']);
             $table->index(['encounter_type', 'documented_at']);
         });

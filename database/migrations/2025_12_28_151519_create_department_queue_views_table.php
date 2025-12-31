@@ -69,7 +69,7 @@ return new class extends Migration
             $table->unique(['department_id', 'queue_type']);
             
             // Performance indexes
-            $table->index(['facility_id', 'capacity_status', 'snapshot_at']);
+            $table->index(['facility_id', 'capacity_status', 'snapshot_at'],'fac_capcity_status_snapshot_unque');
             $table->index(['department_id', 'snapshot_at']);
         });
     }

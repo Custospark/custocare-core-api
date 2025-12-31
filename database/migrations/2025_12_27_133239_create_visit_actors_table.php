@@ -74,10 +74,10 @@ return new class extends Migration
             $table->foreign('credential_snapshot_id')->references('id')->on('staff_credentials')->onDelete('set null');
             
             // Prevent duplicate participation records
-            $table->unique(['visit_id', 'staff_id', 'participation_type', 'participation_started_at']);
+            $table->unique(['visit_id', 'staff_id', 'participation_type', 'participation_started_at'],'visit_staff_part_unique');
             
             // Performance indexes
-            $table->index(['facility_id', 'staff_id', 'participation_started_at']);
+            $table->index(['facility_id', 'staff_id', 'participation_started_at'],'fac_staff_part_start_unique');
             $table->index(['staff_id', 'participation_started_at']);
             $table->index(['visit_id', 'participation_type']);
         });

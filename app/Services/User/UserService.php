@@ -10,6 +10,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
 
@@ -42,48 +43,62 @@ class UserService implements Contracts\UserServiceInterface
      * @throws \Exception
      */
     public function register(array $data): User
-    {
-        return DB::transaction(function () use ($data) {
-            // Encrypt sensitive data before storing
-            $data['global_user_uuid'] = Str::uuid()->toString();
-            
-            // Hash national ID for lookup (not reversible)
-            if (isset($data['national_id'])) {
-                $data['national_id_hash'] = hash('sha256', $data['national_id']);
+{
+    return DB::transaction(function () use ($data) {
+        try {
+            $email = strtolower($data['email']);
+            $emailHash = hash('sha256', $email);
+
+            // Check for duplicate email
+            if ($this->userRepository->findByEmailHash($emailHash)) {
+                throw new \Exception('A user with this email already exists.');
+            }
+
+            // Check for duplicate national ID if provided
+            if (!empty($data['national_id'])) {
+                $nationalIdHash = hash('sha256', $data['national_id']);
+                if ($this->userRepository->findByNationalIdHash($nationalIdHash)) {
+                    throw new \Exception('A user with this national ID already exists.');
+                }
+                $data['national_id_hash'] = $nationalIdHash;
                 $data['national_id_encrypted'] = encrypt($data['national_id']);
                 unset($data['national_id']);
             }
 
-            // Hash email for lookup
-            if (isset($data['email'])) {
-                $data['email_hash'] = hash('sha256', strtolower($data['email']));
-                $data['email_encrypted'] = encrypt($data['email']);
-                unset($data['email']);
-            }
+            // Generate global UUID
+            $data['global_user_uuid'] = Str::uuid()->toString();
 
-            // Hash phone for lookup
-            if (isset($data['phone'])) {
-                $data['phone_hash'] = hash('sha256', $data['phone']);
-                $data['phone_encrypted'] = encrypt($data['phone']);
-                unset($data['phone']);
-            }
+            // Encrypt email & phone
+            $data['email_hash'] = $emailHash;
+            $data['email_encrypted'] = encrypt($email);
+            unset($data['email']);
+
+            $phone = $data['phone'];
+            $data['phone_hash'] = hash('sha256', $phone);
+            $data['phone_encrypted'] = encrypt($phone);
+            unset($data['phone']);
 
             // Hash password
-            if (isset($data['password'])) {
-                $data['password_hash'] = Hash::make($data['password']);
-                $data['password_changed_at'] = now();
-                unset($data['password']);
-            }
+            $data['password_hash'] = Hash::make($data['password']);
+            $data['password_changed_at'] = now();
+            unset($data['password']);
 
-            // Set default values
-            $data['identity_state'] = 'pending';
+            // Set defaults
+            $data['identity_state'] = $data['identity_state'] ?? 'pending';
             $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
 
-            $user = $this->userRepository->create($data);
-            // Don't create token here - let the controller handle it
-            return $user;
-        });
-    }
+            return $this->userRepository->create($data);
+
+        } catch (\Exception $e) {
+            Log::warning('User registration failed', [
+                'error' => $e->getMessage(),
+                'email' => $email,
+            ]);
+            throw $e; // ensures transaction rollback
+        }
+    });
+}
+
 
     /**
      * Authenticate user login.

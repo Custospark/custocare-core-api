@@ -36,40 +36,53 @@ class AuthController extends Controller
      * @return JsonResponse
      */
     public function register(RegisterRequest $request): JsonResponse
-    {
-        Log::info('User registration attempt', ['email' => $request->input('email')]);
-        
-        try {
-            $user = $this->userService->register($request->validated());
-            
-            // Create token for immediate login after registration
-            $token = $user->createToken('auth-token')->plainTextToken;
+{
+    $email = $request->input('email');
 
-            return response()->json([
-                'success' => true,
-                'code' => 'REGISTRATION_SUCCESS',
-                'message' => 'User registered successfully',
-                'user' => new UserResource($user),
-                'token' => $token,
-                'requires_mfa' => false,
-            ], 201);
-            
-        } catch (\Exception $e) {
-            Log::error('Registration failed', [
-                'error' => $e->getMessage(),
-                'email' => $request->input('email')
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'code' => 'REGISTRATION_FAILED',
-                'message' => 'Registration failed. Please try again.',
-                'user' => null,
-                'token' => null,
-                'requires_mfa' => false,
-            ], 500);
+    try {
+        $user = $this->userService->register($request->validated());
+
+        $token = $user->createToken('auth-token')->plainTextToken;
+
+        return response()->json([
+            'success' => true,
+            'code' => 'REGISTRATION_SUCCESS',
+            'message' => 'account created successfully!',
+            'user' => new UserResource($user),
+            'token' => $token,
+            'requires_mfa' => false,
+        ], 201);
+
+    } catch (\Exception $e) {
+        // Determine if the error is due to a duplicate email or national ID
+        $duplicateEmail = str_contains($e->getMessage(), 'email already exists');
+        $duplicateNationalId = str_contains($e->getMessage(), 'national ID already exists');
+
+        $status = $duplicateEmail || $duplicateNationalId ? 409 : 500;
+
+        if ($duplicateEmail) {
+            $code = 'EMAIL_ALREADY_REGISTERED';
+            $message = 'A user with this email already exists.';
+        } elseif ($duplicateNationalId) {
+            $code = 'NATIONAL_ID_ALREADY_REGISTERED';
+            $message = 'A user with this national ID already exists.';
+        } else {
+            $code = 'REGISTRATION_FAILED';
+            $message = 'Registration failed. Please try again later.';
         }
+
+        return response()->json([
+            'success' => false,
+            'code' => $code,
+            'message' => $message,
+            'user' => null,
+            'token' => null,
+            'requires_mfa' => false,
+        ], $status);
     }
+}
+
+
 
     /**
      * Login user.

@@ -26,8 +26,8 @@ class StorePatientRequest extends FormRequest
     {
         return [
             'user_id' => 'required|integer|exists:users,id|unique:patients,user_id',
-            'medical_record_number_hash' => 'required|string|max:128|unique:patients',
-            'medical_record_number_encrypted' => 'required|string|max:512',
+            'medical_record_number_hash' => 'nullable|string|max:128|unique:patients',
+            'medical_record_number_encrypted' => 'nullable|string|max:512',
             'previous_mrn_list_encrypted' => 'nullable|string|max:2048',
             'date_of_birth' => 'required|date|before:today',
             'biological_sex' => 'required|in:male,female,intersex,unknown',

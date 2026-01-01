@@ -2,9 +2,11 @@
 
 namespace App\Services\Patient;
 
+use App\Exceptions\PatientCreationException;
 use App\Models\Patient;
 use App\Repositories\Contracts\PatientRepositoryInterface;
 use App\Services\Contracts\PatientServiceInterface;
+use App\Support\PatientIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -87,49 +89,78 @@ class PatientService implements PatientServiceInterface
      * Create a new patient record.
      */
     public function createPatient(array $data): Patient
-    {
-        DB::beginTransaction();
-        try {
-            // Validate business rules before creation
-            $validatedData = $this->validatePatientData($data);
-            
-            // Check if user already has a patient record
-            if (isset($validatedData['user_id'])) {
-                $existingPatient = $this->patientRepository->findByUserId($validatedData['user_id']);
-                if ($existingPatient) {
-                    throw new \Exception('User already has a patient record');
-                }
+{
+    DB::beginTransaction();
+
+    try {
+        // Validate incoming demographic/business data
+        $validatedData = $this->validatePatientData($data);
+
+        // Ensure user does not already have a patient record
+        if (isset($validatedData['user_id'])) {
+            if ($this->patientRepository->findByUserId($validatedData['user_id'])) {
+                throw new PatientCreationException('This user already has a patient record', 409);
             }
-
-            // Generate patient UUID if not provided
-            if (!isset($validatedData['patient_uuid'])) {
-                $validatedData['patient_uuid'] = (string) \Illuminate\Support\Str::uuid();
-            }
-
-            // Set default values
-            $validatedData['status'] = $validatedData['status'] ?? 'active';
-            $validatedData['portal_access_enabled'] = $validatedData['portal_access_enabled'] ?? true;
-            $validatedData['default_consent_level'] = $validatedData['default_consent_level'] ?? 'full';
-
-            $patient = $this->patientRepository->create($validatedData);
-            
-            DB::commit();
-            
-            Log::info('Patient created successfully', [
-                'patient_uuid' => $patient->patient_uuid,
-                'user_id' => $patient->user_id,
-            ]);
-            
-            return $patient;
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Failed to create patient', [
-                'data' => $this->sanitizeForLogging($data),
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
         }
+
+        // Generate Patient UUID (public, human-readable)
+        do {
+            $patientUuid = PatientIdGenerator::generatePatientUuid();
+        } while ($this->patientRepository->findByUuid($patientUuid));
+        $validatedData['patient_uuid'] = $patientUuid;
+
+        // Generate MRN and hash
+        do {
+            $mrn = PatientIdGenerator::generateMedicalRecordNumber();
+            $mrnHash = hash('sha256', $mrn);
+        } while ($this->patientRepository->findByMrnHash($mrnHash));
+
+        $validatedData['medical_record_number_encrypted'] = encrypt($mrn);
+        $validatedData['medical_record_number_hash'] = $mrnHash;
+       Log::info($mrnHash);
+        // Apply safe defaults
+        $validatedData = array_merge([
+            'status' => 'active',
+            'portal_access_enabled' => true,
+            'default_consent_level' => 'full',
+            'is_organ_donor' => false,
+            'requires_isolation' => false,
+            'acuity_baseline' => 1,
+            'preferred_language' => 'en',
+            'preferred_communication_method' => 'email',
+        ], $validatedData);
+
+        // Create patient
+        $patient = $this->patientRepository->create($validatedData);
+
+        DB::commit();
+
+        Log::info('Patient created successfully', [
+            'patient_uuid' => $patient->patient_uuid,
+            'user_id' => $patient->user_id,
+        ]);
+
+        return $patient;
+
+    } catch (PatientCreationException $e) {
+        DB::rollBack();
+        Log::warning('Patient creation business error', [
+            'data' => $this->sanitizeForLogging($data),
+            'error' => $e->getMessage(),
+        ]);
+        throw $e; // Controller will handle
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        Log::error('Failed to create patient', [
+            'data' => $this->sanitizeForLogging($data),
+            'error' => $e->getMessage(),
+        ]);
+        throw new PatientCreationException(
+            config('app.debug') ? $e->getMessage() : 'Internal server error',
+            500
+        );
     }
+}
 
     /**
      * Update an existing patient record.
@@ -458,9 +489,9 @@ class PatientService implements PatientServiceInterface
     {
         $rules = [
             'user_id' => 'required|integer|exists:users,id',
-            'medical_record_number_hash' => 'required|string|max:128|unique:patients,medical_record_number_hash' 
+            'medical_record_number_hash' => 'nullable|string|max:128|unique:patients,medical_record_number_hash' 
                 . ($patient ? ',' . $patient->id : ''),
-            'medical_record_number_encrypted' => 'required|string|max:512',
+            'medical_record_number_encrypted' => 'nullable|string|max:512',
             'previous_mrn_list_encrypted' => 'nullable|string|max:2048',
             'date_of_birth' => 'required|date|before:today',
             'biological_sex' => 'required|in:male,female,intersex,unknown',

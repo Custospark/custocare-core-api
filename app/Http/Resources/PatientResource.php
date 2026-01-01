@@ -82,8 +82,6 @@ class PatientResource extends JsonResource
             
             // Relationships
             'user' => new UserResource($this->whenLoaded('user')),
-            'primary_care_provider' => new StaffResource($this->whenLoaded('primaryCareProvider')),
-            'primary_care_facility' => new FacilityResource($this->whenLoaded('primaryCareFacility')),
         ];
     }
 

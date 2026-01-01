@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\PatientCreationException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\StorePatientRequest;
 use App\Http\Requests\Patient\UpdatePatientRequest;
@@ -72,27 +73,37 @@ class PatientController extends Controller
         try {
             $validatedData = $request->validated();
             $patient = $this->patientService->createPatient($validatedData);
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Patient created successfully.',
                 'data' => new PatientResource($patient),
             ], 201);
-        } catch (\Exception $e) {
-            Log::error('Failed to create patient', [
-                'data' => $request->except(['medical_record_number_encrypted', 'primary_insurance_id_encrypted']),
+
+        } catch (PatientCreationException $e) {
+            // Meaningful client response
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'errors' => [],
+                'data'=>[],
+            ], $e->status);
+        } catch (\Throwable $e) {
+            // Unexpected errors
+            Log::error('Unexpected error in patient store', [
+                'data' => $request->except([
+                    'medical_record_number_encrypted',
+                    'primary_insurance_id_encrypted'
+                ]),
                 'error' => $e->getMessage(),
             ]);
-            
-            $statusCode = $e instanceof \Illuminate\Validation\ValidationException ? 422 : 500;
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create patient.',
-                'errors' => $e instanceof \Illuminate\Validation\ValidationException 
-                    ? $e->errors() 
-                    : ['server' => config('app.debug') ? $e->getMessage() : 'Internal server error'],
-            ], $statusCode);
+                'errors' => ['server' => config('app.debug') ? $e->getMessage() : 'Internal server error'],
+                 'data'=>[],
+            ], 500);
         }
     }
 

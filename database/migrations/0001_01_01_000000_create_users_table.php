@@ -23,7 +23,7 @@ return new class extends Migration
             
             // National ID handling (encrypted + hashed for privacy)
             $table->string('national_id_hash', 128)->nullable()->unique()->comment('SHA-256 hashed national ID for privacy');
-            $table->string('national_id_encrypted', 512)->comment('AES-256 encrypted national ID');
+            $table->string('national_id_encrypted', 512)->nullable()->comment('AES-256 encrypted national ID');
             $table->string('national_id_country_code', 3)->nullable()->index();
             
             // Identity verification

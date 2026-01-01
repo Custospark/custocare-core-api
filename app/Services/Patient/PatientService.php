@@ -6,6 +6,7 @@ use App\Exceptions\PatientCreationException;
 use App\Models\Patient;
 use App\Repositories\Contracts\PatientRepositoryInterface;
 use App\Services\Contracts\PatientServiceInterface;
+use App\Support\HealthcareIdGenerator;
 use App\Support\PatientIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -94,7 +95,7 @@ class PatientService implements PatientServiceInterface
 
     try {
         // Validate incoming demographic/business data
-        $validatedData = $this->validatePatientData($data);
+        $validatedData = $data;
 
         // Ensure user does not already have a patient record
         if (isset($validatedData['user_id'])) {
@@ -105,13 +106,13 @@ class PatientService implements PatientServiceInterface
 
         // Generate Patient UUID (public, human-readable)
         do {
-            $patientUuid = PatientIdGenerator::generatePatientUuid();
+            $patientUuid = HealthcareIdGenerator::generate('patient');
         } while ($this->patientRepository->findByUuid($patientUuid));
         $validatedData['patient_uuid'] = $patientUuid;
 
         // Generate MRN and hash
         do {
-            $mrn = PatientIdGenerator::generateMedicalRecordNumber();
+            $mrn = HealthcareIdGenerator::generate('medical record');
             $mrnHash = hash('sha256', $mrn);
         } while ($this->patientRepository->findByMrnHash($mrnHash));
 

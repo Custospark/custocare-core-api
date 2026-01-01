@@ -1,0 +1,56 @@
+// Generate IDs for different entities
+$patientId = HealthcareIdGenerator::generate('patient');
+// Result: "PT-01HZX9F7K3" (Patient ID)
+
+$staffId = HealthcareIdGenerator::generate('staff');
+// Result: "ST-01HZX9F7K4" (Staff ID)
+
+$doctorId = HealthcareIdGenerator::generate('doctor');
+// Result: "DR-01HZX9F7K5" (Doctor ID)
+
+$facilityId = HealthcareIdGenerator::generate('facility', [
+    'type' => 'H',   // Hospital
+    'region' => '1'  // North America
+]);
+// Result: "HF-H126001ABC5" (Facility ID)
+
+$prescriptionId = HealthcareIdGenerator::generate('prescription');
+// Result: "RX-01HZX9F7K3ABCD2" (Prescription ID)
+
+// Or use convenience methods
+$patientId = HealthcareIdGenerator::generatePatientId();
+$staffId = HealthcareIdGenerator::generateStaffId();
+$doctorId = HealthcareIdGenerator::generateDoctorId();
+
+// Validate any ID
+$isValid = HealthcareIdGenerator::validate('PT-01HZX9F7K3');
+// Result: true
+
+// Parse ID metadata
+$metadata = HealthcareIdGenerator::parse('HF-H126001ABC5');
+/*
+Result:
+[
+    'id' => 'HF-H126001ABC5',
+    'entity_type' => 'facility',
+    'prefix' => 'HF',
+    'description' => 'Healthcare Facility',
+    'length' => 13,
+    'format_type' => 'facility',
+    'facility_type' => 'H',
+    'region_code' => '1',
+    'registration_year' => '2026',
+    'registration_day' => 1,
+    'random_sequence' => 'ABC',
+    'check_digit' => '5',
+    'facility_type_description' => 'Hospital',
+    'region_description' => 'North America',
+]
+*/
+
+// Generate MRN for specific facility
+$mrn = HealthcareIdGenerator::generateMedicalRecordNumber('NYC');
+// Result: "N26001XYZ8" (NYC facility, Jan 1 2026)
+
+// Get system statistics
+$stats = HealthcareIdGenerator::getStatistics();

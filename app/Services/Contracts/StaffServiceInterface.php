@@ -26,7 +26,7 @@ interface StaffServiceInterface
     /**
      * Create new staff.
      */
-    public function createStaff(array $data): array;
+    public function createStaff(array $data): ?Staff;
 
     /**
      * Update staff.

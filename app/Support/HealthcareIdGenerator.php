@@ -286,6 +286,23 @@ class HealthcareIdGenerator
      * @param string $facilityCode Facility code (1-2 characters)
      * @return string Medical Record Number
      */
+    public static function generateRandomCode(string $randomCode = '0'): string
+    {
+        $randomChar = strtoupper(substr($randomCode, 0, 1));
+        if (!in_array($randomChar, str_split(self::BASE32_ALPHABET))) {
+            $randomChar = '0';
+        }
+        
+        $year = date('y'); // Last two digits of year
+        $dayOfYear = str_pad(date('z') + 1, 3, '0', STR_PAD_LEFT); // 001-366
+        
+        // 20-bit random (4 Base32 chars = 1,048,576 possibilities)
+        $random = substr(self::generateFullUlid(), 18, 4);
+        
+        $base = $randomChar . $year . $dayOfYear . $random;
+        return $base . self::calculateVerhoeffCheckDigit($base);
+    }
+     
     public static function generateMedicalRecordNumber(string $facilityCode = '0'): string
     {
         $facilityChar = strtoupper(substr($facilityCode, 0, 1));

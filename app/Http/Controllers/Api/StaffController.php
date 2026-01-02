@@ -84,36 +84,52 @@ class StaffController extends Controller
     public function store(StoreStaffRequest $request): JsonResponse
     {
         try {
-            // Get validated data
-            $data = $request->validated();
-            
-            // Create staff
-            $result = $this->staffService->createStaff($data);
-            
-            if (!$result['success']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $result['message'],
-                    'data' => $result['data']
-                ], JsonResponse::HTTP_BAD_REQUEST);
-            }
-            
+            $staff = $this->staffService->createStaff(
+                $request->validated()
+            );
+
             return response()->json([
                 'success' => true,
-                'message' => $result['message'],
-                'data' => new StaffResource($result['data'])
+                'message' => 'Staff account created successfully.',
+                'data'    => new StaffResource($staff),
+                'errors'  => null,
             ], JsonResponse::HTTP_CREATED);
-        } catch (\Exception $e) {
-            Log::error('Error creating staff', [
-                'data' => $request->all(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
+
+        } catch (\Illuminate\Auth\AuthenticationException $e) {
+
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred while creating staff.',
-                'data' => null
+                'message' => 'Unauthenticated.',
+                'data'    => null,
+                'errors'  => null,
+            ], JsonResponse::HTTP_UNAUTHORIZED);
+
+        } catch (\RuntimeException $e) {
+
+            Log::warning('Staff creation failed', [
+                'reason' => $e->getMessage(),
+                'input'  => $request->validated(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to create staff record.',
+                'data'    => null,
+                'errors'  => null,
+            ], JsonResponse::HTTP_BAD_REQUEST);
+
+        } catch (\Throwable $e) {
+
+            Log::error('Unexpected staff creation error', [
+                'exception' => $e,
+                'input'     => $request->validated(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error.',
+                'data'    => null,
+                'errors'  => null,
             ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

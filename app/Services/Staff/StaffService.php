@@ -5,6 +5,7 @@ namespace App\Services\Staff;
 use App\Models\Staff;
 use App\Repositories\Contracts\StaffRepositoryInterface;
 use App\Services\Contracts\StaffServiceInterface;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -104,59 +105,37 @@ class StaffService implements StaffServiceInterface
     /**
      * Create new staff.
      */
-    public function createStaff(array $data): array
+     public function createStaff(array $data):?Staff
     {
-        try {
-            return DB::transaction(function () use ($data) {
-                // Generate UUID
-                $data['staff_uuid'] = Str::uuid()->toString();
-                
-                // Hash license number for duplicate detection
-                if (!empty($data['professional_license_number_encrypted'])) {
-                    $data['professional_license_number_hash'] = Hash::make(
-                        $data['professional_license_number_encrypted']
-                    );
-                }
-                
-                // Set audit trail
-                $data['created_by_staff_id'] = auth::id();
-                $data['updated_by_staff_id'] = auth::id();
-                
-                // Create staff
-                $staff = $this->staffRepository->create($data);
-                
-                if (!$staff) {
-                    return [
-                        'success' => false,
-                        'message' => 'Failed to create staff record.',
-                        'data' => null
-                    ];
-                }
-                
-                Log::info('Staff created successfully', [
-                    'staff_id' => $staff->id,
-                    'employee_id' => $staff->employee_id
-                ]);
-                
-                return [
-                    'success' => true,
-                    'message' => 'Staff created successfully.',
-                    'data' => $staff
-                ];
-            });
-        } catch (\Exception $e) {
-            Log::error('Error creating staff', [
-                'data_keys' => array_keys($data),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+        return DB::transaction(function () use ($data) {
+            $data['staff_uuid'] = HealthcareIdGenerator::generate('staff');
+            $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');
+
+            // Hash license number (for duplicate detection)
+            if (!empty($data['professional_license_number_encrypted'])) {
+                $data['professional_license_number_hash'] = Hash::make(
+                    $data['professional_license_number_encrypted']
+                );
+            }
+
+            // Audit fields
+            $data['created_by_user_id'] = auth::id();
+            $data['updated_by_user_id'] = auth::id();
+
+            $staff = $this->staffRepository->create($data);
+
+            if (!$staff) {
+                throw new \RuntimeException('Staff creation failed at persistence layer.');
+            }
+
+            Log::info('Staff created', [
+                'staff_id'    => $staff->id,
+                'employee_id' => $staff->employee_id,
+                'actor_id'    => auth::id(),
             ]);
-            
-            return [
-                'success' => false,
-                'message' => 'An error occurred while creating staff. Please try again.',
-                'data' => null
-            ];
-        }
+
+            return $staff;
+        });
     }
 
     /**

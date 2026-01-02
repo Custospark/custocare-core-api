@@ -36,9 +36,9 @@ return new class extends Migration
             
             // Employment status
             $table->enum('employment_status', [
-                'active',
-                'on_leave',
+                'employed',
                 'suspended',
+                'unemployed',
                 'terminated',
                 'retired',
                 'credentialing_pending'
@@ -111,8 +111,8 @@ return new class extends Migration
             // Audit trail
             $table->timestamps();
             $table->softDeletes();
-            $table->unsignedBigInteger('created_by_staff_id')->nullable();
-            $table->unsignedBigInteger('updated_by_staff_id')->nullable();
+            $table->unsignedBigInteger('created_by_user_id')->nullable();
+            $table->unsignedBigInteger('updated_by_user_id')->nullable();
             $table->json('metadata')->nullable();
             
             // Foreign keys

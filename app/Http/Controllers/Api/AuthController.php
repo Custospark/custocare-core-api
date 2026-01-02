@@ -47,7 +47,7 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'code' => 'REGISTRATION_SUCCESS',
-            'message' => 'account created successfully!',
+            'message' => 'Account created successfully!',
             'user' => new UserResource($user),
             'token' => $token,
             'requires_mfa' => false,

@@ -99,36 +99,38 @@ class FacilityController extends Controller
     {
         try {
             $validatedData = $request->validated();
-            $createdByStaffId = $request->user()->id;
+            $createdByStaffId = $validatedData['user_id'];
             
-            $result = $this->facilityService->createFacility($validatedData, $createdByStaffId);
-            
-            if (!$result['success']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $result['message'],
-                    'errors' => $result['errors'],
-                    'data' => null
-                ], 422);
-            }
+            $facility = $this->facilityService->createFacility($validatedData, $createdByStaffId);
             
             return response()->json([
                 'success' => true,
-                'message' => $result['message'],
-                'data' => new FacilityResource($result['facility']),
+                'message' => 'Facility created successfully',
+                'data' => new FacilityResource($facility),
                 'errors' => null
             ], 201);
+            
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Handle validation exceptions from service if any
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'data' => null,
+                'errors' => $e->errors()
+            ], 422);
+            
         } catch (\Exception $e) {
-            Log::error('Failed to store facility', [
+            Log::error('Failed to create facility', [
                 'error' => $e->getMessage(),
+                'created_by_staff_id' => $validatedData['user_id'] ?? null,
                 'trace' => $e->getTraceAsString()
             ]);
             
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create facility',
-                'errors' => ['system' => ['An unexpected error occurred']],
-                'data' => null
+                'data' => null,
+                'errors' => ['system' => ['An unexpected error occurred']]
             ], 500);
         }
     }

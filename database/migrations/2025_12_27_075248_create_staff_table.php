@@ -43,7 +43,7 @@ return new class extends Migration
                 'retired',
                 'credentialing_pending'
             ])->default('credentialing_pending')->index();
-            $table->enum('employment_type', ['full_time', 'part_time', 'contract', 'locum_tenens', 'volunteer'])->default('full_time');
+            $table->enum('employment_type', ['full_time', 'part_time', 'contract', 'locum_tenens', 'volunteer'])->default('volunteer');
             $table->date('hire_date')->nullable();
             $table->date('termination_date')->nullable();
             $table->text('termination_reason')->nullable();

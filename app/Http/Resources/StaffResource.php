@@ -89,20 +89,17 @@ class StaffResource extends JsonResource
                 return new UserResource($this->user);
             }),
             
-            'supervisor' => $this->whenLoaded('supervisor', function () {
-                return new StaffSimpleResource($this->supervisor);
-            }),
             
             'subordinates' => $this->whenLoaded('subordinates', function () {
                 return StaffResource::collection($this->subordinates);
             }),
             
             'created_by' => $this->whenLoaded('createdBy', function () {
-                return new StaffResource($this->createdBy);
+                return new UserResource($this->createdBy);
             }),
             
             'updated_by' => $this->whenLoaded('updatedBy', function () {
-                return new StaffResource($this->updatedBy);
+                return new UserResource($this->updatedBy);
             }),
             
             // Computed properties

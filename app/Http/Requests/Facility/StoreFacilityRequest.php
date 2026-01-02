@@ -22,7 +22,8 @@ class StoreFacilityRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user() && $this->user()->can('create', \App\Models\Facility::class);
+        // return $this->user() && $this->user()->can('create', \App\Models\Facility::class);
+        return true;
     }
 
     /**
@@ -33,13 +34,21 @@ class StoreFacilityRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'facility_uuid' => 'sometimes|uuid|unique:facilities,facility_uuid',
-            'facility_code' => 'required|string|max:50|unique:facilities,facility_code',
+            'facility_uuid' => 'sometimes|unique:facilities,facility_uuid',
+            'user_id' => 'required|exists:users,id',
+            'facility_code' => 'sometimes|string|max:50|unique:facilities,facility_code',
             'facility_name' => 'required|string|max:200',
             'legal_entity_name' => 'required|string|max:200',
             'tax_id_encrypted' => 'nullable|string|max:512',
             
-            'facility_type' => 'required|in:hospital,clinic,urgent_care,emergency_department,ambulatory_surgery_center,diagnostic_center,rehabilitation_center,long_term_care,hospice,community_health_center,specialty_center,telehealth_hub',
+            'facility_type' => 'required|in:hospital,clinic,urgent_care,emergency_department,ambulatory_surgery_center,diagnostic_center,rehabilitation_center,long_term_care,hospice,community_health_center,specialty_center,telehealth_hub,laboratory,pharmacy',
+            'nature_of_facility' => 'required|in:government,
+                private,
+                faith_based,
+                ngo,
+                military,
+                academic,
+                public_private_partnership',
             'facility_tier' => 'required|in:tertiary,secondary,primary,specialized',
             'bed_capacity' => 'nullable|integer|min:0|max:65535',
             'accreditations' => 'nullable|array',
@@ -52,7 +61,7 @@ class StoreFacilityRequest extends FormRequest
             'country_code' => 'required|string|size:3',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
-            'timezone' => 'required|string|max:50|timezone',
+            'timezone' => 'nullable|string|max:50|timezone',
             
             'main_phone' => 'required|string|max:50',
             'emergency_phone' => 'nullable|string|max:50',
@@ -86,7 +95,7 @@ class StoreFacilityRequest extends FormRequest
             'has_neonatal_icu' => 'boolean',
             'has_cardiac_cath_lab' => 'boolean',
             
-            'data_residency_region' => 'required|string|max:10',
+            'data_residency_region' => 'nullable|string|max:10',
             'primary_database_shard' => 'required|string|max:50',
             'replica_shard_locations' => 'nullable|array',
             

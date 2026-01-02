@@ -124,7 +124,7 @@ class FacilityResource extends JsonResource
             
             // Links for HATEOAS
             'links' => [
-                'self' => route('api.facilities.show', $this->facility_uuid),
+                'self' => route('facilities.show', $this->facility_uuid),
                 'parent_organization' => $this->parent_organization_id ? route('api.organizations.show', $this->parent_organization_id) : null,
             ],
         ];

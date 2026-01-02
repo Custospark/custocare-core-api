@@ -43,7 +43,7 @@ class StoreStaffRequest extends FormRequest
             'dea_expiry_date' => 'nullable|date|after:today',
             
             'employment_status' => 'required|in:employed,unemployed,suspended,terminated,retired,credentialing_pending',
-            'employment_type' => 'required|in:full_time,part_time,contract,locum_tenens,volunteer',
+            'employment_type' => 'nullable|in:full_time,part_time,contract,locum_tenens,volunteer',
             'hire_date' => 'nullable|date|before_or_equal:today',
             'termination_date' => 'nullable|date|after_or_equal:hire_date',
             'termination_reason' => 'nullable|string|max:1000',

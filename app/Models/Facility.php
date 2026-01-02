@@ -92,6 +92,7 @@ class Facility extends Model
         'facility_tier',
         'bed_capacity',
         'accreditations',
+        'nature_of_facility',
         'address_line1',
         'address_line2',
         'city',
@@ -274,7 +275,7 @@ class Facility extends Model
      */
     public function createdBy(): BelongsTo
     {
-        return $this->belongsTo(Staff::class, 'created_by_staff_id');
+        return $this->belongsTo(User::class, 'created_by_staff_id');
     }
 
     /**
@@ -284,7 +285,7 @@ class Facility extends Model
      */
     public function updatedBy(): BelongsTo
     {
-        return $this->belongsTo(Staff::class, 'updated_by_staff_id');
+        return $this->belongsTo(User::class, 'updated_by_staff_id');
     }
 
     /**

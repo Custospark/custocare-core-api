@@ -5,6 +5,7 @@ namespace App\Services\Facility;
 use App\Models\Facility;
 use App\Repositories\Contracts\FacilityRepositoryInterface;
 use App\Services\Contracts\FacilityServiceInterface;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
@@ -173,56 +174,25 @@ class FacilityService implements FacilityServiceInterface
      * @param int $createdByStaffId
      * @return array
      */
-    public function createFacility(array $data, int $createdByStaffId): array
-    {
-        try {
-            // Validate input data
-            $validationResult = $this->validateFacilityData($data);
-            
-            if (!$validationResult['valid']) {
-                return [
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validationResult['errors'],
-                    'facility' => null
-                ];
-            }
-            
-            // Add created_by_staff_id
-            $data['created_by_staff_id'] = $createdByStaffId;
-            $data['updated_by_staff_id'] = $createdByStaffId;
-            
-            // Ensure UUID is generated if not provided
-            if (empty($data['facility_uuid'])) {
-                $data['facility_uuid'] = (string) \Illuminate\Support\Str::uuid();
-            }
-            
-            // Create facility
-            $facility = $this->facilityRepository->create($data);
-            
-            // Clear relevant caches
-            $this->clearFacilityCaches();
-            
-            return [
-                'success' => true,
-                'message' => 'Facility created successfully',
-                'facility' => $facility,
-                'errors' => null
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to create facility in service', [
-                'error' => $e->getMessage(),
-                'created_by_staff_id' => $createdByStaffId,
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to create facility: ' . $e->getMessage(),
-                'errors' => ['system' => ['An unexpected error occurred']],
-                'facility' => null
-            ];
+    public function createFacility(array $data, int $createdByStaffId): ?Facility
+    {  
+        // Generate IDs
+        $data['facility_uuid'] = HealthcareIdGenerator::generate('facility');
+        $data['facility_code'] = HealthcareIdGenerator::generateRandomCode('HFC');
+        
+        // Add created_by_staff_id
+        $data['created_by_staff_id'] = $createdByStaffId;
+        $data['updated_by_staff_id'] = $createdByStaffId;
+        
+        // Ensure UUID is generated if not provided (fallback)
+        if (empty($data['facility_uuid'])) {
+            $data['facility_uuid'] = (string) \Illuminate\Support\Str::uuid();
         }
+        
+        // Create facility
+        $facility = $this->facilityRepository->create($data);
+        
+        return $facility;
     }
 
     /**

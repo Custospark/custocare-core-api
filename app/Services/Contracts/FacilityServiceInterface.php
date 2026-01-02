@@ -62,7 +62,7 @@ interface FacilityServiceInterface
      * @param int $createdByStaffId
      * @return array
      */
-    public function createFacility(array $data, int $createdByStaffId): array;
+    public function createFacility(array $data, int $createdByStaffId): ?Facility;
 
     /**
      * Update an existing facility.

@@ -15,7 +15,7 @@ return new class extends Migration
     {
         Schema::create('facilities', function (Blueprint $table) {
             $table->id();
-            $table->uuid('facility_uuid')->unique()->index();
+            $table->string('facility_uuid')->unique()->index();
             
             // Facility identification
             $table->string('facility_code', 50)->unique()->index();
@@ -24,6 +24,15 @@ return new class extends Migration
             $table->string('tax_id_encrypted', 512)->nullable();
             
             // Facility classification
+            $table->enum('nature_of_facility', [
+                "government",
+                "private",
+                "faith_based",
+                "ngo",
+                "military",
+                "academic",
+                "public_private_partnership"
+            ])->index();
             $table->enum('facility_type', [
                 'hospital',
                 'clinic',
@@ -36,7 +45,9 @@ return new class extends Migration
                 'hospice',
                 'community_health_center',
                 'specialty_center',
-                'telehealth_hub'
+                'telehealth_hub',
+                'laboratory',
+                'pharmacy'
             ])->index();
             
             $table->enum('facility_tier', ['tertiary', 'secondary', 'primary', 'specialized'])->index();
@@ -92,7 +103,7 @@ return new class extends Migration
             $table->boolean('has_cardiac_cath_lab')->default(false);
             
             // Data residency & sharding
-            $table->string('data_residency_region', 10)->index();
+            $table->string('data_residency_region', 10)->nullable()->index();
             $table->string('primary_database_shard', 50)->index();
             $table->json('replica_shard_locations')->nullable();
             
@@ -131,12 +142,12 @@ return new class extends Migration
                 
             $table->foreign('created_by_staff_id')
                 ->references('id')
-                ->on('staff')
+                ->on('users')
                 ->nullOnDelete();
                 
             $table->foreign('updated_by_staff_id')
                 ->references('id')
-                ->on('staff')
+                ->on('users')
                 ->nullOnDelete();
         });
     }

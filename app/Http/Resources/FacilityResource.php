@@ -110,10 +110,10 @@ class FacilityResource extends JsonResource
             
             'audit' => [
                 'created_by' => $this->whenLoaded('createdBy', function () {
-                    return new StaffResource($this->createdBy);
+                    return new UserResource($this->createdBy);
                 }),
                 'updated_by' => $this->whenLoaded('updatedBy', function () {
-                    return new StaffResource($this->updatedBy);
+                    return new UserResource($this->updatedBy);
                 }),
                 'created_at' => $this->created_at?->toIso8601String(),
                 'updated_at' => $this->updated_at?->toIso8601String(),
@@ -125,7 +125,7 @@ class FacilityResource extends JsonResource
             // Links for HATEOAS
             'links' => [
                 'self' => route('facilities.show', $this->facility_uuid),
-                'parent_organization' => $this->parent_organization_id ? route('api.organizations.show', $this->parent_organization_id) : null,
+                'parent_organization' => $this->parent_organization_id ? route('organizations.show', $this->parent_organization_id) : null,
             ],
         ];
     }

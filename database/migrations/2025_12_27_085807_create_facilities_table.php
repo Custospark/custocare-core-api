@@ -60,7 +60,7 @@ return new class extends Migration
             $table->string('city', 100)->index();
             $table->string('state_province', 100)->index();
             $table->string('postal_code', 20)->index();
-            $table->string('country_code', 3)->index();
+            $table->string('country_code', 2)->index();
             $table->decimal('latitude', 10, 8)->nullable();
             $table->decimal('longitude', 11, 8)->nullable();
             $table->string('timezone', 50)->default('UTC');
@@ -104,7 +104,7 @@ return new class extends Migration
             
             // Data residency & sharding
             $table->string('data_residency_region', 10)->nullable()->index();
-            $table->string('primary_database_shard', 50)->index();
+            $table->string('primary_database_shard', 50)->nullable()->index();
             $table->json('replica_shard_locations')->nullable();
             
             // Performance metrics

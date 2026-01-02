@@ -42,13 +42,7 @@ class StoreFacilityRequest extends FormRequest
             'tax_id_encrypted' => 'nullable|string|max:512',
             
             'facility_type' => 'required|in:hospital,clinic,urgent_care,emergency_department,ambulatory_surgery_center,diagnostic_center,rehabilitation_center,long_term_care,hospice,community_health_center,specialty_center,telehealth_hub,laboratory,pharmacy',
-            'nature_of_facility' => 'required|in:government,
-                private,
-                faith_based,
-                ngo,
-                military,
-                academic,
-                public_private_partnership',
+            'nature_of_facility' => 'required|in:government,private,faith_based,ngo,military,academic,public_private_partnership',
             'facility_tier' => 'required|in:tertiary,secondary,primary,specialized',
             'bed_capacity' => 'nullable|integer|min:0|max:65535',
             'accreditations' => 'nullable|array',
@@ -58,7 +52,7 @@ class StoreFacilityRequest extends FormRequest
             'city' => 'required|string|max:100',
             'state_province' => 'required|string|max:100',
             'postal_code' => 'required|string|max:20',
-            'country_code' => 'required|string|size:3',
+            'country_code' => 'required|string|size:2',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'timezone' => 'nullable|string|max:50|timezone',
@@ -96,7 +90,7 @@ class StoreFacilityRequest extends FormRequest
             'has_cardiac_cath_lab' => 'boolean',
             
             'data_residency_region' => 'nullable|string|max:10',
-            'primary_database_shard' => 'required|string|max:50',
+            'primary_database_shard' => 'nullable|string|max:50',
             'replica_shard_locations' => 'nullable|array',
             
             'average_wait_time_minutes' => 'nullable|numeric|min:0|max:999.99',

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -253,7 +254,7 @@ class Facility extends Model
 
         static::creating(function ($facility) {
             if (empty($facility->facility_uuid)) {
-                $facility->facility_uuid = (string) \Illuminate\Support\Str::uuid();
+                $facility->facility_uuid = HealthcareIdGenerator::generate('facility');
             }
         });
     }

@@ -101,8 +101,11 @@ class FacilityController extends Controller
             $validatedData = $request->validated();
             $createdByStaffId = $validatedData['user_id'];
             
+            /*Note:For General Creation Use createFacility() method for Admin Facility Creation,use createFacilityByAdmin() in service files.
             $facility = $this->facilityService->createFacility($validatedData, $createdByStaffId);
             
+        */
+             $facility = $this->facilityService->createFacilityByAdmin($validatedData, $createdByStaffId);
             return response()->json([
                 'success' => true,
                 'message' => 'Facility created successfully',

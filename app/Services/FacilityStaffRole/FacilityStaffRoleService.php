@@ -5,12 +5,16 @@ namespace App\Services\FacilityStaffRole;
 use App\Models\FacilityStaffRole;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+
 
 class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
 {
@@ -177,89 +181,48 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
     /**
      * Create a new role assignment
      */
-    public function createAssignment(array $data): array
+    public function createAssignment(array $data): ?FacilityStaffRole
     {
-        // Generate UUID if not provided
-        if (!isset($data['assignment_uuid'])) {
-            $data['assignment_uuid'] = Str::uuid()->toString();
-        }
-        
-        // Validate business rules
-        $validationResult = $this->validateAssignmentData($data);
-        
-        if (!$validationResult['success']) {
-            return $validationResult;
-        }
-        
-        DB::beginTransaction();
-        
-        try {
-            // Check for duplicate active assignments
-            $duplicateExists = $this->repository->duplicateAssignmentExists(
+        // Ensure UUID
+        $data['assignment_uuid'] ??= HealthcareIdGenerator::generateRandomCode();
+
+        // Business validation
+        $this->validateAssignmentDataOrFail($data);
+
+        return DB::transaction(function () use ($data) {
+
+            // Prevent duplicate active assignments
+            if ($this->repository->duplicateAssignmentExists(
                 $data['facility_id'],
                 $data['staff_id'],
                 $data['role_code'],
                 $data['effective_from'],
-                $data['exclude_id']
-            );
-            
-            if ($duplicateExists) {
-                DB::rollBack();
-                
-                return [
-                    'success' => false,
-                    'message' => 'An active assignment already exists for this staff member at this facility with the same role and effective date',
-                    'errors' => [
-                        'assignment' => ['Duplicate assignment detected']
+                $data['exclude_id'] ?? null
+            )) {
+                throw ValidationException::withMessages([
+                    'assignment' => [
+                        'An active assignment already exists for this staff member at this facility with the same role.'
                     ]
-                ];
+                ]);
             }
-            
-            // Set created_by_staff_id if not provided
-            if (!isset($data['created_by_staff_id'])) {
-                // In a real app, this would come from authenticated user
-                // $data['created_by_staff_id'] = auth()->id();
-            }
-            
-            // Parse JSON fields if they're arrays
+
+            // Normalize JSON fields
             $data = $this->parseJsonFields($data);
-            
-            // Create the assignment
-            $assignment = $this->repository->create($data);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'message' => 'Role assignment created successfully',
-                'data' => $assignment
-            ];
-        } catch (\RuntimeException $e) {
-            DB::rollBack();
-            
-            return [
-                'success' => false,
-                'message' => $e->getMessage(),
-                'errors' => [
-                    'system' => ['Failed to create assignment']
-                ]
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            Log::error('Service: Failed to create assignment', [
-                'data' => $data,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+
+            // Enforce system ownership
+            $data['created_by_staff_id'] ??= auth::id();
+
+            return $this->repository->create($data);
+        });
+    }
+
+
+    public function validateAssignmentDataOrFail(array $data): void
+    {
+        if (empty($data['facility_id']) || empty($data['staff_id'])) {
+            throw ValidationException::withMessages([
+                'assignment' => ['Facility and staff are required']
             ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to create role assignment. Please try again.',
-                'errors' => [
-                    'system' => ['Internal server error']
-                ]
-            ];
         }
     }
 

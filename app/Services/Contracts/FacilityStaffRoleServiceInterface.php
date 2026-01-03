@@ -65,7 +65,7 @@ interface FacilityStaffRoleServiceInterface
      * @param array $data
      * @return array
      */
-    public function createAssignment(array $data): array;
+    public function createAssignment(array $data): ?FacilityStaffRole;
 
     /**
      * Update an existing role assignment

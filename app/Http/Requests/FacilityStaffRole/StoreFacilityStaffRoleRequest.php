@@ -20,7 +20,8 @@ class StoreFacilityStaffRoleRequest extends FormRequest
         // return $this->user()->can('create', FacilityStaffRole::class);
         
         // For now, allow all authenticated users
-        return $this->user() !== null;
+        // return $this->user() !== null;
+        return true;
     }
 
     /**
@@ -31,31 +32,26 @@ class StoreFacilityStaffRoleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'facility_id' => 'required|integer|exists:facilities,id',
-            'staff_id' => 'required|integer|exists:staff,id',
+            'facility_id' => 'nullable|integer|exists:facilities,id',
+            'staff_id' => 'nullable|integer|exists:staff,id',
             'role_code' => 'required|string|in:' . implode(',', [
-                'attending_physician',
-                'resident_physician',
-                'consulting_physician',
+                'physician',
                 'surgeon',
                 'anesthesiologist',
-                'nurse_practitioner',
-                'physician_assistant',
-                'registered_nurse',
-                'charge_nurse',
+                'nurse',
                 'nurse_manager',
                 'pharmacist',
                 'pharmacy_technician',
                 'radiologist',
-                'radiologic_technician',
+                'radiology_technician',
                 'laboratory_scientist',
                 'respiratory_therapist',
                 'physical_therapist',
                 'occupational_therapist',
                 'social_worker',
                 'case_manager',
-                'receptionist',
                 'medical_assistant',
+                'receptionist',
                 'facility_administrator',
                 'department_manager',
                 'quality_coordinator',

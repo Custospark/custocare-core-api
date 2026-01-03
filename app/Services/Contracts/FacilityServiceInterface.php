@@ -65,6 +65,11 @@ interface FacilityServiceInterface
     public function createFacility(array $data, int $createdByStaffId): ?Facility;
 
     /**
+     * Facility Creation by at User onboarding and automatic role Assignment by system as Facility Administrator.
+     */
+    public function createFacilityByAdmin(array $data, int $createdByStaffId): ?Facility;
+
+    /**
      * Update an existing facility.
      *
      * @param int $id

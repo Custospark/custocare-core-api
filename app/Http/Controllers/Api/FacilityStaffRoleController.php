@@ -10,6 +10,8 @@ use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+
 
 use Symfony\Component\HttpFoundation\Response;
 
@@ -94,33 +96,32 @@ class FacilityStaffRoleController extends Controller
     public function store(StoreFacilityStaffRoleRequest $request): JsonResponse
     {
         try {
-            $validatedData = $request->validated();
-            
-            $result = $this->service->createAssignment($validatedData);
-            
-            if (!$result['success']) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $result['message'],
-                    'errors' => $result['errors'] ?? []
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-            
-            return (new FacilityStaffRoleResource($result['data']))
+            $assignment = $this->service->createAssignment($request->validated());
+
+            return (new FacilityStaffRoleResource($assignment))
                 ->additional([
                     'success' => true,
                     'message' => 'Role assignment created successfully'
                 ])
                 ->response()
                 ->setStatusCode(Response::HTTP_CREATED);
-                
-        } catch (\Exception $e) {
-          Log::error('Controller: Failed to create role assignment', [
-                'data' => $request->all(),
+
+        } catch (ValidationException $e) {
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+
+        } catch (\Throwable $e) {
+
+            Log::error('Controller: Failed to create role assignment', [
+                'request' => $request->all(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create role assignment',
@@ -130,7 +131,6 @@ class FacilityStaffRoleController extends Controller
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
-
     /**
      * Display the specified resource.
      *

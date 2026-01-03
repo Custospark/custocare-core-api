@@ -4,13 +4,17 @@ namespace App\Services\Facility;
 
 use App\Models\Facility;
 use App\Repositories\Contracts\FacilityRepositoryInterface;
+use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityServiceInterface;
+use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Class FacilityService
@@ -21,25 +25,19 @@ use Illuminate\Support\Facades\Validator;
 class FacilityService implements FacilityServiceInterface
 {
     /**
-     * @var FacilityRepositoryInterface
-     */
-    private FacilityRepositoryInterface $facilityRepository;
-
-    /**
      * Cache TTL in seconds (5 minutes for reference data)
      */
     private const CACHE_TTL = 300;
+    protected FacilityRepositoryInterface $facilityRepository;
+    protected FacilityStaffRoleServiceInterface $facilityStaffRoleService;
 
-    /**
-     * FacilityService constructor.
-     *
-     * @param FacilityRepositoryInterface $facilityRepository
-     */
-    public function __construct(FacilityRepositoryInterface $facilityRepository)
-    {
+    public function __construct(
+        FacilityRepositoryInterface $facilityRepository,
+        FacilityStaffRoleServiceInterface $facilityStaffRoleService
+    ) {
         $this->facilityRepository = $facilityRepository;
+        $this->facilityStaffRoleService = $facilityStaffRoleService;
     }
-
     /**
      * Get all facilities with optional filters.
      *
@@ -194,6 +192,59 @@ class FacilityService implements FacilityServiceInterface
         
         return $facility;
     }
+
+
+    /**
+     * Create Facility By Admin at UI Accountion
+     */
+
+ 
+    public function createFacilityByAdmin(array $data, int $createdByStaffId): Facility
+    {
+        return DB::transaction(function () use ($data, $createdByStaffId) {
+
+            // Generate identifiers
+            $data['facility_uuid'] ??= HealthcareIdGenerator::generateRandomCode();
+            $data['facility_code'] ??= HealthcareIdGenerator::generate('facility');
+
+            // Audit fields
+            $data['created_by_staff_id'] = $createdByStaffId;
+            $data['updated_by_staff_id'] = $createdByStaffId;
+
+            // Fallback UUID safety
+            // if (empty($data['facility_uuid'])) {
+            //     $data['facility_uuid'] = (string) Str::uuid();
+            // }
+
+            // 1️⃣ Create Facility
+            $facility = $this->facilityRepository->create($data);
+
+            // 2️⃣ Auto-assign Facility Administrator role (SYSTEM RULE)
+            $this->facilityStaffRoleService->createAssignment([
+                'facility_id' => $facility->id,
+                'staff_id' => $createdByStaffId,
+
+                'role_code' => 'facility_administrator',
+
+                'department_ids' => [],
+
+                'is_primary_facility' => true,
+                'effective_from' => now()->toDateString(),
+
+                'created_by_staff_id' => $createdByStaffId,
+
+                'metadata' => [
+                    'assigned_by' => 'system',
+                    'assignment_reason' => 'facility_creator'
+                ]
+            ]);
+
+            return $facility;
+        });
+    }
+
+
+    
 
     /**
      * Update an existing facility.

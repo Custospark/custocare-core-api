@@ -19,40 +19,36 @@ return new class extends Migration
             
             // Role definition
             $table->enum('role_code', [
-                'attending_physician',
-                'resident_physician',
-                'consulting_physician',
-                'surgeon',
-                'anesthesiologist',
-                'nurse_practitioner',
-                'physician_assistant',
-                'registered_nurse',
-                'charge_nurse',
-                'nurse_manager',
-                'pharmacist',
-                'pharmacy_technician',
-                'radiologist',
-                'radiologic_technician',
-                'laboratory_scientist',
-                'respiratory_therapist',
-                'physical_therapist',
-                'occupational_therapist',
-                'social_worker',
-                'case_manager',
-                'receptionist',
-                'medical_assistant',
-                'facility_administrator',
-                'department_manager',
-                'quality_coordinator',
-                'infection_control',
-                'it_support'
-            ])->index();
+            'physician',
+            'surgeon',
+            'anesthesiologist',
+            'nurse',
+            'nurse_manager',
+            'pharmacist',
+            'pharmacy_technician',
+            'radiologist',
+            'radiology_technician',
+            'laboratory_scientist',
+            'respiratory_therapist',
+            'physical_therapist',
+            'occupational_therapist',
+            'social_worker',
+            'case_manager',
+            'medical_assistant',
+            'receptionist',
+            'facility_administrator',
+            'department_manager',
+            'quality_coordinator',
+            'infection_control',
+            'it_support'
+        ])->index();
+
             
-            $table->json('department_ids')->comment('Departments within facility where staff works');
+            $table->json('department_ids')->nullable()->comment('Departments within facility where staff works');
             $table->boolean('is_primary_facility')->default(false);
             
             // Privileges at this facility
-            $table->json('privileges_bitmask')->comment('Bitwise flags for specific privileges');
+            $table->json('privileges_bitmask')->nullable()->comment('Bitwise flags for specific privileges');
             $table->json('accessible_patient_populations')->nullable()->comment('Age groups, conditions, etc.');
             $table->json('prescribing_authority_at_facility')->nullable();
             
@@ -84,7 +80,7 @@ return new class extends Migration
             
             // Foreign keys
             $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('cascade');
-            $table->foreign('staff_id')->references('id')->on('staff')->onDelete('cascade');
+            $table->foreign('staff_id')->references('id')->on('users')->onDelete('cascade');
             
             // Prevent duplicate active assignments
             $table->unique(['facility_id','staff_id','role_code'], 'fsr_facility_staff_role_eff_from_unique');

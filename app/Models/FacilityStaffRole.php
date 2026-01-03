@@ -154,7 +154,7 @@ class FacilityStaffRole extends Model
      */
     public function createdBy()
     {
-        return $this->belongsTo(Staff::class, 'created_by_staff_id');
+        return $this->belongsTo(User::class, 'created_by_staff_id');
     }
 
     /**
@@ -164,7 +164,7 @@ class FacilityStaffRole extends Model
      */
     public function credentialedBy()
     {
-        return $this->belongsTo(Staff::class, 'credentialed_by_staff_id');
+        return $this->belongsTo(User::class, 'credentialed_by_staff_id');
     }
 
     /**

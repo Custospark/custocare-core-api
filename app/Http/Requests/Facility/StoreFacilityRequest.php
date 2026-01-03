@@ -122,7 +122,7 @@ class StoreFacilityRequest extends FormRequest
             'state_province.required' => 'State/Province is required.',
             'postal_code.required' => 'Postal code is required.',
             'country_code.required' => 'Country code is required.',
-            'country_code.size' => 'Country code must be exactly 3 characters.',
+            'country_code.size' => 'Country code must be exactly 2 characters.',
             'main_phone.required' => 'Main phone number is required.',
             'operating_hours.required' => 'Operating hours are required.',
             'available_services.required' => 'At least one available service is required.',

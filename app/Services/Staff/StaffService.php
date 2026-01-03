@@ -105,38 +105,30 @@ class StaffService implements StaffServiceInterface
     /**
      * Create new staff.
      */
-     public function createStaff(array $data):?Staff
-    {
-        return DB::transaction(function () use ($data) {
-            $data['staff_uuid'] = HealthcareIdGenerator::generate('staff');
-            $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');
+    public function createStaff(array $data): Staff
+{
+    $data['staff_uuid']  = HealthcareIdGenerator::generate('staff');
+    $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');
 
-            // Hash license number (for duplicate detection)
-            if (!empty($data['professional_license_number_encrypted'])) {
-                $data['professional_license_number_hash'] = Hash::make(
-                    $data['professional_license_number_encrypted']
-                );
-            }
-
-            // Audit fields
-            $data['created_by_user_id'] = auth::id();
-            $data['updated_by_user_id'] = auth::id();
-
-            $staff = $this->staffRepository->create($data);
-
-            if (!$staff) {
-                throw new \RuntimeException('Staff creation failed at persistence layer.');
-            }
-
-            Log::info('Staff created', [
-                'staff_id'    => $staff->id,
-                'employee_id' => $staff->employee_id,
-                'actor_id'    => auth::id(),
-            ]);
-
-            return $staff;
-        });
+    if (!empty($data['professional_license_number_encrypted'])) {
+        $data['professional_license_number_hash'] = Hash::make(
+            $data['professional_license_number_encrypted']
+        );
     }
+
+    // ✅ Fallback instead of throwing
+    $data['created_by_user_id'] = $data['created_by_user_id'] ?? auth::id();
+    $data['updated_by_user_id'] = $data['updated_by_user_id'] ?? auth::id();
+
+    $staff = $this->staffRepository->create($data);
+
+    if (!$staff) {
+        throw new \RuntimeException('Staff creation failed at persistence layer.');
+    }
+
+    return $staff;
+}
+
 
     /**
      * Update staff.

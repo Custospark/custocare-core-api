@@ -126,6 +126,9 @@ class AuthController extends Controller
 
         return response()->json($responseData, $statusCode);
     }
+  
+
+
 
     /**
      * Logout user.

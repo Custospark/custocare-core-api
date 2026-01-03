@@ -142,12 +142,12 @@ return new class extends Migration
                 
             $table->foreign('created_by_staff_id')
                 ->references('id')
-                ->on('users')
+                ->on('staff')
                 ->nullOnDelete();
                 
             $table->foreign('updated_by_staff_id')
                 ->references('id')
-                ->on('users')
+                ->on('staff')
                 ->nullOnDelete();
         });
     }

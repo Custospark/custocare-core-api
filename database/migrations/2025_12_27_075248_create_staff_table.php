@@ -19,7 +19,7 @@ return new class extends Migration
             
             // Professional identification
             $table->string('employee_id', 50)->unique()->index();
-            $table->string('professional_title', 100);
+            $table->string('professional_title', 100)->nullable();
             $table->string('professional_license_number_encrypted', 512)->nullable();
             $table->string('professional_license_number_hash', 128)->nullable()->unique();
             $table->string('license_issuing_state', 50)->nullable();

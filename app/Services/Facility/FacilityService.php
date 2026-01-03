@@ -7,9 +7,11 @@ use App\Repositories\Contracts\FacilityRepositoryInterface;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityServiceInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
+use App\Services\Contracts\StaffServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -30,13 +32,16 @@ class FacilityService implements FacilityServiceInterface
     private const CACHE_TTL = 300;
     protected FacilityRepositoryInterface $facilityRepository;
     protected FacilityStaffRoleServiceInterface $facilityStaffRoleService;
+    protected StaffServiceInterface $staffService;
 
     public function __construct(
         FacilityRepositoryInterface $facilityRepository,
-        FacilityStaffRoleServiceInterface $facilityStaffRoleService
+        FacilityStaffRoleServiceInterface $facilityStaffRoleService,
+        StaffServiceInterface $staffService
     ) {
         $this->facilityRepository = $facilityRepository;
         $this->facilityStaffRoleService = $facilityStaffRoleService;
+        $this->staffService = $staffService;
     }
     /**
      * Get all facilities with optional filters.
@@ -199,49 +204,67 @@ class FacilityService implements FacilityServiceInterface
      */
 
  
-    public function createFacilityByAdmin(array $data, int $createdByStaffId): Facility
-    {
-        return DB::transaction(function () use ($data, $createdByStaffId) {
+    public function createFacilityByAdmin(array $data, int $actorUserId): Facility
+{
+    return DB::transaction(function () use ($data, $actorUserId) {
 
-            // Generate identifiers
-            $data['facility_uuid'] ??= HealthcareIdGenerator::generateRandomCode();
-            $data['facility_code'] ??= HealthcareIdGenerator::generate('facility');
+        /**
+         * Inject actor context for staff creation
+         */
+        $data['user_id'] = $actorUserId;
+        $data['created_by_user_id'] = $actorUserId;
+        $data['updated_by_user_id'] = $actorUserId;
 
-            // Audit fields
-            $data['created_by_staff_id'] = $createdByStaffId;
-            $data['updated_by_staff_id'] = $createdByStaffId;
+        /**
+         * 1️⃣ Create Staff
+         */
+        $staff = $this->staffService->createStaff($data);
 
-            // Fallback UUID safety
-            // if (empty($data['facility_uuid'])) {
-            //     $data['facility_uuid'] = (string) Str::uuid();
-            // }
+        if (!$staff) {
+            throw new \RuntimeException('Failed to create staff for facility admin.');
+        }
 
-            // 1️⃣ Create Facility
-            $facility = $this->facilityRepository->create($data);
+        $createdByStaffId = $staff->id;
 
-            // 2️⃣ Auto-assign Facility Administrator role (SYSTEM RULE)
-            $this->facilityStaffRoleService->createAssignment([
-                'facility_id' => $facility->id,
-                'staff_id' => $createdByStaffId,
+        /**
+         * 2️⃣ Facility identifiers
+         */
+        $data['facility_uuid'] ??= HealthcareIdGenerator::generateRandomCode();
+        $data['facility_code'] ??= HealthcareIdGenerator::generate('facility');
 
-                'role_code' => 'facility_administrator',
+        /**
+         * 3️⃣ Audit fields
+         */
+        $data['created_by_staff_id'] = $createdByStaffId;
+        $data['updated_by_staff_id'] = $createdByStaffId;
 
-                'department_ids' => [],
+        /**
+         * 4️⃣ Create Facility
+         */
+        $facility = $this->facilityRepository->create($data);
 
-                'is_primary_facility' => true,
-                'effective_from' => now()->toDateString(),
+        /**
+         * 5️⃣ Assign Administrator Role
+         */
+        $this->facilityStaffRoleService->createAssignment([
+            'facility_id'         => $facility->id,
+            'staff_id'            => $createdByStaffId,
+            'role_code'           => 'facility_administrator',
+            'department_ids'      => [],
+            'is_primary_facility' => true,
+            'effective_from'      => now()->toDateString(),
+            'created_by_staff_id' => $createdByStaffId,
+            'metadata' => [
+                'assigned_by' => 'system',
+                'assignment_reason' => 'facility_creator'
+            ]
+        ]);
 
-                'created_by_staff_id' => $createdByStaffId,
+        return $facility;
+    });
+}
 
-                'metadata' => [
-                    'assigned_by' => 'system',
-                    'assignment_reason' => 'facility_creator'
-                ]
-            ]);
 
-            return $facility;
-        });
-    }
 
 
     

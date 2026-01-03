@@ -80,7 +80,7 @@ return new class extends Migration
             
             // Foreign keys
             $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('cascade');
-            $table->foreign('staff_id')->references('id')->on('users')->onDelete('cascade');
+            $table->foreign('staff_id')->references('id')->on('staff')->onDelete('cascade');
             
             // Prevent duplicate active assignments
             $table->unique(['facility_id','staff_id','role_code'], 'fsr_facility_staff_role_eff_from_unique');

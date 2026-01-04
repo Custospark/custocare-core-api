@@ -14,7 +14,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Auth-related endpoints
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
-    Route::get('/user/context', [UserContextController::class, 'resolve']);
+    Route::get('/user/context/resolve', [UserContextController::class, 'resolve']);
 
 
     // ----------------------

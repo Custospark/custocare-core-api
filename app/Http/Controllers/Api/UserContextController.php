@@ -11,7 +11,7 @@ class UserContextController extends Controller
 {
     public function resolve(Request $request, UserContextResolverService $resolver): JsonResponse
     {
-        $user = $request->user(); // authenticated user
+        $user = $request->user();
 
         $context = $resolver->resolve($user->id);
 

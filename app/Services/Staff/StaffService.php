@@ -106,28 +106,43 @@ class StaffService implements StaffServiceInterface
      * Create new staff.
      */
     public function createStaff(array $data): Staff
-{
-    $data['staff_uuid']  = HealthcareIdGenerator::generate('staff');
-    $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');
+    {
+        if (empty($data['user_id'])) {
+            throw new \InvalidArgumentException('user_id is required to create staff.');
+        }
 
-    if (!empty($data['professional_license_number_encrypted'])) {
-        $data['professional_license_number_hash'] = Hash::make(
-            $data['professional_license_number_encrypted']
-        );
+        // 1️⃣ Check if staff already exists for this user
+        $existingStaff = $this->staffRepository
+            ->findByUserId($data['user_id']);
+
+        if ($existingStaff) {
+            return $existingStaff;
+        }
+
+        // 2️⃣ Only generate identifiers for NEW staff
+        $data['staff_uuid']  = HealthcareIdGenerator::generate('staff');
+        $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');
+
+        if (!empty($data['professional_license_number_encrypted'])) {
+            $data['professional_license_number_hash'] = Hash::make(
+                $data['professional_license_number_encrypted']
+            );
+        }
+
+        // 3️⃣ Audit fields (safe fallback)
+        $data['created_by_user_id'] = $data['created_by_user_id'] ?? auth::id();
+        $data['updated_by_user_id'] = $data['updated_by_user_id'] ?? auth::id();
+
+        // 4️⃣ Persist
+        $staff = $this->staffRepository->create($data);
+
+        if (!$staff) {
+            throw new \RuntimeException('Staff creation failed at persistence layer.');
+        }
+
+        return $staff;
     }
 
-    // ✅ Fallback instead of throwing
-    $data['created_by_user_id'] = $data['created_by_user_id'] ?? auth::id();
-    $data['updated_by_user_id'] = $data['updated_by_user_id'] ?? auth::id();
-
-    $staff = $this->staffRepository->create($data);
-
-    if (!$staff) {
-        throw new \RuntimeException('Staff creation failed at persistence layer.');
-    }
-
-    return $staff;
-}
 
 
     /**

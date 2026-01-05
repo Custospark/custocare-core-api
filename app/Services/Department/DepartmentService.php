@@ -36,6 +36,7 @@ class DepartmentService implements DepartmentServiceInterface
     public function getAllDepartments(array $filters = []): array
     {
         try {
+            dd('here');
             $perPage = $filters['per_page'] ?? 20;
             $departments = $this->repository->getAllPaginated($filters, $perPage);
 
@@ -101,50 +102,68 @@ class DepartmentService implements DepartmentServiceInterface
         DB::beginTransaction();
 
         try {
-            // Validate department data
+            // -------------------------------
+            // 1️⃣ Validate department data
+            // -------------------------------
             $validationResult = $this->validateDepartmentData($data);
             if (!$validationResult['success']) {
                 DB::rollBack();
                 return $validationResult;
             }
 
-            // Check if department code is unique within facility
+            // -------------------------------
+            // 2️⃣ Ensure department code is unique within the facility
+            // -------------------------------
             if (!$this->repository->isDepartmentCodeUnique($data['department_code'], $data['facility_id'])) {
                 DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Department code already exists in this facility.',
-                    'errors' => ['department_code' => ['The department code must be unique within the facility.']],
+                    'errors' => [
+                        'department_code' => ['The department code must be unique within the facility.']
+                    ],
                     'status' => 422,
                 ];
             }
 
-            // Validate parent department exists if provided
+            // -------------------------------
+            // 3️⃣ Validate parent department (if provided)
+            // -------------------------------
             if (!empty($data['parent_department_id'])) {
-                $parentDepartment = $this->repository->findById($data['parent_department_id']);
-                if (!$parentDepartment) {
+                $parent = $this->repository->findById($data['parent_department_id']);
+                if (!$parent) {
                     DB::rollBack();
                     return [
                         'success' => false,
                         'message' => 'Parent department not found.',
-                        'errors' => ['parent_department_id' => ['The selected parent department does not exist.']],
+                        'errors' => [
+                            'parent_department_id' => ['The selected parent department does not exist.']
+                        ],
                         'status' => 422,
                     ];
                 }
 
-                // Ensure parent department is in same facility
-                if ($parentDepartment->facility_id != $data['facility_id']) {
+                if ($parent->facility_id != $data['facility_id']) {
                     DB::rollBack();
                     return [
                         'success' => false,
                         'message' => 'Parent department must be in the same facility.',
-                        'errors' => ['parent_department_id' => ['Parent department must belong to the same facility.']],
+                        'errors' => [
+                            'parent_department_id' => ['Parent department must belong to the same facility.']
+                        ],
                         'status' => 422,
                     ];
                 }
             }
 
-            // Create the department
+            // -------------------------------
+            // 4️⃣ Prepare department data
+            // -------------------------------
+            $data['department_uuid'] = $data['department_uuid'] ?? (string) \Illuminate\Support\Str::uuid();
+
+            // -------------------------------
+            // 5️⃣ Create the department
+            // -------------------------------
             $department = $this->repository->create($data);
 
             DB::commit();
@@ -157,7 +176,11 @@ class DepartmentService implements DepartmentServiceInterface
             ];
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Failed to create department: ' . $e->getMessage());
+
+            Log::error('Failed to create department: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'data' => $data,
+            ]);
 
             return [
                 'success' => false,
@@ -167,6 +190,7 @@ class DepartmentService implements DepartmentServiceInterface
             ];
         }
     }
+
 
     /**
      * Update an existing department.

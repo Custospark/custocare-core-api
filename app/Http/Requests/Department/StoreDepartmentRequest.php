@@ -30,7 +30,7 @@ class StoreDepartmentRequest extends FormRequest
     {
         return [
             'facility_id' => 'required|integer|exists:facilities,id',
-            'department_code' => 'required|string|max:50',
+            'department_code' => 'nullable|string|max:50',
             'department_name' => 'required|string|max:200',
             'department_type' => [
                 'required',

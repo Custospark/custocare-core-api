@@ -2,14 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Department extends Model
 {
-    use HasFactory, SoftDeletes, HasUuids;
+    use HasFactory, SoftDeletes;
 
     /**
      * The primary key for the model.
@@ -24,6 +23,8 @@ class Department extends Model
      * @var string
      */
     protected $keyType = 'int';
+
+    public $incrementing = true;
 
     /**
      * The attributes that are mass assignable.

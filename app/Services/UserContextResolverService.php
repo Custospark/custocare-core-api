@@ -9,34 +9,44 @@ use App\Models\FacilityStaffRole;
 use App\Models\RoleModuleDefault;
 use App\Models\Module;
 use Illuminate\Support\Collection;
-use Spatie\Permission\Models\Role;
 
 class UserContextResolverService
 {
     /**
-     * Resolve full user context with properly resolved module access
+     * Resolve user context with capability-based module access
+     * 
+     * STRICTLY FOLLOWS:
+     * - Capabilities are the source of truth
+     * - NO merging of capabilities
+     * - NO global module access
+     * - Facility admin overrides defaults completely
      */
     public function resolve(int $userId): array
     {
         $user = User::findOrFail($userId);
 
-        // Get all active modules with complete information
-        $allModules = $this->getAllActiveModulesWithInfo();
+        // Get all active modules as source of truth
+        $allModules = $this->getAllActiveModules();
+
+        // Resolve ALL capabilities with their modules
+        $capabilities = $this->resolveAllCapabilities($user, $allModules);
+
+        // Facility roles (legacy support, only for staff with facilities)
+        $facilityRoles = $this->resolveFacilityRoles($userId);
 
         return [
             'user' => $this->minimalUserData($user),
-            'capabilities' => $this->resolveCapabilities($userId),
-            'facility_roles' => $this->resolveFacilityRoles($userId),
-            'module_access' => $this->resolveModuleAccessByCapability($user, $allModules)
+            'capabilities' => $capabilities,
+            'facility_roles' => $facilityRoles,
         ];
     }
 
     /**
-     * Return minimal user info for context.
+     * Return minimal user info for context
      */
     protected function minimalUserData(User $user): array
     {
-        return [
+          return [
             'id' => $user->id,
             'uuid' => $user->global_user_uuid,
             'full_name' => $user->first_name . ' ' . $user->last_name,
@@ -49,29 +59,69 @@ class UserContextResolverService
     }
 
     /**
-     * Resolve patient and staff capabilities.
+     * Get all active modules from database
      */
-    protected function resolveCapabilities(int $userId): array
+    protected function getAllActiveModules(): Collection
+    {
+        return Module::where('is_active', true)
+            ->select(['id', 'code', 'name', 'description'])
+            ->get()
+            ->keyBy('code');
+    }
+
+    /**
+     * Resolve ALL capabilities with their modules
+     */
+    protected function resolveAllCapabilities(User $user, Collection $allModules): array
     {
         $capabilities = [];
 
-        // Check if user is a patient
-        $patient = Patient::where('user_id', $userId)->first();
+        // 1. PATIENT capability (if patient record exists)
+        $patient = Patient::where('user_id', $user->id)->first();
         if ($patient) {
             $capabilities['patient'] = [
                 'patient_id' => $patient->id,
                 'primary_facility_id' => $patient->primary_facility_id,
                 'medical_record_number' => $patient->medical_record_number,
+                'modules' => $this->resolvePatientModules($allModules),
             ];
         }
 
-        // Check if user is a staff
-        $staff = Staff::where('user_id', $userId)->first();
+        // 2. STAFF capability (if staff record exists - ONLY ONE)
+        $staff = Staff::where('user_id', $user->id)->first();
         if ($staff) {
+            $hasFacilityAssignments = FacilityStaffRole::where('staff_id', $staff->id)
+                ->where('assignment_status', 'active')
+                ->where(function($query) {
+                    $query->whereNull('effective_to')
+                          ->orWhere('effective_to', '>=', now());
+                })
+                ->exists();
+
             $capabilities['staff'] = [
                 'staff_id' => $staff->id,
                 'employee_id' => $staff->employee_id,
                 'professional_title' => $staff->professional_title,
+            ];
+
+            if ($hasFacilityAssignments) {
+                // Staff WITH facilities - modules come ONLY from facility_staff_roles
+                $capabilities['staff']['facilities'] = $this->resolveStaffFacilitiesWithModules(
+                    $staff->id, 
+                    $allModules
+                );
+            } else {
+                // Staff WITHOUT facilities - modules come ONLY from role_module_defaults
+                $capabilities['staff']['facilities'] = [];
+                $capabilities['staff']['modules'] = $this->resolveStaffModules($allModules);
+            }
+        }
+
+        // 3. SPATIE ROLES capabilities (each is standalone)
+        $spatieRoles = $user->getRoleNames();
+        foreach ($spatieRoles as $roleName) {
+            $capabilities[$roleName] = [
+                'modules' => $this->resolveSpatieRoleModules($roleName, $allModules),
             ];
         }
 
@@ -79,7 +129,118 @@ class UserContextResolverService
     }
 
     /**
-     * Resolve active facility roles for staff.
+     * Resolve patient modules from role_module_defaults
+     */
+    protected function resolvePatientModules(Collection $allModules): array
+    {
+        $patientAccess = RoleModuleDefault::where('role_code', 'patient')
+            ->where('default_access', true)
+            ->whereIn('module_code', $allModules->keys())
+            ->pluck('module_code')
+            ->toArray();
+
+        return $this->buildModuleList($allModules, $patientAccess);
+    }
+
+    /**
+     * Resolve staff modules from role_module_defaults (staff without facilities)
+     */
+    protected function resolveStaffModules(Collection $allModules): array
+    {
+        $staffAccess = RoleModuleDefault::where('role_code', 'staff')
+            ->where('default_access', true)
+            ->whereIn('module_code', $allModules->keys())
+            ->pluck('module_code')
+            ->toArray();
+
+        return $this->buildModuleList($allModules, $staffAccess);
+    }
+
+    /**
+     * Resolve Spatie role modules from role_module_defaults
+     */
+    protected function resolveSpatieRoleModules(string $roleName, Collection $allModules): array
+    {
+        $roleAccess = RoleModuleDefault::where('role_code', $roleName)
+            ->where('default_access', true)
+            ->whereIn('module_code', $allModules->keys())
+            ->pluck('module_code')
+            ->toArray();
+
+        return $this->buildModuleList($allModules, $roleAccess);
+    }
+
+    /**
+     * Resolve staff facilities with their modules
+     */
+    protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $allModules): array
+    {
+        $facilityRoles = FacilityStaffRole::with('facility')
+            ->where('staff_id', $staffId)
+            ->where('assignment_status', 'active')
+            ->where(function($query) {
+                $query->whereNull('effective_to')
+                      ->orWhere('effective_to', '>=', now());
+            })
+            ->get();
+
+        $facilities = [];
+
+        foreach ($facilityRoles as $role) {
+            $moduleCodes = $this->extractModuleCodes($role->module_code);
+            
+            $facilities[] = [
+                'facility_id' => $role->facility_id,
+                'facility_name' => $role->facility->facility_name ?? null,
+                'role_code' => $role->role_code,
+                'modules' => $this->buildModuleList($allModules, $moduleCodes),
+            ];
+        }
+
+        return $facilities;
+    }
+
+    /**
+     * Extract module codes from JSON column
+     */
+    protected function extractModuleCodes($moduleCodeField): array
+    {
+        if (is_string($moduleCodeField)) {
+            $decoded = json_decode($moduleCodeField, true) ?? [];
+        } elseif (is_array($moduleCodeField)) {
+            $decoded = $moduleCodeField;
+        } else {
+            $decoded = [];
+        }
+
+        // Return only valid, non-empty module codes
+        return array_values(array_filter($decoded, function($item) {
+            return is_string($item) && !empty(trim($item));
+        }));
+    }
+
+    /**
+     * Build module list with has_access flag
+     */
+    protected function buildModuleList(Collection $allModules, array $accessibleCodes): array
+    {
+        $modules = [];
+
+        foreach ($allModules as $module) {
+            $modules[] = [
+                'id' => $module->id,
+                'code' => $module->code,
+                'name' => $module->name,
+                'description' => $module->description,
+                'has_access' => in_array($module->code, $accessibleCodes),
+            ];
+        }
+
+        return $modules;
+    }
+
+    /**
+     * Resolve facility roles (legacy support)
      */
     protected function resolveFacilityRoles(int $userId): array
     {
@@ -98,288 +259,95 @@ class UserContextResolverService
         return $roles->map(function ($role) {
             return [
                 'facility_id' => $role->facility_id,
-                'facility_uuid' => $role->facility->uuid ?? null,
                 'facility_name' => $role->facility->facility_name ?? null,
-                'staff_id' => $role->staff_id,
                 'role_code' => $role->role_code,
                 'is_primary_facility' => $role->is_primary_facility,
-                'module_codes' => $this->extractModuleCodes($role->module_code), // Add module codes to facility roles
-                'effective_from' => $role->effective_from,
-                'effective_to' => $role->effective_to,
             ];
         })->toArray();
     }
 
     /**
-     * Extract module codes from the module_code JSON column
+     * Check if user can access a module in a specific capability
      */
-    protected function extractModuleCodes($moduleCodeField): array
-    {
-        if (is_string($moduleCodeField)) {
-            $decoded = json_decode($moduleCodeField, true) ?? [];
-        } elseif (is_array($moduleCodeField)) {
-            $decoded = $moduleCodeField;
-        } else {
-            $decoded = [];
+    public function canAccessInCapability(
+        int $userId, 
+        string $capability, 
+        string $moduleCode, 
+        ?int $facilityId = null
+    ): bool {
+        $context = $this->resolve($userId);
+        
+        if (!isset($context['capabilities'][$capability])) {
+            return false;
         }
 
-        // Return as simple array of module codes
-        return array_values(array_filter($decoded, function($item) {
-            return is_string($item) && !empty(trim($item));
-        }));
-    }
+        $capabilityData = $context['capabilities'][$capability];
 
-    /**
-     * Get all active modules with full information
-     */
-    protected function getAllActiveModulesWithInfo(): Collection
-    {
-        return Module::where('is_active', true)
-            ->select(['id', 'code', 'name', 'description'])
-            ->get()
-            ->keyBy('code');
-    }
-
-    /**
-     * Resolve module access by capability type
-     */
-    protected function resolveModuleAccessByCapability(User $user, Collection $allModules): array
-    {
-        $access = [];
-
-        // 1. Resolve module access for PATIENT capability
-        if (Patient::where('user_id', $user->id)->exists()) {
-            $patientRole = 'patient';
-            $access['patient'] = [
-                'role_code' => $patientRole,
-                'role_name' => 'Patient',
-                'modules' => $this->resolveModulesForRole($patientRole, $allModules)
-            ];
-        }
-
-        // 2. Check if user has staff record
-        $staff = Staff::where('user_id', $user->id)->first();
-        if ($staff) {
-            // Check if staff has facility assignments
-            $hasFacilityAssignments = FacilityStaffRole::where('staff_id', $staff->id)
-                ->where('assignment_status', 'active')
-                ->exists();
-
-            if (!$hasFacilityAssignments) {
-                // 2a. Staff-only (no facility assignment)
-                $staffRole = 'staff';
-                $access['staff_only'] = [
-                    'role_code' => $staffRole,
-                    'role_name' => 'Unassigned Staff',
-                    'modules' => $this->resolveModulesForRole($staffRole, $allModules)
-                ];
+        // Handle staff with facilities
+        if ($capability === 'staff' && isset($capabilityData['facilities'])) {
+            if ($facilityId === null) {
+                // Staff without facilities
+                $modules = $capabilityData['modules'] ?? [];
             } else {
-                // 2b. Staff with facilities - resolve per facility
-                $facilityRoles = $this->resolveFacilityRoles($user->id);
-                $access['staff_with_facilities'] = [];
+                // Find specific facility
+                $facility = collect($capabilityData['facilities'])
+                    ->firstWhere('facility_id', $facilityId);
                 
-                foreach ($facilityRoles as $facilityRole) {
-                    $facilityId = $facilityRole['facility_id'];
-                    $roleCode = $facilityRole['role_code'];
-                    $moduleCodes = $facilityRole['module_codes'] ?? [];
-                    
-                    // Get facility-specific module access from module_code column
-                    $facilityModuleAccess = $this->getFacilitySpecificModulesFromCodes(
-                        $moduleCodes,
-                        $allModules
-                    );
-                    
-                    $access['staff_with_facilities'][$facilityId] = [
-                        'facility_id' => $facilityId,
-                        'facility_name' => $facilityRole['facility_name'],
-                        'role_code' => $roleCode,
-                        'role_name' => $this->getRoleDisplayName($roleCode),
-                        'is_primary_facility' => $facilityRole['is_primary_facility'],
-                        'assigned_module_codes' => $moduleCodes, // Include for debugging/reference
-                        'modules' => $facilityModuleAccess
-                    ];
-                }
+                if (!$facility) return false;
+                
+                $modules = $facility['modules'] ?? [];
+            }
+        } else {
+            // Patient or Spatie role
+            $modules = $capabilityData['modules'] ?? [];
+        }
+
+        foreach ($modules as $module) {
+            if ($module['code'] === $moduleCode && $module['has_access']) {
+                return true;
             }
         }
 
-        // 3. Resolve Spatie role module access
-        $spatieRoles = $user->getRoleNames();
-        foreach ($spatieRoles as $roleName) {
-            $access[$roleName] = [
-                'role_code' => $roleName,
-                'role_name' => $this->getRoleDisplayName($roleName),
-                'modules' => $this->resolveModulesForRole($roleName, $allModules)
-            ];
-        }
-
-        return $access;
+        return false;
     }
 
     /**
-     * Resolve modules for a specific role (from role_module_defaults)
+     * Get accessible modules for a specific capability
      */
-    protected function resolveModulesForRole(string $roleCode, Collection $allModules): array
-    {
-        // Get default access for this role
-        $defaultAccess = RoleModuleDefault::where('role_code', $roleCode)
-            ->where('default_access', true)
-            ->whereIn('module_code', $allModules->keys())
-            ->pluck('module_code')
-            ->toArray();
-
-        $modules = [];
-        foreach ($allModules as $module) {
-            $modules[] = [
-                'id' => $module->id,
-                'code' => $module->code,
-                'name' => $module->name,
-                'description' => $module->description,
-                'has_access' => in_array($module->code, $defaultAccess)
-            ];
-        }
-
-        return $modules;
-    }
-
-    /**
-     * Get facility-specific module access from module_code column
-     * This COMPLETELY OVERRIDES defaults - only modules in module_code have access
-     */
-    protected function getFacilitySpecificModulesFromCodes(
-        array $assignedModuleCodes,
-        Collection $allModules
+    public function getAccessibleModulesInCapability(
+        int $userId, 
+        string $capability, 
+        ?int $facilityId = null
     ): array {
-        $modules = [];
-        
-        foreach ($allModules as $module) {
-            $modules[] = [
-                'id' => $module->id,
-                'code' => $module->code,
-                'name' => $module->name,
-                'description' => $module->description,
-                'has_access' => in_array($module->code, $assignedModuleCodes)
-            ];
-        }
-
-        return $modules;
-    }
-
-    /**
-     * Get human-readable role name
-     */
-    protected function getRoleDisplayName(string $roleCode): string
-    {
-        $roleNames = [
-            'patient' => 'Patient',
-            'staff' => 'Staff',
-            'physician' => 'Physician',
-            'surgeon' => 'Surgeon',
-            'anesthesiologist' => 'Anesthesiologist',
-            'nurse' => 'Nurse',
-            'nurse_manager' => 'Nurse Manager',
-            'pharmacist' => 'Pharmacist',
-            'pharmacy_technician' => 'Pharmacy Technician',
-            'radiologist' => 'Radiologist',
-            'radiology_technician' => 'Radiology Technician',
-            'laboratory_scientist' => 'Laboratory Scientist',
-            'respiratory_therapist' => 'Respiratory Therapist',
-            'physical_therapist' => 'Physical Therapist',
-            'occupational_therapist' => 'Occupational Therapist',
-            'social_worker' => 'Social Worker',
-            'case_manager' => 'Case Manager',
-            'medical_assistant' => 'Medical Assistant',
-            'receptionist' => 'Receptionist',
-            'facility_administrator' => 'Facility Administrator',
-            'department_manager' => 'Department Manager',
-            'quality_coordinator' => 'Quality Coordinator',
-            'infection_control' => 'Infection Control',
-            'it_support' => 'IT Support',
-            'super_admin' => 'Super Administrator',
-            'admin' => 'Administrator',
-            'regulator' => 'Regulator',
-            'auditor' => 'Auditor',
-        ];
-
-        return $roleNames[$roleCode] ?? ucwords(str_replace('_', ' ', $roleCode));
-    }
-
-    /**
-     * Get accessible modules for current context (helper for frontend)
-     */
-    public function getAccessibleModulesForContext(int $userId, string $contextType, ?int $facilityId = null): array
-    {
         $context = $this->resolve($userId);
         
-        if (!isset($context['module_access'][$contextType])) {
+        if (!isset($context['capabilities'][$capability])) {
             return [];
         }
-        
-        // Handle staff with facilities (facility-specific)
-        if ($contextType === 'staff_with_facilities' && $facilityId) {
-            $facilityAccess = $context['module_access'][$contextType][$facilityId] ?? null;
-            $modules = $facilityAccess['modules'] ?? [];
+
+        $capabilityData = $context['capabilities'][$capability];
+
+        if ($capability === 'staff' && isset($capabilityData['facilities'])) {
+            if ($facilityId === null) {
+                // Staff without facilities
+                $modules = $capabilityData['modules'] ?? [];
+            } else {
+                // Find specific facility
+                $facility = collect($capabilityData['facilities'])
+                    ->firstWhere('facility_id', $facilityId);
+                
+                if (!$facility) return [];
+                
+                $modules = $facility['modules'] ?? [];
+            }
         } else {
-            $modules = $context['module_access'][$contextType]['modules'] ?? [];
+            // Patient or Spatie role
+            $modules = $capabilityData['modules'] ?? [];
         }
-        
-        // Filter for only accessible modules
+
+        // Return only accessible modules
         return array_values(array_filter($modules, function($module) {
             return $module['has_access'] === true;
         }));
-    }
-
-    /**
-     * Check if user can access a specific module in their current context
-     */
-    public function canAccessModule(int $userId, string $moduleCode, ?string $contextType = null, ?int $facilityId = null): bool
-    {
-        $context = $this->resolve($userId);
-        
-        // If no context type specified, check all capabilities
-        if (!$contextType) {
-            foreach ($context['module_access'] as $capabilityType => $capabilityData) {
-                if ($capabilityType === 'staff_with_facilities' && $facilityId) {
-                    $facilityAccess = $capabilityData[$facilityId] ?? null;
-                    if ($facilityAccess) {
-                        foreach ($facilityAccess['modules'] ?? [] as $module) {
-                            if ($module['code'] === $moduleCode && $module['has_access']) {
-                                return true;
-                            }
-                        }
-                    }
-                } else {
-                    foreach ($capabilityData['modules'] ?? [] as $module) {
-                        if ($module['code'] === $moduleCode && $module['has_access']) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-        
-        // Check specific context type
-        if (!isset($context['module_access'][$contextType])) {
-            return false;
-        }
-        
-        if ($contextType === 'staff_with_facilities' && $facilityId) {
-            $facilityAccess = $context['module_access'][$contextType][$facilityId] ?? null;
-            if (!$facilityAccess) return false;
-            
-            foreach ($facilityAccess['modules'] ?? [] as $module) {
-                if ($module['code'] === $moduleCode && $module['has_access']) {
-                    return true;
-                }
-            }
-        } else {
-            foreach ($context['module_access'][$contextType]['modules'] ?? [] as $module) {
-                if ($module['code'] === $moduleCode && $module['has_access']) {
-                    return true;
-                }
-            }
-        }
-        
-        return false;
     }
 }

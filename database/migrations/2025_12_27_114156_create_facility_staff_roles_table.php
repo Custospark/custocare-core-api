@@ -47,7 +47,8 @@ return new class extends Migration
             $table->json('department_ids')->nullable()->comment('Departments within facility where staff works');
             $table->boolean('is_primary_facility')->default(false);
             
-            // Privileges at this facility
+            // Privileges at this facility.
+            $table->json('module_code')->nullable()->comment('List of modules accessible by this staff role at this facility');//Take note of this for module access.
             $table->json('privileges_bitmask')->nullable()->comment('Bitwise flags for specific privileges');
             $table->json('accessible_patient_populations')->nullable()->comment('Age groups, conditions, etc.');
             $table->json('prescribing_authority_at_facility')->nullable();

@@ -3,6 +3,8 @@
 namespace App\Services\FacilityStaffRole;
 
 use App\Models\FacilityStaffRole;
+use App\Models\Module;
+use App\Models\RoleModuleDefault;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use App\Support\HealthcareIdGenerator;
@@ -181,17 +183,23 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
     /**
      * Create a new role assignment
      */
-    public function createAssignment(array $data): ?FacilityStaffRole
+        public function createAssignment(array $data): ?FacilityStaffRole
     {
-        // Ensure UUID
+        /**
+         * 1️⃣ Ensure assignment UUID
+         */
         $data['assignment_uuid'] ??= HealthcareIdGenerator::generateRandomCode();
 
-        // Business validation
+        /**
+         * 2️⃣ Business validation (throws on failure)
+         */
         $this->validateAssignmentDataOrFail($data);
 
         return DB::transaction(function () use ($data) {
 
-            // Prevent duplicate active assignments
+            /**
+             * 3️⃣ Prevent duplicate active assignments
+             */
             if ($this->repository->duplicateAssignmentExists(
                 $data['facility_id'],
                 $data['staff_id'],
@@ -206,15 +214,60 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
                 ]);
             }
 
-            // Normalize JSON fields
+            /**
+             * 4️⃣ Normalize JSON fields (department_ids, metadata, etc.)
+             */
             $data = $this->parseJsonFields($data);
 
-            // Enforce system ownership
+            /**
+             * 5️⃣ Attach default modules IF NOT explicitly provided
+             * This is the ONLY time role defaults are used.
+             */
+            if (!array_key_exists('module_code', $data) || empty($data['module_code'])) {
+                $data['module_code'] = $this->resolveDefaultModulesForRole($data['role_code']);
+            }
+
+            /**
+             * 6️⃣ Enforce system ownership
+             */
             $data['created_by_staff_id'] ??= auth::id();
 
-            return $this->repository->create($data);
+            /**
+             * 7️⃣ Persist assignment
+             */
+            return $this->repository->create([
+                'assignment_uuid'      => $data['assignment_uuid'],
+                'facility_id'          => $data['facility_id'],
+                'staff_id'             => $data['staff_id'],
+                'role_code'            => $data['role_code'],
+                'department_ids'       => $data['department_ids'] ?? [],
+                'is_primary_facility'  => $data['is_primary_facility'] ?? false,
+                'module_code'          => $data['module_code'],
+                'effective_from'       => $data['effective_from'],
+                'assignment_status'    => $data['assignment_status'] ?? 'active',
+                'created_by_staff_id'  => $data['created_by_staff_id'],
+                'metadata'             => $data['metadata'] ?? null,
+            ]);
         });
     }
+
+        /**
+     * Resolve default modules for a role.
+     * This is ONLY used at assignment creation time.
+     */
+        protected function resolveDefaultModulesForRole(string $roleCode): array
+        {
+            return RoleModuleDefault::query()
+                ->where('role_code', $roleCode)
+                ->where('default_access', true)
+                ->whereIn(
+                    'module_code',
+                    Module::where('is_active', true)->pluck('code')
+                )
+                ->pluck('module_code')
+                ->values()
+                ->toArray();
+        }
 
 
     public function validateAssignmentDataOrFail(array $data): void

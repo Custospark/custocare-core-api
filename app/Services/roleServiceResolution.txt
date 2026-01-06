@@ -1,0 +1,329 @@
+Example 1: Oscar - Staff with Two Facilities
+{
+    "user": {
+        "id": 1,
+        "uuid": "user-uuid-123",
+        "full_name": "Oscar Doctor",
+        "first_name": "Oscar",
+        "last_name": "Doctor",
+        "email": "oscar.doctor@hospital.com",
+        "phone": "+1234567890",
+        "national_id_country_code": "US"
+    },
+    "capabilities": {
+        "staff": {
+            "staff_id": 50,
+            "employee_id": "EMP-0050",
+            "professional_title": "Senior Physician"
+        }
+    },
+    "facility_roles": [
+        {
+            "facility_id": 1,
+            "facility_uuid": "facility-uuid-1",
+            "facility_name": "Main General Hospital",
+            "staff_id": 50,
+            "role_code": "physician",
+            "is_primary_facility": true,
+            "effective_from": "2024-01-01",
+            "effective_to": null
+        },
+        {
+            "facility_id": 2,
+            "facility_uuid": "facility-uuid-2",
+            "facility_name": "Downtown Clinic",
+            "staff_id": 50,
+            "role_code": "physician",
+            "is_primary_facility": false,
+            "effective_from": "2024-03-01",
+            "effective_to": null
+        }
+    ],
+    "module_access": {
+        "staff_with_facilities": {
+            "1": {
+                "facility_id": 1,
+                "facility_name": "Main General Hospital",
+                "role_code": "physician",
+                "role_name": "Physician",
+                "is_primary_facility": true,
+                "modules": [
+                    {
+                        "id": 1,
+                        "code": "clinical_records",
+                        "name": "Clinical Records",
+                        "description": "Access patient medical records",
+                        "has_access": true
+                    },
+                    {
+                        "id": 2,
+                        "code": "appointments",
+                        "name": "Appointments",
+                        "description": "Schedule and manage appointments",
+                        "has_access": true
+                    },
+                    {
+                        "id": 3,
+                        "code": "prescriptions",
+                        "name": "Prescriptions",
+                        "description": "Create and manage prescriptions",
+                        "has_access": true
+                    },
+                    {
+                        "id": 4,
+                        "code": "lab_orders",
+                        "name": "Lab Orders",
+                        "description": "Order and view lab tests",
+                        "has_access": true
+                    },
+                    {
+                        "id": 5,
+                        "code": "billing",
+                        "name": "Billing",
+                        "description": "Medical billing and invoicing",
+                        "has_access": false
+                    },
+                    {
+                        "id": 6,
+                        "code": "radiology",
+                        "name": "Radiology",
+                        "description": "Radiology image management",
+                        "has_access": false
+                    },
+                    {
+                        "id": 7,
+                        "code": "staff_management",
+                        "name": "Staff Management",
+                        "description": "Manage healthcare staff",
+                        "has_access": false
+                    },
+                    {
+                        "id": 8,
+                        "code": "facility_admin",
+                        "name": "Facility Administration",
+                        "description": "Facility administration panel",
+                        "has_access": false
+                    }
+                ]
+            },
+            "2": {
+                "facility_id": 2,
+                "facility_name": "Downtown Clinic",
+                "role_code": "physician",
+                "role_name": "Physician",
+                "is_primary_facility": false,
+                "modules": [
+                    {
+                        "id": 1,
+                        "code": "clinical_records",
+                        "name": "Clinical Records",
+                        "description": "Access patient medical records",
+                        "has_access": true
+                    },
+                    {
+                        "id": 2,
+                        "code": "appointments",
+                        "name": "Appointments",
+                        "description": "Schedule and manage appointments",
+                        "has_access": true
+                    },
+                    {
+                        "id": 3,
+                        "code": "prescriptions",
+                        "name": "Prescriptions",
+                        "description": "Create and manage prescriptions",
+                        "has_access": false
+                    },
+                    {
+                        "id": 4,
+                        "code": "lab_orders",
+                        "name": "Lab Orders",
+                        "description": "Order and view lab tests",
+                        "has_access": false
+                    },
+                    {
+                        "id": 5,
+                        "code": "billing",
+                        "name": "Billing",
+                        "description": "Medical billing and invoicing",
+                        "has_access": false
+                    },
+                    {
+                        "id": 6,
+                        "code": "radiology",
+                        "name": "Radiology",
+                        "description": "Radiology image management",
+                        "has_access": false
+                    },
+                    {
+                        "id": 7,
+                        "code": "staff_management",
+                        "name": "Staff Management",
+                        "description": "Manage healthcare staff",
+                        "has_access": false
+                    },
+                    {
+                        "id": 8,
+                        "code": "facility_admin",
+                        "name": "Facility Administration",
+                        "description": "Facility administration panel",
+                        "has_access": false
+                    }
+                ]
+            }
+        }
+    }
+}
+
+Example 2: Mary - Patient AND Staff with No Facility
+{
+    "user": {
+        "id": 2,
+        "uuid": "user-uuid-456",
+        "full_name": "Mary DualRole",
+        "first_name": "Mary",
+        "last_name": "DualRole",
+        "email": "mary@example.com",
+        "phone": "+0987654321",
+        "national_id_country_code": "US"
+    },
+    "capabilities": {
+        "patient": {
+            "patient_id": 200,
+            "primary_facility_id": 1,
+            "medical_record_number": "MRN-200"
+        },
+        "staff": {
+            "staff_id": 75,
+            "employee_id": "EMP-0075",
+            "professional_title": "Nurse"
+        }
+    },
+    "facility_roles": [],
+    "module_access": {
+        "patient": {
+            "role_code": "patient",
+            "role_name": "Patient",
+            "modules": [
+                {
+                    "id": 1,
+                    "code": "clinical_records",
+                    "name": "Clinical Records",
+                    "description": "Access your medical records",
+                    "has_access": true
+                },
+                {
+                    "id": 2,
+                    "code": "appointments",
+                    "name": "Appointments",
+                    "description": "Schedule and view appointments",
+                    "has_access": true
+                },
+                {
+                    "id": 3,
+                    "code": "prescriptions",
+                    "name": "Prescriptions",
+                    "description": "View your prescriptions",
+                    "has_access": true
+                },
+                {
+                    "id": 4,
+                    "code": "billing",
+                    "name": "Billing",
+                    "description": "View medical bills and payments",
+                    "has_access": true
+                },
+                {
+                    "id": 5,
+                    "code": "messages",
+                    "name": "Messages",
+                    "description": "Secure messaging with providers",
+                    "has_access": true
+                },
+                {
+                    "id": 6,
+                    "code": "lab_orders",
+                    "name": "Lab Orders",
+                    "description": "Order and view lab tests",
+                    "has_access": false
+                },
+                {
+                    "id": 7,
+                    "code": "staff_management",
+                    "name": "Staff Management",
+                    "description": "Manage healthcare staff",
+                    "has_access": false
+                },
+                {
+                    "id": 8,
+                    "code": "facility_admin",
+                    "name": "Facility Administration",
+                    "description": "Facility administration panel",
+                    "has_access": false
+                }
+            ]
+        },
+        "staff_only": {
+            "role_code": "staff",
+            "role_name": "Unassigned Staff",
+            "modules": [
+                {
+                    "id": 1,
+                    "code": "clinical_records",
+                    "name": "Clinical Records",
+                    "description": "Access patient medical records",
+                    "has_access": true
+                },
+                {
+                    "id": 2,
+                    "code": "appointments",
+                    "name": "Appointments",
+                    "description": "Schedule and manage appointments",
+                    "has_access": true
+                },
+                {
+                    "id": 3,
+                    "code": "prescriptions",
+                    "name": "Prescriptions",
+                    "description": "Create and manage prescriptions",
+                    "has_access": false
+                },
+                {
+                    "id": 4,
+                    "code": "lab_orders",
+                    "name": "Lab Orders",
+                    "description": "Order and view lab tests",
+                    "has_access": false
+                },
+                {
+                    "id": 5,
+                    "code": "billing",
+                    "name": "Billing",
+                    "description": "Medical billing and invoicing",
+                    "has_access": false
+                },
+                {
+                    "id": 6,
+                    "code": "radiology",
+                    "name": "Radiology",
+                    "description": "Radiology image management",
+                    "has_access": false
+                },
+                {
+                    "id": 7,
+                    "code": "staff_management",
+                    "name": "Staff Management",
+                    "description": "Manage healthcare staff",
+                    "has_access": false
+                },
+                {
+                    "id": 8,
+                    "code": "facility_admin",
+                    "name": "Facility Administration",
+                    "description": "Facility administration panel",
+                    "has_access": false
+                }
+            ]
+        }
+    }
+}

@@ -246,7 +246,7 @@ class FacilityService implements FacilityServiceInterface
         /**
          * 5️⃣ Assign Administrator Role
          */
-        $this->facilityStaffRoleService->createAssignment([
+            $this->facilityStaffRoleService->createAssignment([
             'facility_id'         => $facility->id,
             'staff_id'            => $createdByStaffId,
             'role_code'           => 'facility_administrator',
@@ -259,6 +259,7 @@ class FacilityService implements FacilityServiceInterface
                 'assignment_reason' => 'facility_creator'
             ]
         ]);
+
 
         return $facility;
     });

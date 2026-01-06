@@ -21,6 +21,7 @@ class FacilityStaffRole extends Model
         'facility_id',
         'staff_id',
         'role_code',
+        'module_code',
         'department_ids',
         'is_primary_facility',
         'privileges_bitmask',
@@ -49,6 +50,7 @@ class FacilityStaffRole extends Model
      */
     protected $casts = [
         'assignment_uuid' => 'string',
+        'module_code' => 'array',
         'department_ids' => 'array',
         'is_primary_facility' => 'boolean',
         'privileges_bitmask' => 'array',

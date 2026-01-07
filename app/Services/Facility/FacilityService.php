@@ -249,7 +249,7 @@ class FacilityService implements FacilityServiceInterface
             $this->facilityStaffRoleService->createAssignment([
             'facility_id'         => $facility->id,
             'staff_id'            => $createdByStaffId,
-            'role_code'           => 'facility_administrator',
+            'role_code'           => 'facility-administrator',
             'department_ids'      => [],
             'is_primary_facility' => true,
             'effective_from'      => now()->toDateString(),

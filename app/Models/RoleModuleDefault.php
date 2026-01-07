@@ -15,11 +15,4 @@ class RoleModuleDefault extends Model
         'default_access',
     ];
 
-    /**
-     * Module relation
-     */
-    public function module()
-    {
-        return $this->belongsTo(Module::class, 'module_code', 'code');
-    }
 }

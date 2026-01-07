@@ -106,7 +106,7 @@ class FacilityStaffRole extends Model
         'case_manager',
         'receptionist',
         'medical_assistant',
-        'facility_administrator',
+        'facility-administrator',
         'department_manager',
         'quality_coordinator',
         'infection_control',

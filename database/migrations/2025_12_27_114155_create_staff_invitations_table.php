@@ -19,7 +19,6 @@ return new class extends Migration
             $table->unsignedBigInteger('staff_id')->index();
             $table->unsignedBigInteger('facility_id')->index();
             $table->unsignedBigInteger('department_id')->nullable()->index();
-            $table->unsignedBigInteger('role_id')->nullable()->index();
             $table->string('role_code')->index()->comment('References facility_roles.code');
             $table->json('module_code')->nullable()->comment('List of modules accessible by this staff role at this facility');
             // Invitation status
@@ -27,7 +26,7 @@ return new class extends Migration
             
             // Timing
             $table->timestamp('sent_at')->nullable();
-            $table->timestamp('reminder_sent_at ')->nullable();
+            $table->timestamp('reminder_sent_at')->nullable();
             $table->timestamp('responded_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             
@@ -43,7 +42,6 @@ return new class extends Migration
             $table->foreign('staff_id')->references('id')->on('staff')->onDelete('cascade');
             $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('cascade');
             $table->foreign('department_id')->references('id')->on('departments')->onDelete('set null');
-            $table->foreign('role_id')->references('id')->on('roles')->onDelete('set null');
             $table->foreign('invited_by_staff_id')->references('id')->on('staff')->onDelete('set null');
             
             // Performance indexes

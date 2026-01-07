@@ -92,7 +92,7 @@ class FacilityStaffRoleResource extends JsonResource
             'case_manager' => 'Case Manager',
             'receptionist' => 'Receptionist',
             'medical_assistant' => 'Medical Assistant',
-            'facility_administrator' => 'Facility Administrator',
+            'facility-administrator' => 'Facility Administrator',
             'department_manager' => 'Department Manager',
             'quality_coordinator' => 'Quality Coordinator',
             'infection_control' => 'Infection Control',

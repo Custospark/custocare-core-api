@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StaffInvitation\StoreStaffInvitationRequest;
 use App\Http\Requests\StaffInvitation\UpdateStaffInvitationRequest;
 use App\Http\Resources\StaffInvitationResource;
+use App\Http\Resources\FacilityStaffAssignmentResource;
+use App\Http\Resources\FacilityStaffRoleResource;
 use App\Models\StaffInvitation;
 use App\Services\Contracts\StaffInvitationServiceInterface;
 use Illuminate\Http\JsonResponse;
@@ -26,10 +28,6 @@ class StaffInvitationController extends Controller
     public function __construct(StaffInvitationServiceInterface $service)
     {
         $this->service = $service;
-        
-        // Apply middleware
-        // $this->middleware('auth:api');
-        // $this->middleware('throttle:60,1')->except(['index', 'show']);
     }
 
     /**
@@ -38,58 +36,30 @@ class StaffInvitationController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['status', 'facility_id', 'staff_id', 'department_id', 'role_id', 'invited_by_staff_id', 'sent_from', 'sent_to', 'sort_by', 'sort_order']);
+            $filters = $request->only(['status', 'facility_id', 'staff_id', 'department_id', 'role_code', 'module_code', 'invited_by_staff_id', 'sent_from', 'sent_to', 'sort_by', 'sort_order']);
             $perPage = $request->input('per_page', 20);
             
-            $result = $this->service->getAllInvitations($filters, $perPage);
+            $invitations = $this->service->getAllInvitations($filters, $perPage);
             
-            if (!$result['success']) {
-                return response()->json($result, 500);
-            }
-            
-            // Transform data using resource collection
-            $resource = StaffInvitationResource::collection($result['data']);
-            
-            // Add pagination metadata
-            $responseData = array_merge(
-                ['data' => $resource],
-                $result['meta'] ?? []
-            );
-            
-            return response()->json([
-                'success' => true,
-                'message' => $result['message'],
-                'data' => $responseData['data'],
-                'meta' => [
-                    'pagination' => [
-                        'total' => $result['data']->total(),
-                        'count' => $result['data']->count(),
-                        'per_page' => $result['data']->perPage(),
-                        'current_page' => $result['data']->currentPage(),
-                        'total_pages' => $result['data']->lastPage(),
-                        'links' => [
-                            'first' => $result['data']->url(1),
-                            'last' => $result['data']->url($result['data']->lastPage()),
-                            'prev' => $result['data']->previousPageUrl(),
-                            'next' => $result['data']->nextPageUrl(),
-                        ],
-                    ],
+            return $this->successResponse(
+                StaffInvitationResource::collection($invitations),
+                'Invitations retrieved successfully.',
+                [
                     'filters_applied' => $filters,
                 ]
-            ]);
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in index method', [
+            Log::error('Failed to retrieve invitations', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while retrieving invitations.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            return $this->errorResponse(
+                'Failed to retrieve invitations.',
+                500,
+                ['system' => 'An unexpected error occurred.']
+            );
         }
     }
 
@@ -100,31 +70,31 @@ class StaffInvitationController extends Controller
     {
         try {
             $validatedData = $request->validated();
-            $invitedByStaffId = Auth::id(); // Assuming staff ID matches user ID
+            $invitedByStaffId = Auth::id();
             
-            $result = $this->service->createInvitation($validatedData, $invitedByStaffId);
+            $invitation = $this->service->createInvitation($validatedData, $invitedByStaffId);
             
-            $statusCode = $result['success'] ? 201 : 422;
-            
-            if ($result['success'] && $result['data']) {
-                $result['data'] = new StaffInvitationResource($result['data']);
-            }
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation created and sent successfully.',
+                null,
+                201
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in store method', [
+            Log::error('Failed to create invitation', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while creating the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -134,30 +104,33 @@ class StaffInvitationController extends Controller
     public function show(int $id): JsonResponse
     {
         try {
-            $result = $this->service->getInvitationById($id);
+            $invitation = $this->service->getInvitationById($id);
             
-            if (!$result['success']) {
-                $statusCode = $result['message'] === 'Invitation not found.' ? 404 : 500;
-                return response()->json($result, $statusCode);
+            if (!$invitation) {
+                return $this->errorResponse(
+                    'Invitation not found.',
+                    404,
+                    ['id' => 'The specified invitation does not exist.']
+                );
             }
             
-            $result['data'] = new StaffInvitationResource($result['data']);
-            
-            return response()->json($result);
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation retrieved successfully.'
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in show method', [
+            Log::error('Failed to retrieve invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while retrieving the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            return $this->errorResponse(
+                'Failed to retrieve invitation.',
+                500,
+                ['system' => 'An unexpected error occurred.']
+            );
         }
     }
 
@@ -169,30 +142,28 @@ class StaffInvitationController extends Controller
         try {
             $validatedData = $request->validated();
             
-            $result = $this->service->updateInvitation($id, $validatedData);
+            $invitation = $this->service->updateInvitation($id, $validatedData);
             
-            $statusCode = $result['success'] ? 200 : 422;
-            
-            if ($result['success'] && $result['data']) {
-                $result['data'] = new StaffInvitationResource($result['data']);
-            }
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation updated successfully.'
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in update method', [
+            Log::error('Failed to update invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while updating the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -202,25 +173,27 @@ class StaffInvitationController extends Controller
     public function destroy(int $id): JsonResponse
     {
         try {
-            $result = $this->service->deleteInvitation($id);
+            $this->service->deleteInvitation($id);
             
-            $statusCode = $result['success'] ? 200 : ($result['message'] === 'Invitation not found.' ? 404 : 422);
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                null,
+                'Invitation deleted successfully.'
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in destroy method', [
+            Log::error('Failed to delete invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while deleting the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -234,34 +207,34 @@ class StaffInvitationController extends Controller
             
             $result = $this->service->acceptInvitation($id);
             
-            $statusCode = $result['success'] ? 200 : 422;
-            
-            if ($result['success'] && $result['data']) {
-                $result['data'] = new StaffInvitationResource($result['data']);
-            }
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                [
+                    'invitation' => new StaffInvitationResource($result['invitation']),
+                    'assignment' => new FacilityStaffRoleResource($result['assignment'])
+                ],
+                'Invitation accepted successfully. Staff assignment created.'
+            );
             
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to accept this invitation.',
-                'errors' => ['authorization' => ['Insufficient permissions']],
-                'data' => null
-            ], 403);
+            return $this->errorResponse(
+                'You are not authorized to accept this invitation.',
+                403,
+                ['authorization' => 'Insufficient permissions.']
+            );
         } catch (\Exception $e) {
-            Log::error('Controller error in accept method', [
+            Log::error('Failed to accept invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while accepting the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -273,36 +246,33 @@ class StaffInvitationController extends Controller
         try {
             $this->authorize('decline', StaffInvitation::findOrFail($id));
             
-            $result = $this->service->declineInvitation($id);
+            $invitation = $this->service->declineInvitation($id);
             
-            $statusCode = $result['success'] ? 200 : 422;
-            
-            if ($result['success'] && $result['data']) {
-                $result['data'] = new StaffInvitationResource($result['data']);
-            }
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation declined successfully.'
+            );
             
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to decline this invitation.',
-                'errors' => ['authorization' => ['Insufficient permissions']],
-                'data' => null
-            ], 403);
+            return $this->errorResponse(
+                'You are not authorized to decline this invitation.',
+                403,
+                ['authorization' => 'Insufficient permissions.']
+            );
         } catch (\Exception $e) {
-            Log::error('Controller error in decline method', [
+            Log::error('Failed to decline invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while declining the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -314,36 +284,33 @@ class StaffInvitationController extends Controller
         try {
             $this->authorize('resend', StaffInvitation::findOrFail($id));
             
-            $result = $this->service->resendInvitation($id);
+            $invitation = $this->service->resendInvitation($id);
             
-            $statusCode = $result['success'] ? 200 : 422;
-            
-            if ($result['success'] && $result['data']) {
-                $result['data'] = new StaffInvitationResource($result['data']);
-            }
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation resent successfully.'
+            );
             
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to resend this invitation.',
-                'errors' => ['authorization' => ['Insufficient permissions']],
-                'data' => null
-            ], 403);
+            return $this->errorResponse(
+                'You are not authorized to resend this invitation.',
+                403,
+                ['authorization' => 'Insufficient permissions.']
+            );
         } catch (\Exception $e) {
-            Log::error('Controller error in resend method', [
+            Log::error('Failed to resend invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while resending the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -355,32 +322,33 @@ class StaffInvitationController extends Controller
         try {
             $this->authorize('cancel', StaffInvitation::findOrFail($id));
             
-            $result = $this->service->cancelInvitation($id);
+            $this->service->cancelInvitation($id);
             
-            $statusCode = $result['success'] ? 200 : 422;
-            
-            return response()->json($result, $statusCode);
+            return $this->successResponse(
+                null,
+                'Invitation cancelled successfully.'
+            );
             
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to cancel this invitation.',
-                'errors' => ['authorization' => ['Insufficient permissions']],
-                'data' => null
-            ], 403);
+            return $this->errorResponse(
+                'You are not authorized to cancel this invitation.',
+                403,
+                ['authorization' => 'Insufficient permissions.']
+            );
         } catch (\Exception $e) {
-            Log::error('Controller error in cancel method', [
+            Log::error('Failed to cancel invitation', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while cancelling the invitation.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            $statusCode = $this->getStatusCodeFromException($e);
+            
+            return $this->errorResponse(
+                $e->getMessage(),
+                $statusCode,
+                ['invitation' => [$e->getMessage()]]
+            );
         }
     }
 
@@ -390,36 +358,31 @@ class StaffInvitationController extends Controller
     public function myInvitations(Request $request): JsonResponse
     {
         try {
-            $staffId = Auth::id(); // Assuming current user is staff
+            $staffId = Auth::id();
             $filters = $request->only(['status', 'facility_id', 'department_id']);
             
-            $result = $this->service->getInvitationsByStaff($staffId, $filters);
+            $invitations = $this->service->getInvitationsByStaff($staffId, $filters);
             
-            if (!$result['success']) {
-                return response()->json($result, 500);
-            }
-            
-            $resource = StaffInvitationResource::collection($result['data']);
-            
-            return response()->json([
-                'success' => true,
-                'message' => $result['message'],
-                'data' => $resource,
-                'meta' => $result['meta']
-            ]);
+            return $this->successResponse(
+                StaffInvitationResource::collection($invitations),
+                'Your invitations retrieved successfully.',
+                [
+                    'total' => count($invitations),
+                    'staff_id' => $staffId
+                ]
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in myInvitations method', [
+            Log::error('Failed to retrieve user invitations', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while retrieving your invitations.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            return $this->errorResponse(
+                'Failed to retrieve your invitations.',
+                500,
+                ['system' => 'An unexpected error occurred.']
+            );
         }
     }
 
@@ -429,35 +392,127 @@ class StaffInvitationController extends Controller
     public function myPendingInvitations(): JsonResponse
     {
         try {
-            $staffId = Auth::id(); // Assuming current user is staff
+            $staffId = Auth::id();
             
-            $result = $this->service->getPendingInvitationsForStaff($staffId);
+            $invitations = $this->service->getPendingInvitationsForStaff($staffId);
             
-            if (!$result['success']) {
-                return response()->json($result, 500);
-            }
-            
-            $resource = StaffInvitationResource::collection($result['data']);
-            
-            return response()->json([
-                'success' => true,
-                'message' => $result['message'],
-                'data' => $resource,
-                'meta' => $result['meta']
-            ]);
+            return $this->successResponse(
+                StaffInvitationResource::collection($invitations),
+                'Your pending invitations retrieved successfully.',
+                [
+                    'total' => count($invitations),
+                    'staff_id' => $staffId
+                ]
+            );
             
         } catch (\Exception $e) {
-            Log::error('Controller error in myPendingInvitations method', [
+            Log::error('Failed to retrieve user pending invitations', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while retrieving your pending invitations.',
-                'errors' => ['system' => ['Internal server error']],
-                'data' => null
-            ], 500);
+            return $this->errorResponse(
+                'Failed to retrieve your pending invitations.',
+                500,
+                ['system' => 'An unexpected error occurred.']
+            );
         }
+    }
+
+    /**
+     * Show invitation by UUID (public endpoint).
+     */
+    public function showByUuid(string $uuid): JsonResponse
+    {
+        try {
+            $invitation = $this->service->getInvitationByUuid($uuid);
+            
+            if (!$invitation) {
+                return $this->errorResponse(
+                    'Invitation not found.',
+                    404,
+                    ['uuid' => 'The specified invitation does not exist.']
+                );
+            }
+            
+            return $this->successResponse(
+                new StaffInvitationResource($invitation),
+                'Invitation retrieved successfully.'
+            );
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve invitation by UUID', [
+                'uuid' => $uuid,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return $this->errorResponse(
+                'Failed to retrieve invitation.',
+                500,
+                ['system' => 'An unexpected error occurred.']
+            );
+        }
+    }
+
+    /**
+     * Helper: Send success response with consistent format.
+     */
+    protected function successResponse($data = null, string $message = 'Success', $meta = null, int $code = 200): JsonResponse
+    {
+        $response = [
+            'success' => true,
+            'message' => $message,
+            'data' => $data,
+        ];
+
+        if ($meta) {
+            $response['meta'] = $meta;
+        }
+
+        return response()->json($response, $code);
+    }
+
+    /**
+     * Helper: Send error response with consistent format.
+     */
+    protected function errorResponse(string $message, int $code = 400, $errors = null): JsonResponse
+    {
+        $response = [
+            'success' => false,
+            'message' => $message,
+            'data' => null,
+        ];
+
+        if ($errors) {
+            $response['errors'] = $errors;
+        }
+
+        return response()->json($response, $code);
+    }
+
+    /**
+     * Helper: Determine HTTP status code from exception message.
+     */
+    protected function getStatusCodeFromException(\Exception $e): int
+    {
+        $message = strtolower($e->getMessage());
+        
+        if (str_contains($message, 'not found')) {
+            return 404;
+        }
+        
+        if (str_contains($message, 'duplicate') || 
+            str_contains($message, 'already exists') ||
+            str_contains($message, 'cannot update') ||
+            str_contains($message, 'cannot delete')) {
+            return 422;
+        }
+        
+        if (str_contains($message, 'expired')) {
+            return 410; // Gone
+        }
+        
+        return 500;
     }
 }

@@ -22,12 +22,14 @@ class StaffInvitation extends Model
         'staff_id',
         'facility_id',
         'department_id',
-        'role_id',
+        'role_code',
+        'module_code',
         'status',
         'sent_at',
         'responded_at',
         'expires_at',
         'invited_by_staff_id',
+        'reminder_sent_at',
         'metadata',
     ];
 

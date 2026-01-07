@@ -35,6 +35,7 @@ class StoreFacilityStaffRoleRequest extends FormRequest
             'facility_id' => 'nullable|integer|exists:facilities,id',
             'staff_id' => 'nullable|integer|exists:staff,id',
             'role_code' => 'required|string',
+            'module_code' => 'required|string',
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'integer',
             'is_primary_facility' => 'boolean',

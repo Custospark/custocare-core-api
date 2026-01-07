@@ -27,6 +27,7 @@ return new class extends Migration
             
             // Timing
             $table->timestamp('sent_at')->nullable();
+            $table->timestamp('reminder_sent_at ')->nullable();
             $table->timestamp('responded_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             

@@ -20,7 +20,8 @@ return new class extends Migration
             $table->unsignedBigInteger('facility_id')->index();
             $table->unsignedBigInteger('department_id')->nullable()->index();
             $table->unsignedBigInteger('role_id')->nullable()->index();
-            
+            $table->string('role_code')->index()->comment('References facility_roles.code');
+            $table->json('module_code')->nullable()->comment('List of modules accessible by this staff role at this facility');
             // Invitation status
             $table->enum('status', ['pending', 'accepted', 'declined', 'expired'])->default('pending')->index();
             
@@ -47,6 +48,8 @@ return new class extends Migration
             // Performance indexes
             $table->index(['facility_id', 'department_id', 'status']);
             $table->index(['staff_id', 'status']);
+            // For frequently queried combinations
+            $table->index(['status', 'expires_at']); // For cleaning up expired invitations
         });
     }
 

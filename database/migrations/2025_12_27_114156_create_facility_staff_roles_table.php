@@ -18,32 +18,7 @@ return new class extends Migration
             $table->unsignedBigInteger('staff_id')->index();
             
             // Role definition
-            $table->enum('role_code', [
-            'physician',
-            'surgeon',
-            'anesthesiologist',
-            'nurse',
-            'nurse_manager',
-            'pharmacist',
-            'pharmacy_technician',
-            'radiologist',
-            'radiology_technician',
-            'laboratory_scientist',
-            'respiratory_therapist',
-            'physical_therapist',
-            'occupational_therapist',
-            'social_worker',
-            'case_manager',
-            'medical_assistant',
-            'receptionist',
-            'facility_administrator',
-            'department_manager',
-            'quality_coordinator',
-            'infection_control',
-            'it_support'
-        ])->index();
-
-            
+            $table->string('role_code')->index()->comment('References facility_roles.code');
             $table->json('department_ids')->nullable()->comment('Departments within facility where staff works');
             $table->boolean('is_primary_facility')->default(false);
             
@@ -68,6 +43,9 @@ return new class extends Migration
             $table->unsignedBigInteger('credentialed_by_staff_id')->nullable();
             $table->timestamp('privileging_approved_at')->nullable();
             $table->timestamp('next_reappointment_date')->nullable();
+            // In facility_staff_roles migration
+            $table->unsignedBigInteger('staff_invitation_id')->nullable()->index();
+            $table->foreign('staff_invitation_id')->references('id')->on('staff_invitations')->onDelete('set null');
             
             // Performance
             $table->unsignedInteger('patients_treated_at_facility')->default(0);

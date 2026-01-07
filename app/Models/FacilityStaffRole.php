@@ -19,6 +19,7 @@ class FacilityStaffRole extends Model
     protected $fillable = [
         'assignment_uuid',
         'facility_id',
+        'staff_invitation_id',
         'staff_id',
         'role_code',
         'module_code',

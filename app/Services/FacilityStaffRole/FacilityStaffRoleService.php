@@ -257,17 +257,16 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
      */
         protected function resolveDefaultModulesForRole(string $roleCode): array
         {
+            $activeModuleCodes = Module::where('is_active', true)->pluck('code');
+
             return RoleModuleDefault::query()
                 ->where('role_code', $roleCode)
                 ->where('default_access', true)
-                ->whereIn(
-                    'module_code',
-                    Module::where('is_active', true)->pluck('code')
-                )
+                ->whereIn('module_code', $activeModuleCodes)
                 ->pluck('module_code')
-                ->values()
                 ->toArray();
-        }
+
+                    }
 
 
     public function validateAssignmentDataOrFail(array $data): void

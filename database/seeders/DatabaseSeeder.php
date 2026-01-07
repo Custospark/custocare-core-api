@@ -26,6 +26,9 @@ class DatabaseSeeder extends Seeder
             ['code' => 'billing', 'name' => 'Billing'],
             ['code' => 'clinical', 'name' => 'Clinical'],
             ['code' => 'reports', 'name' => 'Reports'],
+            ['code' => 'patients', 'name' => 'Patients'],
+            ['code' => 'administration', 'name' => 'Administration'],
+            ['code' => 'billing-finance', 'name' => 'Billing & Finance'],
             ['code' => 'regulator_dashboard', 'name' => 'Regulator Dashboard'],
         ];
 

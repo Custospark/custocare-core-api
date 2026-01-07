@@ -232,7 +232,7 @@ class UserContextResolverService
                 'code' => $module->code,
                 'name' => $module->name,
                 'description' => $module->description,
-                'has_access' => in_array($module->code, $accessibleCodes),
+                'is_active' => in_array($module->code, $accessibleCodes),
             ];
         }
 
@@ -303,7 +303,7 @@ class UserContextResolverService
         }
 
         foreach ($modules as $module) {
-            if ($module['code'] === $moduleCode && $module['has_access']) {
+            if ($module['code'] === $moduleCode && $module['is_active']) {
                 return true;
             }
         }
@@ -347,7 +347,7 @@ class UserContextResolverService
 
         // Return only accessible modules
         return array_values(array_filter($modules, function($module) {
-            return $module['has_access'] === true;
+            return $module['is_active'] === true;
         }));
     }
 }

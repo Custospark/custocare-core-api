@@ -255,18 +255,29 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
      * Resolve default modules for a role.
      * This is ONLY used at assignment creation time.
      */
-        protected function resolveDefaultModulesForRole(string $roleCode): array
-        {
-            $activeModuleCodes = Module::where('is_active', true)->pluck('code');
+      protected function resolveDefaultModulesForRole(string $roleCode): array
+            {
+                // Get active module codes
+                $activeModuleCodes = Module::where('is_active', true)
+                    ->pluck('code')
+                    ->toArray();
 
-            return RoleModuleDefault::query()
-                ->where('role_code', $roleCode)
-                ->where('default_access', true)
-                ->whereIn('module_code', $activeModuleCodes)
-                ->pluck('module_code')
-                ->toArray();
+                // Fetch defaults row
+                $default = RoleModuleDefault::where('role_code', $roleCode)
+                    ->where('default_access', true)
+                    ->first();
 
-                    }
+                if (!$default || empty($default->module_code)) {
+                    return [];
+                }
+
+                // module_code is already an array because of casting
+                return array_values(array_intersect(
+                    $default->module_code,
+                    $activeModuleCodes
+                ));
+            }
+
 
 
     public function validateAssignmentDataOrFail(array $data): void

@@ -346,8 +346,9 @@ class UserContextResolverService
         }
 
         // Return only accessible modules
-        return array_values(array_filter($modules, function($module) {
-            return $module['is_active'] === true;
+       return array_values(array_filter($modules, function ($module) {
+            return ($module['is_active'] ?? false) === true;
         }));
+
     }
 }

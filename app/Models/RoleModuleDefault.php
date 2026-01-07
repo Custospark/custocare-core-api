@@ -14,5 +14,9 @@ class RoleModuleDefault extends Model
         'module_code',
         'default_access',
     ];
+    protected $casts = [
+        'module_code' => 'array', 
+        'default_access' => 'boolean',
+    ];
 
 }

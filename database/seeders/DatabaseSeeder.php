@@ -3,95 +3,64 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\FacilityRole;
-use App\Models\Module;
-use App\Models\RoleModuleDefault;
 use Illuminate\Support\Facades\Log;
+use App\Models\Module;
+use App\Models\FacilityRole;
+use App\Models\RoleModuleDefault;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // -----------------------------
-        // 1️⃣ Seed Modules
-        // -----------------------------
+        /*
+        |--------------------------------------------------------------------------
+        | 1️⃣ Seed Modules (SYSTEM SOURCE OF TRUTH)
+        |--------------------------------------------------------------------------
+        */
         $modules = [
-            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Module for medical doctors to manage clinical workflows and patient care.', 'is_active' => true],
-            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Module for pharmacists to manage prescriptions and pharmaceutical inventory.', 'is_active' => true],
-            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Module for registered nurses to monitor patients, assist in procedures, and manage nursing care.', 'is_active' => true],
-            ['code' => 'reception', 'name' => 'Reception', 'description' => 'Module for receptionists to handle patient check-ins, appointments, and front desk operations.', 'is_active' => true],
-            ['code' => 'administration', 'name' => 'Administration', 'description' => 'Module for facility administrators to oversee operations, staff, and workflows.', 'is_active' => true],
-            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Module for laboratory scientists to manage lab tests, results, and reporting.', 'is_active' => true],
-            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Module for billing officers to manage invoices, insurance claims, and financial records.', 'is_active' => true],
+            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => true],
+            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => true],
+            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => true],
+            ['code' => 'reception', 'name' => 'Reception', 'description' => 'Front desk and appointments', 'is_active' => true],
+            ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
+            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
+            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
         ];
 
         foreach ($modules as $module) {
             if (empty($module['code'])) {
-                Log::error('Module code is empty!', $module);
+                Log::error('❌ Module code missing', $module);
                 continue;
             }
 
             Module::updateOrCreate(
                 ['code' => $module['code']],
                 [
-                    'name' => $module['name'] ?? 'Unnamed Module',
-                    'description' => $module['description'] ?? null,
-                    'is_active' => $module['is_active'] ?? true,
+                    'name' => $module['name'],
+                    'description' => $module['description'],
+                    'is_active' => $module['is_active'],
                 ]
             );
         }
 
-        // -----------------------------
-        // 2️⃣ Seed Facility Roles
-        // -----------------------------
+        /*
+        |--------------------------------------------------------------------------
+        | 2️⃣ Seed Facility Roles
+        |--------------------------------------------------------------------------
+        */
         $roles = [
-            [
-                'name' => 'Medical Doctor',
-                'code' => 'medical-doctor',
-                'description' => 'Provides clinical diagnosis, treatment, and medical decision-making for patients.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Pharmacist',
-                'code' => 'pharmacist',
-                'description' => 'Dispenses medications, reviews prescriptions, and ensures safe pharmaceutical care.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Registered Nurse',
-                'code' => 'registered-nurse',
-                'description' => 'Delivers nursing care, monitors patient conditions, and supports clinical procedures.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Receptionist',
-                'code' => 'receptionist',
-                'description' => 'Manages patient reception, appointment scheduling, and front-desk communication.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Facility Administrator',
-                'code' => 'facility-administrator',
-                'description' => 'Oversees facility operations, staff coordination, and administrative workflows.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Laboratory Scientist',
-                'code' => 'laboratory-scientist',
-                'description' => 'Conducts laboratory tests, analyzes specimens, and reports diagnostic results.',
-                'is_system_role' => true,
-            ],
-            [
-                'name' => 'Billing Officer',
-                'code' => 'billing-officer',
-                'description' => 'Manages patient billing, invoices, insurance claims, and financial records.',
-                'is_system_role' => true,
-            ],
+            ['name' => 'Medical Doctor', 'code' => 'medical-doctor', 'description' => 'Clinical diagnosis and treatment', 'is_system_role' => true],
+            ['name' => 'Pharmacist', 'code' => 'pharmacist', 'description' => 'Medication dispensing and review', 'is_system_role' => true],
+            ['name' => 'Registered Nurse', 'code' => 'registered-nurse', 'description' => 'Nursing care and support', 'is_system_role' => true],
+            ['name' => 'Receptionist', 'code' => 'receptionist', 'description' => 'Front desk operations', 'is_system_role' => true],
+            ['name' => 'Facility Administrator', 'code' => 'facility-administrator', 'description' => 'Facility operations and oversight', 'is_system_role' => true],
+            ['name' => 'Laboratory Scientist', 'code' => 'laboratory-scientist', 'description' => 'Laboratory diagnostics', 'is_system_role' => true],
+            ['name' => 'Billing Officer', 'code' => 'billing-officer', 'description' => 'Billing and financial management', 'is_system_role' => true],
         ];
 
         foreach ($roles as $role) {
             if (empty($role['code'])) {
-                Log::error('Role code is empty!', $role);
+                Log::error('❌ Role code missing', $role);
                 continue;
             }
 
@@ -101,36 +70,51 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        // -----------------------------
-        // 3️⃣ Create Role-Module Defaults
-        // -----------------------------
-                $roleToModuleMap = [
-                'medical-doctor'         => 'clinical',
-                'pharmacist'             => 'pharmacy',
-                'registered-nurse'       => 'nursing',
-                'receptionist'           => 'reception',
-                'facility-administrator' => 'administration',
-                'laboratory-scientist'   => 'laboratory',
-                'billing-officer'        => 'billing',
-            ];
+        /*
+        |--------------------------------------------------------------------------
+        | 3️⃣ Role → Module Defaults (JSON-BASED, STRICT)
+        |--------------------------------------------------------------------------
+        | One row per role
+        | module_code = JSON ARRAY
+        |--------------------------------------------------------------------------
+        */
+        $roleToModuleMap = [
+            'medical-doctor' => ['clinical'],
+            'pharmacist' => ['pharmacy'],
+            'registered-nurse' => ['nursing'],
+            'receptionist' => ['reception'],
+            'facility-administrator' => ['administration', 'billing'],
+            'laboratory-scientist' => ['laboratory'],
+            'billing-officer' => ['billing'],
+        ];
 
-            foreach ($roleToModuleMap as $roleCode => $moduleCode) {
-                $role = FacilityRole::where('code', $roleCode)->first();
-                $module = Module::where('code', $moduleCode)->first();
+        foreach ($roleToModuleMap as $roleCode => $moduleCodes) {
 
-                if ($role && $module) {
-                    RoleModuleDefault::updateOrCreate(
-                        [
-                            'role_code' => $role->code,
-                            'module_code' => $module->code,
-                        ],
-                        [
-                            'default_access' => true,
-                        ]
-                    );
-                }
+            if (!FacilityRole::where('code', $roleCode)->exists()) {
+                Log::warning("⚠️ Role not found: {$roleCode}");
+                continue;
             }
 
-        $this->command->info('✅ InitialSetupSeeder: Modules, Roles, and Role-Module defaults created successfully.');
+            // Validate modules exist
+            $validModules = Module::whereIn('code', $moduleCodes)
+                ->pluck('code')
+                ->values()
+                ->toArray();
+
+            if (empty($validModules)) {
+                Log::warning("⚠️ No valid modules for role: {$roleCode}");
+                continue;
+            }
+
+            RoleModuleDefault::updateOrCreate(
+                ['role_code' => $roleCode],
+                [
+                    'module_code' => $validModules, // JSON
+                    'default_access' => true,
+                ]
+            );
+        }
+
+        $this->command->info('✅ Database seeded: Modules, Roles, and RoleModuleDefaults successfully.');
     }
 }

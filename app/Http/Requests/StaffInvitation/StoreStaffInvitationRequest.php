@@ -72,10 +72,15 @@ class StoreStaffInvitationRequest extends FormRequest
                     }
                 },
             ],
-            'role_id' => [
+            'role_code' => [
                 'nullable',
                 'integer',
-                'exists:roles,id',
+                'exists:facility_roles,code',
+            ],
+            'module_code' => [
+                'nullable',
+                'integer',
+                'exists:modules,code',
             ],
             'expires_at' => [
                 'nullable',

@@ -42,7 +42,7 @@ class StaffController extends Controller
      public function index(Request $request): JsonResponse
 {
     $validated = $request->validate([
-        'facility_id' => ['required', 'integer', 'min:1'],
+        'facility_id' => ['nullable', 'integer', 'min:1'],
     ]);
 
     try {
@@ -92,7 +92,6 @@ class StaffController extends Controller
         ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
 }
-
 
 
 

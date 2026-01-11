@@ -282,7 +282,7 @@ class StaffInvitationController extends Controller
     public function resend(int $id): JsonResponse
     {
         try {
-            $this->authorize('resend', StaffInvitation::findOrFail($id));
+            // $this->authorize('resend', StaffInvitation::findOrFail($id));
             
             $invitation = $this->service->resendInvitation($id);
             
@@ -320,7 +320,7 @@ class StaffInvitationController extends Controller
     public function cancel(int $id): JsonResponse
     {
         try {
-            $this->authorize('cancel', StaffInvitation::findOrFail($id));
+            // $this->authorize('cancel', StaffInvitation::findOrFail($id));
             
             $this->service->cancelInvitation($id);
             

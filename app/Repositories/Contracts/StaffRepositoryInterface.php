@@ -3,6 +3,7 @@
 namespace App\Repositories\Contracts;
 
 use App\Models\Staff;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -22,6 +23,9 @@ interface StaffRepositoryInterface
      * Find staff by user ID.
      */
     public function findByUserId(int $userId): ?Staff;
+
+    public function query(): Builder;
+
 
     /**
      * Find staff by employee ID.

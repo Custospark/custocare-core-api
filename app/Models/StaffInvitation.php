@@ -38,11 +38,13 @@ class StaffInvitation extends Model
      *
      * @var array<string, string>
      */
-    protected $casts = [
-        'sent_at' => 'datetime',
+      protected $casts = [
+        'module_code' => 'array',
+        'metadata'    => 'array',
+        'sent_at'     => 'datetime',
+        'reminder_sent_at' => 'datetime',
         'responded_at' => 'datetime',
-        'expires_at' => 'datetime',
-        'metadata' => AsArrayObject::class,
+        'expires_at'  => 'datetime',
     ];
 
     /**

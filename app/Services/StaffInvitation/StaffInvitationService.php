@@ -10,6 +10,7 @@ use App\Services\FacilityStaffService;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class StaffInvitationService implements StaffInvitationServiceInterface
@@ -62,11 +63,11 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     /**
      * Create a new staff invitation.
      */
-    public function createInvitation(array $data, ?int $invitedByStaffId = null): StaffInvitation
+    public function createInvitation(array $data, $invitedByStaffId = null): StaffInvitation
     {
         // Add invited_by_staff_id if provided
         if ($invitedByStaffId) {
-            $data['invited_by_staff_id'] = $invitedByStaffId;
+            $data['invited_by_staff_id'] = (int)$invitedByStaffId;
         }
         
         // Check for duplicate pending/accepted invitations
@@ -92,6 +93,7 @@ class StaffInvitationService implements StaffInvitationServiceInterface
         
         // Set sent timestamp
         $data['sent_at'] = now();
+        Log::info($data);
         
         return $this->repository->create($data);
     }

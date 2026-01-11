@@ -21,6 +21,7 @@ class FacilityStaffRole extends Model
         'facility_id',
         'staff_invitation_id',
         'staff_id',
+        'employee_number',
         'role_code',
         'module_code',
         'department_ids',

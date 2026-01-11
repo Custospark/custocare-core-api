@@ -25,11 +25,13 @@ class DatabaseSeeder extends Seeder
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
             ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
             ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
+            ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true,
+            ],
         ];
 
         foreach ($modules as $module) {
             if (empty($module['code'])) {
-                Log::error('❌ Module code missing', $module);
+                Log::error('Module code missing', $module);
                 continue;
             }
 
@@ -60,7 +62,7 @@ class DatabaseSeeder extends Seeder
 
         foreach ($roles as $role) {
             if (empty($role['code'])) {
-                Log::error('❌ Role code missing', $role);
+                Log::error('Role code missing', $role);
                 continue;
             }
 
@@ -83,7 +85,7 @@ class DatabaseSeeder extends Seeder
             'pharmacist' => ['pharmacy'],
             'registered-nurse' => ['nursing'],
             'receptionist' => ['reception'],
-            'facility-administrator' => ['administration', 'billing'],
+            'facility-administrator' => ['administration', 'billing','account'],
             'laboratory-scientist' => ['laboratory'],
             'billing-officer' => ['billing'],
         ];

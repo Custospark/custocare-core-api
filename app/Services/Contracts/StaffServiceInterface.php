@@ -3,6 +3,7 @@
 namespace App\Services\Contracts;
 
 use App\Models\Staff;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -21,7 +22,7 @@ interface StaffServiceInterface
     /**
      * Get all staff with pagination.
      */
-    public function getAllStaff(array $filters = [], int $perPage = 20);
+    public function getAllStaff(array $filters = []);
 
     /**
      * Create new staff.

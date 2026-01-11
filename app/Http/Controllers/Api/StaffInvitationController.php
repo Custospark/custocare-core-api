@@ -8,6 +8,7 @@ use App\Http\Requests\StaffInvitation\UpdateStaffInvitationRequest;
 use App\Http\Resources\StaffInvitationResource;
 use App\Http\Resources\FacilityStaffAssignmentResource;
 use App\Http\Resources\FacilityStaffRoleResource;
+use App\Models\Staff;
 use App\Models\StaffInvitation;
 use App\Services\Contracts\StaffInvitationServiceInterface;
 use Illuminate\Http\JsonResponse;
@@ -70,9 +71,8 @@ class StaffInvitationController extends Controller
     {
         try {
             $validatedData = $request->validated();
-            $invitedByStaffId = Auth::id();
-            
-            $invitation = $this->service->createInvitation($validatedData, $invitedByStaffId);
+            Log::info($validatedData);
+            $invitation = $this->service->createInvitation($validatedData);
             
             return $this->successResponse(
                 new StaffInvitationResource($invitation),
@@ -392,32 +392,42 @@ class StaffInvitationController extends Controller
     public function myPendingInvitations(): JsonResponse
     {
         try {
-            $staffId = Auth::id();
-            
-            $invitations = $this->service->getPendingInvitationsForStaff($staffId);
-            
+            $userId = Auth::id();
+
+            $staffId = Staff::where('user_id', $userId)->value('id');
+
+            if (!$staffId) {
+                return $this->errorResponse(
+                    'You are not associated with any staff profile.',
+                    403
+                );
+            }
+
+            $invitations = $this->service
+                ->getPendingInvitationsForStaff($staffId);
+
             return $this->successResponse(
                 StaffInvitationResource::collection($invitations),
                 'Your pending invitations retrieved successfully.',
                 [
-                    'total' => count($invitations),
-                    'staff_id' => $staffId
+                    'total'   => $invitations->count(),
+                    'staff_id'=> $staffId,
                 ]
             );
-            
-        } catch (\Exception $e) {
+
+        } catch (\Throwable $e) {
             Log::error('Failed to retrieve user pending invitations', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'user_id' => Auth::id(),
+                'error'   => $e->getMessage(),
             ]);
-            
+
             return $this->errorResponse(
                 'Failed to retrieve your pending invitations.',
-                500,
-                ['system' => 'An unexpected error occurred.']
+                500
             );
         }
     }
+
 
     /**
      * Show invitation by UUID (public endpoint).

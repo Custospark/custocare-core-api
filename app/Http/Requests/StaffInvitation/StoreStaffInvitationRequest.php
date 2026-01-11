@@ -49,7 +49,7 @@ class StoreStaffInvitationRequest extends FormRequest
                 // Check if facility is active
                 function ($attribute, $value, $fail) {
                     $facility = \App\Models\Facility::find($value);
-                    if (!$facility || !$facility->is_active) {
+                    if (!$facility) {
                         $fail('The selected facility is not available for invitations.');
                     }
                 },
@@ -74,12 +74,10 @@ class StoreStaffInvitationRequest extends FormRequest
             ],
             'role_code' => [
                 'nullable',
-                'integer',
                 'exists:facility_roles,code',
             ],
             'module_code' => [
                 'nullable',
-                'integer',
                 'exists:modules,code',
             ],
             'expires_at' => [

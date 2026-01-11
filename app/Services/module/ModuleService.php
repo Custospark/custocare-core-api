@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services;
+namespace App\Services\module;
 
 use App\Models\Module;
 use Illuminate\Support\Collection;

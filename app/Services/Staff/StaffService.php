@@ -6,6 +6,7 @@ use App\Models\Staff;
 use App\Repositories\Contracts\StaffRepositoryInterface;
 use App\Services\Contracts\StaffServiceInterface;
 use App\Support\HealthcareIdGenerator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -82,25 +83,37 @@ class StaffService implements StaffServiceInterface
     /**
      * Get all staff with pagination.
      */
-    public function getAllStaff(array $filters = [], int $perPage = 20)
+
+    public function getAllStaff(array $filters = []): Builder
     {
-        try {
-            return $this->staffRepository->all($filters, $perPage);
-        } catch (\Exception $e) {
-            Log::error('Error retrieving all staff', [
-                'filters' => $filters,
-                'error' => $e->getMessage()
-            ]);
-            
-            // Return empty paginator instead of throwing exception
-            return new \Illuminate\Pagination\LengthAwarePaginator(
-                [],
-                0,
-                $perPage,
-                1
-            );
+        $query = $this->staffRepository->query(); // MUST return Builder
+
+        if (!empty($filters['employment_status'])) {
+            $query->where('employment_status', $filters['employment_status']);
         }
+
+        if (!empty($filters['global_role_level'])) {
+            $query->where('global_role_level', $filters['global_role_level']);
+        }
+
+        if (!empty($filters['search'])) {
+            $search = $filters['search'];
+
+            $query->where(function ($q) use ($search) {
+                $q->where('first_name', 'like', "%{$search}%")
+                ->orWhere('last_name', 'like', "%{$search}%")
+                ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        if (array_key_exists('has_expired_license', $filters)) {
+            $query->where('license_expiry', '<', now());
+        }
+
+        return $query; // ✅ Builder, NOT Collection
     }
+
+
 
     /**
      * Create new staff.

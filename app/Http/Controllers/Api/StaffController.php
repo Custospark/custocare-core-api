@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Staff\StoreStaffRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
+use App\Models\FacilityStaffRole;
 use App\Services\Contracts\StaffServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,45 +39,62 @@ class StaffController extends Controller
     /**
      * Display a listing of the staff.
      */
-    public function index(Request $request): JsonResponse
-    {
-        try {
-            // Get filters from request
-            $filters = $request->only([
-                'employment_status', 
-                'global_role_level', 
-                'search',
-                'has_expired_license'
-            ]);
-            
-            // Get paginated staff
-            $perPage = $request->get('per_page', 20);
-            $staff = $this->staffService->getAllStaff($filters, $perPage);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Staff retrieved successfully.',
-                'data' => StaffResource::collection($staff),
-                'meta' => [
-                    'current_page' => $staff->currentPage(),
-                    'last_page' => $staff->lastPage(),
-                    'per_page' => $staff->perPage(),
-                    'total' => $staff->total(),
-                ]
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error retrieving staff list', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve staff list.',
-                'data' => []
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+     public function index(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'facility_id' => ['required', 'integer', 'min:1'],
+    ]);
+
+    try {
+        $filters = $request->only([
+            'employment_status',
+            'global_role_level',
+            'search',
+            'has_expired_license',
+        ]);
+
+        $facilityId = (int) $validated['facility_id'];
+        $perPage    = (int) $request->get('per_page', 20);
+
+        $staff = $this->staffService
+            ->getAllStaff($filters) // ✅ Builder
+            ->join(
+                'facility_staff_roles',
+                'facility_staff_roles.staff_id',
+                '=',
+                'staff.id'
+            )
+            ->where('facility_staff_roles.facility_id', $facilityId)
+            ->select('staff.*') // ✅ prevent column collisions
+            ->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Staff retrieved successfully.',
+            'data'    => StaffResource::collection($staff),
+            'meta'    => [
+                'current_page' => $staff->currentPage(),
+                'last_page'    => $staff->lastPage(),
+                'per_page'     => $staff->perPage(),
+                'total'        => $staff->total(),
+            ],
+        ]);
+    } catch (\Throwable $e) {
+        Log::error('Error retrieving staff list', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to retrieve staff list.',
+            'data'    => [],
+        ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
+}
+
+
+
 
     /**
      * Store a newly created staff in storage.
@@ -139,9 +157,11 @@ class StaffController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        try {
+    Log::info($id);
+    try {
             // Get staff by ID
             $staff = $this->staffService->getStaffById($id);
+            Log::info($staff);
             
             if (!$staff) {
                 return response()->json([
@@ -149,15 +169,6 @@ class StaffController extends Controller
                     'message' => 'Staff not found.',
                     'data' => null
                 ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            // Check authorization using policy
-            if (!auth::user()->can('view', $staff)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You are not authorized to view this staff record.',
-                    'data' => null
-                ], JsonResponse::HTTP_FORBIDDEN);
             }
             
             return response()->json([

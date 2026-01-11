@@ -4,6 +4,7 @@ namespace App\Repositories\Staff;
 
 use App\Models\Staff;
 use App\Repositories\Contracts\StaffRepositoryInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,12 @@ class StaffRepository implements StaffRepositoryInterface
             return null;
         }
     }
+
+
+        public function query(): Builder
+        {
+            return Staff::query();
+        }
 
     /**
      * Find staff by user ID.

@@ -42,12 +42,12 @@ class StaffInvitationResource extends JsonResource
             'days_until_expiry' => $this->expires_at?->diffInDays(now(), false),
             
             // Links
-            '_links' => [
-                'self' => route('staff-invitations.show', $this->id),
-                'accept' => $this->canBeAccepted() ? route('staff-invitations.accept', $this->id) : null,
-                'decline' => $this->isPending() ? route('staff-invitations.decline', $this->id) : null,
-                'resend' => $this->isPending() ? route('staff-invitations.resend', $this->id) : null,
-            ]
+            // '_links' => [
+            //     'self' => route('staff-invitations.show', $this->id),
+            //     'accept' => $this->canBeAccepted() ? route('staff-invitations.accept', $this->id) : null,
+            //     'decline' => $this->isPending() ? route('staff-invitations.decline', $this->id) : null,
+            //     'resend' => $this->isPending() ? route('staff-invitations.resend', $this->id) : null,
+            // ]
         ];
     }
 

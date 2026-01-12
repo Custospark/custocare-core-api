@@ -197,22 +197,27 @@ class StaffInvitationController extends Controller
         }
     }
 
-    /**
-     * Accept a staff invitation.
-     */
-    public function accept(int $id): JsonResponse
+  public function accept(int $id): JsonResponse
     {
         try {
-            $this->authorize('accept', StaffInvitation::findOrFail($id));
+            // Authorize the action
+            $invitation = StaffInvitation::findOrFail($id);
+            // $this->authorize('accept', $invitation);
             
+            // Accept invitation (atomic transaction)
             $result = $this->service->acceptInvitation($id);
+            
+            $message = $result['was_existing'] ?? false
+                ? 'Invitation accepted. You already have an active assignment at this facility.'
+                : 'Invitation accepted successfully. Staff assignment created.';
             
             return $this->successResponse(
                 [
                     'invitation' => new StaffInvitationResource($result['invitation']),
-                    'assignment' => new FacilityStaffRoleResource($result['assignment'])
+                    'assignment' => new FacilityStaffRoleResource($result['assignment']),
+                    'was_existing_assignment' => $result['was_existing'] ?? false,
                 ],
-                'Invitation accepted successfully. Staff assignment created.'
+                $message
             );
             
         } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
@@ -221,6 +226,14 @@ class StaffInvitationController extends Controller
                 403,
                 ['authorization' => 'Insufficient permissions.']
             );
+            
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return $this->errorResponse(
+                'Invitation not found.',
+                404,
+                ['invitation' => ['The specified invitation does not exist.']]
+            );
+            
         } catch (\Exception $e) {
             Log::error('Failed to accept invitation', [
                 'id' => $id,
@@ -228,28 +241,34 @@ class StaffInvitationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            $statusCode = $this->getStatusCodeFromException($e);
-            
             return $this->errorResponse(
                 $e->getMessage(),
-                $statusCode,
+                400,
                 ['invitation' => [$e->getMessage()]]
             );
         }
     }
 
     /**
-     * Decline a staff invitation.
+     * Decline an invitation
+     * 
+     * @param int $id
+     * @return JsonResponse
      */
     public function decline(int $id): JsonResponse
     {
         try {
-            $this->authorize('decline', StaffInvitation::findOrFail($id));
+            // Authorize the action
+            $invitation = StaffInvitation::findOrFail($id);
+            $this->authorize('decline', $invitation);
             
-            $invitation = $this->service->declineInvitation($id);
+            // Decline invitation
+            $result = $this->service->declineInvitation($id);
             
             return $this->successResponse(
-                new StaffInvitationResource($invitation),
+                [
+                    'invitation' => new StaffInvitationResource($result),
+                ],
                 'Invitation declined successfully.'
             );
             
@@ -259,6 +278,14 @@ class StaffInvitationController extends Controller
                 403,
                 ['authorization' => 'Insufficient permissions.']
             );
+            
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return $this->errorResponse(
+                'Invitation not found.',
+                404,
+                ['invitation' => ['The specified invitation does not exist.']]
+            );
+            
         } catch (\Exception $e) {
             Log::error('Failed to decline invitation', [
                 'id' => $id,
@@ -266,15 +293,15 @@ class StaffInvitationController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            $statusCode = $this->getStatusCodeFromException($e);
-            
             return $this->errorResponse(
                 $e->getMessage(),
-                $statusCode,
+                400,
                 ['invitation' => [$e->getMessage()]]
             );
         }
     }
+
+  
 
     /**
      * Resend a staff invitation.
@@ -398,7 +425,7 @@ class StaffInvitationController extends Controller
 
             if (!$staffId) {
                 return $this->errorResponse(
-                    'You are not associated with any staff profile.',
+                    $userId,
                     403
                 );
             }

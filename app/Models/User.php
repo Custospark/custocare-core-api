@@ -70,6 +70,9 @@ class User extends Authenticatable
      *
      * @var array<string>
      */
+
+    protected $primaryKey = 'id';
+    public $incrementing = true;
     protected $fillable = [
         'global_user_uuid',
         'national_id_hash',
@@ -149,7 +152,7 @@ class User extends Authenticatable
      */
     public function getAuthIdentifierName(): string
     {
-        return 'global_user_uuid';
+        return 'id';
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace App\Services\StaffInvitation;
 
+use App\Models\FacilityStaffRole;
 use App\Models\StaffInvitation;
 use App\Services\Contracts\StaffInvitationServiceInterface;
 use App\Repositories\Contracts\StaffInvitationRepositoryInterface;
@@ -144,16 +145,46 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     /**
      * Accept an invitation.
      */
+    // public function acceptInvitation(int $id): array
+    // {
+    //     return DB::transaction(function () use ($id) {
+    //         $invitation = $this->repository->findById($id);
+            
+    //         if (!$invitation) {
+    //             throw new \Exception('Invitation not found.');
+    //         }
+            
+    //         // Check if invitation can be accepted
+    //         if (!$invitation->canBeAccepted()) {
+    //             $message = $invitation->isExpired() 
+    //                 ? 'This invitation has expired.' 
+    //                 : 'This invitation cannot be accepted in its current state.';
+    //             throw new \Exception($message);
+    //         }
+            
+    //         // Update invitation status
+    //         $updatedInvitation = $this->repository->updateStatus($id, 'accepted');
+            
+    //         // Create facility-staff assignment
+    //         // $assignment = $this->facilityStaffService->createAssignment($updatedInvitation);
+            
+    //         return [
+    //             'invitation' => $updatedInvitation,
+    //             // 'assignment' => $assignment
+    //         ];
+    //     });
+    // }
     public function acceptInvitation(int $id): array
     {
         return DB::transaction(function () use ($id) {
-            $invitation = $this->repository->findById($id);
+            // 1. Fetch and lock the invitation row
+            $invitation = StaffInvitation::lockForUpdate()->find($id);
             
             if (!$invitation) {
                 throw new \Exception('Invitation not found.');
             }
             
-            // Check if invitation can be accepted
+            // 2. Validate invitation can be accepted
             if (!$invitation->canBeAccepted()) {
                 $message = $invitation->isExpired() 
                     ? 'This invitation has expired.' 
@@ -161,37 +192,182 @@ class StaffInvitationService implements StaffInvitationServiceInterface
                 throw new \Exception($message);
             }
             
-            // Update invitation status
-            $updatedInvitation = $this->repository->updateStatus($id, 'accepted');
+            // 3. Check if assignment already exists (idempotency check)
+            $existingAssignment = FacilityStaffRole::where('facility_id', $invitation->facility_id)
+                ->where('staff_id', $invitation->staff_id)
+                ->where('role_code', $invitation->role_code)
+                ->whereNull('effective_to')
+                ->first();
             
-            // Create facility-staff assignment
-            // $assignment = $this->facilityStaffService->createAssignment($updatedInvitation);
+            if ($existingAssignment) {
+                // If assignment exists, just update invitation status
+                $invitation->update([
+                    'status' => 'accepted',
+                    'responded_at' => now(),
+                ]);
+                
+                return [
+                    'invitation' => $invitation->fresh(),
+                    'assignment' => $existingAssignment,
+                    'was_existing' => true
+                ];
+            }
+            
+            // 4. Create facility staff role assignment FIRST
+            $assignment = $this->createFacilityStaffRole($invitation);
+            
+            // 5. Update invitation status AFTER successful assignment creation
+            $invitation->update([
+                'status' => 'accepted',
+                'responded_at' => now(),
+            ]);
+            
+            // 6. Link the invitation to the assignment (optional but recommended)
+            $assignment->update([
+                'staff_invitation_id' => $invitation->id
+            ]);
+            
+            Log::info('Invitation accepted and staff assigned', [
+                'invitation_id' => $invitation->id,
+                'assignment_id' => $assignment->id,
+                'staff_id' => $invitation->staff_id,
+                'facility_id' => $invitation->facility_id,
+            ]);
             
             return [
-                'invitation' => $updatedInvitation,
-                // 'assignment' => $assignment
+                'invitation' => $invitation->fresh(),
+                'assignment' => $assignment->fresh(),
+                'was_existing' => false
             ];
         });
     }
 
+   /**
+     * Create facility staff role from invitation data
+     * 
+     * @param StaffInvitation $invitation
+     * @return FacilityStaffRole
+     * @throws \Exception
+     */
+    private function createFacilityStaffRole(StaffInvitation $invitation): FacilityStaffRole
+    {
+        try {
+            // Prepare department IDs array
+            $departmentIds = $invitation->department_id 
+                ? [$invitation->department_id] 
+                : null;
+            
+            // Decode module codes from invitation
+            $moduleCodes = is_string($invitation->module_code) 
+                ? json_decode($invitation->module_code, true) 
+                : $invitation->module_code;
+            
+            // Create the assignment
+            $assignment = FacilityStaffRole::create([
+                'assignment_uuid' => Str::uuid(),
+                'facility_id' => $invitation->facility_id,
+                'staff_id' => $invitation->staff_id,
+                'role_code' => $invitation->role_code,
+                'department_ids' => $departmentIds,
+                'module_code' => $moduleCodes,
+                'is_primary_facility' => $this->shouldBePrimaryFacility($invitation->staff_id),
+                'effective_from' => now()->toDateString(),
+                'effective_to' => null,
+                'assignment_status' => 'active',
+                'credentialing_completed_at' => null, // To be completed later
+                'privileging_approved_at' => null, // To be approved later
+                'created_by_staff_id' => $invitation->invited_by_staff_id,
+                'staff_invitation_id' => null, // Will be set after invitation update
+                'metadata' => [
+                    'created_from_invitation' => true,
+                    'invitation_uuid' => $invitation->invitation_uuid,
+                    'accepted_at' => now()->toIso8601String(),
+                ],
+            ]);
+            
+            return $assignment;
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to create facility staff role', [
+                'invitation_id' => $invitation->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            throw new \Exception('Failed to create staff assignment: ' . $e->getMessage());
+        }
+    }
+
+        /**
+         * Determine if this should be the staff's primary facility
+         * 
+         * @param int $staffId
+         * @return bool
+         */
+        private function shouldBePrimaryFacility(int $staffId): bool
+        {
+            // Check if staff has any other active facility assignments
+            $hasExistingFacilities = FacilityStaffRole::where('staff_id', $staffId)
+                ->where('assignment_status', 'active')
+                ->whereNull('effective_to')
+                ->exists();
+            
+            // If no existing facilities, this becomes primary
+            return !$hasExistingFacilities;
+        }
+
+        /**
+         * Decline an invitation atomically
+         * 
+         * @param int $id
+         * @return StaffInvitation
+         * @throws \Exception
+         */
+        public function declineInvitation(int $id): StaffInvitation
+        {
+            return DB::transaction(function () use ($id) {
+                $invitation = StaffInvitation::lockForUpdate()->find($id);
+                
+                if (!$invitation) {
+                    throw new \Exception('Invitation not found.');
+                }
+                
+                if (!$invitation->canBeDeclined()) {
+                    throw new \Exception('This invitation cannot be declined in its current state.');
+                }
+                
+                $invitation->update([
+                    'status' => 'declined',
+                    'responded_at' => now(),
+                ]);
+                
+                Log::info('Invitation declined', [
+                    'invitation_id' => $invitation->id,
+                    'staff_id' => $invitation->staff_id,
+                    'facility_id' => $invitation->facility_id,
+                ]);
+                
+                return $invitation->fresh();
+            });
+        }
     /**
      * Decline an invitation.
      */
-    public function declineInvitation(int $id): StaffInvitation
-    {
-        $invitation = $this->repository->findById($id);
+    // public function declineInvitation(int $id): StaffInvitation
+    // {
+    //     $invitation = $this->repository->findById($id);
         
-        if (!$invitation) {
-            throw new \Exception('Invitation not found.');
-        }
+    //     if (!$invitation) {
+    //         throw new \Exception('Invitation not found.');
+    //     }
         
-        // Check if invitation can be declined
-        if (!$invitation->isPending()) {
-            throw new \Exception('Only pending invitations can be declined.');
-        }
+    //     // Check if invitation can be declined
+    //     if (!$invitation->isPending()) {
+    //         throw new \Exception('Only pending invitations can be declined.');
+    //     }
         
-        return $this->repository->updateStatus($id, 'declined');
-    }
+    //     return $this->repository->updateStatus($id, 'declined');
+    // }
 
     /**
      * Resend an invitation.

@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Casts\AsArrayObject;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Spatie\Permission\Models\Role;
 
 class StaffInvitation extends Model
@@ -83,6 +84,14 @@ class StaffInvitation extends Model
         return $this->belongsTo(Department::class);
     }
 
+      /**
+     * Check if the invitation is pending.
+     */
+    public function isPending(): bool
+    {
+        return $this->status === 'pending';
+    }
+
     /**
      * Get the role (if specified).Use FacilityStaffRole Table.
      */
@@ -97,30 +106,6 @@ class StaffInvitation extends Model
     public function invitedBy()
     {
         return $this->belongsTo(Staff::class, 'invited_by_staff_id');
-    }
-
-    /**
-     * Check if the invitation is expired.
-     */
-    public function isExpired(): bool
-    {
-        return $this->expires_at && $this->expires_at->isPast();
-    }
-
-    /**
-     * Check if the invitation is pending.
-     */
-    public function isPending(): bool
-    {
-        return $this->status === 'pending';
-    }
-
-    /**
-     * Check if the invitation can be accepted.
-     */
-    public function canBeAccepted(): bool
-    {
-        return $this->isPending() && !$this->isExpired();
     }
 
     /**
@@ -164,5 +149,62 @@ class StaffInvitation extends Model
         $this->update([
             'status' => 'expired',
         ]);
+    }
+    /**
+     * Check if invitation can be accepted
+     * 
+     * @return bool
+     */
+    public function canBeAccepted(): bool
+    {
+        return $this->status === 'pending' && !$this->isExpired();
+    }
+
+    /**
+     * Check if invitation can be declined
+     * 
+     * @return bool
+     */
+    public function canBeDeclined(): bool
+    {
+        return $this->status === 'pending' && !$this->isExpired();
+    }
+
+    /**
+     * Check if invitation is expired
+     * 
+     * @return bool
+     */
+    public function isExpired(): bool
+    {
+        if (!$this->expires_at) {
+            return false;
+        }
+
+        return now()->isAfter($this->expires_at);
+    }
+
+    /**
+     * Get days until expiry
+     * 
+     * @return int|null
+     */
+    public function getDaysUntilExpiryAttribute(): ?int
+    {
+        if (!$this->expires_at) {
+            return null;
+        }
+
+        if ($this->isExpired()) {
+            return 0;
+        }
+
+        return now()->diffInDays($this->expires_at, false);
+    }
+
+   
+    public function facilityStaffRole(): HasOne
+    {
+        return $this->hasOne(FacilityStaffRole::class, 'staff_invitation_id');
     }
 }

@@ -7,6 +7,7 @@ use App\Http\Requests\Staff\StoreStaffRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
 use App\Models\FacilityStaffRole;
+use App\Models\Staff;
 use App\Services\Contracts\StaffServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,58 +38,127 @@ class StaffController extends Controller
     }
 
     /**
-     * Display a listing of the staff.
+     * Display a listing of the staff for a given facility
      */
-     public function index(Request $request): JsonResponse
-{
-    $validated = $request->validate([
-        'facility_id' => ['nullable', 'integer', 'min:1'],
-    ]);
+        public function index(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'facility_id' => ['nullable', 'integer', 'min:1'],
+        ]);
 
+        try {
+            $filters = $request->only([
+                'employment_status',
+                'global_role_level',
+                'search',
+                'has_expired_license',
+            ]);
+
+            $facilityId = (int) $validated['facility_id'];
+            $perPage    = (int) $request->get('per_page', 20);
+
+            $staff = $this->staffService
+                ->getAllStaff($filters) // ✅ Builder
+                ->join(
+                    'facility_staff_roles',
+                    'facility_staff_roles.staff_id',
+                    '=',
+                    'staff.id'
+                )
+                ->where('facility_staff_roles.facility_id', $facilityId)
+                ->select('staff.*') // ✅ prevent column collisions
+                ->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Staff retrieved successfully.',
+                'data'    => StaffResource::collection($staff),
+                'meta'    => [
+                    'current_page' => $staff->currentPage(),
+                    'last_page'    => $staff->lastPage(),
+                    'per_page'     => $staff->perPage(),
+                    'total'        => $staff->total(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error retrieving staff list', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve staff list.',
+                'data'    => [],
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+   /**
+    * Record of all medical Professionals.
+    */
+     public function getAllMedicalProfesionalRecords(Request $request): JsonResponse
+{
     try {
+        // Get filters from request
         $filters = $request->only([
             'employment_status',
             'global_role_level',
             'search',
-            'has_expired_license',
+            'has_expired_license'
         ]);
 
-        $facilityId = (int) $validated['facility_id'];
-        $perPage    = (int) $request->get('per_page', 20);
+        // Start the query directly on the Staff model
+        $query = Staff::query();
 
-        $staff = $this->staffService
-            ->getAllStaff($filters) // ✅ Builder
-            ->join(
-                'facility_staff_roles',
-                'facility_staff_roles.staff_id',
-                '=',
-                'staff.id'
-            )
-            ->where('facility_staff_roles.facility_id', $facilityId)
-            ->select('staff.*') // ✅ prevent column collisions
-            ->paginate($perPage);
+        // Apply filters if provided
+        if (!empty($filters['employment_status'])) {
+            $query->where('employment_status', $filters['employment_status']);
+        }
+
+        if (!empty($filters['global_role_level'])) {
+            $query->where('global_role_level', $filters['global_role_level']);
+        }
+
+        if (!empty($filters['has_expired_license'])) {
+            // Assuming has_expired_license is boolean
+            $query->where('has_expired_license', $filters['has_expired_license']);
+        }
+
+        if (!empty($filters['search'])) {
+            $search = $filters['search'];
+            $query->where(function ($q) use ($search) {
+                $q->where('first_name', 'like', "%{$search}%")
+                  ->orWhere('last_name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        // Pagination
+        $perPage = $request->get('per_page', 20);
+        $staff = $query->paginate($perPage);
 
         return response()->json([
             'success' => true,
             'message' => 'Staff retrieved successfully.',
-            'data'    => StaffResource::collection($staff),
-            'meta'    => [
+            'data' => StaffResource::collection($staff),
+            'meta' => [
                 'current_page' => $staff->currentPage(),
-                'last_page'    => $staff->lastPage(),
-                'per_page'     => $staff->perPage(),
-                'total'        => $staff->total(),
-            ],
+                'last_page' => $staff->lastPage(),
+                'per_page' => $staff->perPage(),
+                'total' => $staff->total(),
+            ]
         ]);
-    } catch (\Throwable $e) {
+    } catch (\Exception $e) {
         Log::error('Error retrieving staff list', [
             'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
+            'trace' => $e->getTraceAsString()
         ]);
 
         return response()->json([
             'success' => false,
             'message' => 'Failed to retrieve staff list.',
-            'data'    => [],
+            'data' => []
         ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
 }

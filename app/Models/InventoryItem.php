@@ -27,6 +27,7 @@ class InventoryItem extends Model
         'item_uuid',
         'item_code',
         'item_name',
+        'facility_id',
         'item_description',
         'item_category',
         'item_subcategory',

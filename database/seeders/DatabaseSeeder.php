@@ -81,13 +81,13 @@ class DatabaseSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
         $roleToModuleMap = [
-            'medical-doctor' => ['clinical'],
-            'pharmacist' => ['pharmacy'],
-            'registered-nurse' => ['nursing'],
-            'receptionist' => ['reception'],
+            'medical-doctor' => ['clinical','account'],
+            'pharmacist' => ['pharmacy','account'],
+            'registered-nurse' => ['nursing','account'],
+            'receptionist' => ['reception','account'],
             'facility-administrator' => ['administration', 'billing','account'],
-            'laboratory-scientist' => ['laboratory'],
-            'billing-officer' => ['billing'],
+            'laboratory-scientist' => ['laboratory','account'],
+            'billing-officer' => ['billing','account'],
         ];
 
         foreach ($roleToModuleMap as $roleCode => $moduleCodes) {

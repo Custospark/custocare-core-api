@@ -14,6 +14,8 @@ return new class extends Migration
         Schema::create('inventory_items', function (Blueprint $table) {
             $table->id();
             $table->uuid('item_uuid')->unique()->index();
+            $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('cascade');
+
             
             // Item identification
             $table->string('item_code', 100)->unique()->index();
@@ -95,6 +97,8 @@ return new class extends Migration
             $table->timestamps();
             $table->softDeletes();
             $table->unsignedBigInteger('created_by_staff_id')->nullable();
+            $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('cascade');
+
             $table->json('metadata')->nullable();
             
             // Performance indexes

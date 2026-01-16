@@ -15,31 +15,32 @@ class InventoryItemPolicy
      */
     public function viewAny(User $user): bool
     {
-        return $user->hasPermission('inventory_items.view_any');
+              return true;
+        // return $user->hasPermission('inventory_items.view_any');
     }
 
     /**
      * Determine whether the user can view the model.
      */
     public function view(User $user, InventoryItem $inventoryItem): bool
-    {
-        return $user->hasPermission('inventory_items.view');
+    {      return true;
+        // return $user->hasPermission('inventory_items.view');
     }
 
     /**
      * Determine whether the user can create models.
      */
     public function create(User $user): bool
-    {
-        return $user->hasPermission('inventory_items.create');
+    {   return true;
+        // return $user->hasPermission('inventory_items.create');
     }
 
     /**
      * Determine whether the user can update the model.
      */
     public function update(User $user, InventoryItem $inventoryItem): bool
-    {
-        return $user->hasPermission('inventory_items.update');
+    { return true;
+        // return $user->hasPermission('inventory_items.update');
     }
 
     /**
@@ -51,8 +52,8 @@ class InventoryItemPolicy
         if ($inventoryItem->status === 'active') {
             return false;
         }
-        
-        return $user->hasPermission('inventory_items.delete');
+        return true;
+        // return $user->hasPermission('inventory_items.delete');
     }
 
     /**

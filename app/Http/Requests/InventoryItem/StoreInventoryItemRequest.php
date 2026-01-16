@@ -27,6 +27,8 @@ class StoreInventoryItemRequest extends FormRequest
             'item_code' => 'required|string|max:100|unique:inventory_items,item_code',
             'item_name' => 'required|string|max:300',
             'item_description' => 'nullable|string',
+            'facility_id' => 'required|integer|exists:facilities,id',
+
             
             'item_category' => 'required|in:medication,medical_supply,surgical_instrument,diagnostic_equipment,implantable_device,prosthetic,laboratory_reagent,personal_protective_equipment,administrative_supply,other',
             'item_subcategory' => 'nullable|string|max:100',
@@ -100,6 +102,8 @@ class StoreInventoryItemRequest extends FormRequest
             'currency_code.required' => 'Currency code is required.',
             'status.required' => 'Status is required.',
             'status.in' => 'Invalid status selected.',
+            'facility_id.required' => 'Facility ID is required.',
+            'facility_id.exists' => 'The selected facility does not exist.',
         ];
     }
 

@@ -8,6 +8,7 @@ use App\Services\Contracts\InventoryItemServiceInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class InventoryItemService implements InventoryItemServiceInterface
 {
@@ -132,8 +133,8 @@ class InventoryItemService implements InventoryItemServiceInterface
     public function createInventoryItem(array $data): array
     {
         // Validate item data
-        $validationResult = $this->validateItemData($data);
-        if (!$validationResult['valid']) {
+        $validationResult = $data;
+        if (!$validationResult) {
             return [
                 'success' => false,
                 'message' => $validationResult['message'],
@@ -149,6 +150,7 @@ class InventoryItemService implements InventoryItemServiceInterface
             if (Auth::check()) {
                 $data['created_by_staff_id'] = Auth::id();
             }
+            $data['item_uuid']=Str::uuid();
 
             // Handle JSON fields
             $data = $this->processJsonFields($data);

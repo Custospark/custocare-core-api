@@ -31,6 +31,8 @@ class UpdateInventoryItemRequest extends FormRequest
             'item_code' => 'sometimes|required|string|max:100|unique:inventory_items,item_code,' . $inventoryItem->id,
             'item_name' => 'sometimes|required|string|max:300',
             'item_description' => 'nullable|string',
+            'facility_id' => 'sometimes|integer|exists:facilities,id',
+
             
             'item_category' => 'sometimes|required|in:medication,medical_supply,surgical_instrument,diagnostic_equipment,implantable_device,prosthetic,laboratory_reagent,personal_protective_equipment,administrative_supply,other',
             'item_subcategory' => 'nullable|string|max:100',
@@ -104,6 +106,8 @@ class UpdateInventoryItemRequest extends FormRequest
             'currency_code.required' => 'Currency code is required.',
             'status.required' => 'Status is required.',
             'status.in' => 'Invalid status selected.',
+            'facility_id.required' => 'Facility ID is required.',
+            'facility_id.exists' => 'The selected facility does not exist.',
         ];
     }
 

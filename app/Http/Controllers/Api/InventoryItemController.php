@@ -325,6 +325,7 @@ class InventoryItemController extends Controller
      */
     public function search(Request $request): JsonResponse
     {
+        Log::info($request);
         try {
             $searchTerm = $request->get('q', '');
             $filters = $request->only(['status', 'category']);

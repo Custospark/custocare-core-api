@@ -6,6 +6,7 @@ namespace App\Services\User;
 
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -47,10 +48,13 @@ class UserService implements Contracts\UserServiceInterface
     return DB::transaction(function () use ($data) {
         try {
             $email = strtolower($data['email']);
+            Log::info("Email: ".$email);
             $emailHash = hash('sha256', $email);
+            Log::info("Email hah: ".$emailHash);
+
 
             // Check for duplicate email
-            if ($this->userRepository->findByEmailHash($emailHash)) {
+            if ($user=$this->userRepository->findByEmailHash($emailHash)) {
                 throw new \Exception('A user with this email already exists.');
             }
 
@@ -63,6 +67,9 @@ class UserService implements Contracts\UserServiceInterface
                 $data['national_id_hash'] = $nationalIdHash;
                 $data['national_id_encrypted'] = encrypt($data['national_id']);
                 unset($data['national_id']);
+            }
+            if(empty($data['password'])){
+                $data['password']=HealthcareIdGenerator::generateRandomCode();
             }
 
             // Generate global UUID

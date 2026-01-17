@@ -3,12 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Staff\StoreStaffByAdminRequest;
 use App\Http\Requests\Staff\StoreStaffRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
+use App\Models\User;
 use App\Services\Contracts\StaffServiceInterface;
+use App\Services\User\Contracts\UserServiceInterface;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,13 +24,15 @@ class StaffController extends Controller
      * Staff service instance.
      */
     protected StaffServiceInterface $staffService;
+    protected UserServiceInterface $userService;
 
     /**
      * Create a new controller instance.
      */
-    public function __construct(StaffServiceInterface $staffService)
+    public function __construct(StaffServiceInterface $staffService,UserServiceInterface $userService)
     {
         $this->staffService = $staffService;
+        $this->userService=$userService;
         
         // Apply middleware
         //TODO:Define these middlewares.
@@ -180,6 +186,93 @@ class StaffController extends Controller
                 'message' => 'Staff account created successfully.',
                 'data'    => new StaffResource($staff),
                 'errors'  => null,
+            ], JsonResponse::HTTP_CREATED);
+
+        } catch (\Illuminate\Auth\AuthenticationException $e) {
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated.',
+                'data'    => null,
+                'errors'  => null,
+            ], JsonResponse::HTTP_UNAUTHORIZED);
+
+        } catch (\RuntimeException $e) {
+
+            Log::warning('Staff creation failed', [
+                'reason' => $e->getMessage(),
+                'input'  => $request->validated(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to create staff record.',
+                'data'    => null,
+                'errors'  => null,
+            ], JsonResponse::HTTP_BAD_REQUEST);
+
+        } catch (\Throwable $e) {
+
+            Log::error('Unexpected staff creation error', [
+                'exception' => $e,
+                'input'     => $request->validated(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error.',
+                'data'    => null,
+                'errors'  => null,
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function createStaffByAdmin(StoreStaffByAdminRequest $request): JsonResponse
+    {
+    //    Log::info($request);
+           $first_name = $request->input('first_name');
+           $last_name = $request->input('last_name');
+           $email = $request->input('email');
+           $phone = $request->input('phone');
+           $password=$request->input('password');
+           if(!$password){
+            $password=HealthcareIdGenerator::generateRandomCode();
+           }
+           $emailHash = hash('sha256', $email);
+           $userRegistrationData=[
+            'first_name'=>$first_name,
+            'last_name'=>$last_name,
+            'email_hash'=>$emailHash,
+            'phone'=>$phone,
+            'password'=>$password,
+            'global_user_uuid'=>HealthcareIdGenerator::generateRandomCode(),
+           ];
+
+      Log::info($userRegistrationData);
+       $user=User::where('email_hash',$emailHash);
+       if($user){
+        Log::info("New User created!.");
+        $user=User::create($userRegistrationData);
+       }
+       Log::warning("User Existed.");
+       dd("Wait");
+    //    Log::alert($user);
+    //    dd("Hold on");
+        try {
+            $staff = $this->staffService->createStaff(
+                $request->validated()
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Staff account created successfully.',
+                'data'    => new StaffResource($staff),
+                'errors'  => null,
+                'credentials'=>[
+                    'password'=>$password,
+                     'email'=>$email,
+
+                ]
             ], JsonResponse::HTTP_CREATED);
 
         } catch (\Illuminate\Auth\AuthenticationException $e) {

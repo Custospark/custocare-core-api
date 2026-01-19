@@ -105,6 +105,9 @@ class ServiceCatalogController extends Controller
      */
     public function store(StoreServiceCatalogRequest $request): JsonResponse
     {
+         Log::info("Creation data: ");
+        Log::info($request);
+      
         try {
             // Validate facility header is present
             if (!$request->header('X-Facility-Id')) {
@@ -210,6 +213,7 @@ class ServiceCatalogController extends Controller
      */
     public function update(UpdateServiceCatalogRequest $request, string $uuid): JsonResponse
     {
+        Log::warning($request);
         try {
             // Validate facility header is present
             if (!$request->header('X-Facility-Id')) {

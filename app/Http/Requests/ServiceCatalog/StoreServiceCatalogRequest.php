@@ -33,7 +33,6 @@ class StoreServiceCatalogRequest extends FormRequest
                 'nullable',
                 'string',
                 'max:50',
-                'unique:service_catalogs,service_code'
             ],
             'code_system' => [
                 'nullable',
@@ -316,6 +315,24 @@ class StoreServiceCatalogRequest extends FormRequest
                 'requires_informed_consent' => filter_var($this->requires_informed_consent, FILTER_VALIDATE_BOOLEAN)
             ]);
         }
+
+
+        // Normalize price_amount to integer (UGX cents not needed, so use whole UGX)
+        if ($this->has('price_amount')) {
+            $raw = $this->input('price_amount');
+
+            // If it arrives as "400.00" or "UGX 400", clean it
+            if (is_string($raw)) {
+                $raw = preg_replace('/[^0-9.]/', '', $raw);
+            }
+
+            $this->merge([
+                'price_amount' => $raw === null || $raw === ''
+                    ? null
+                    : (int) round((float) $raw)  // "400.00" -> 400
+            ]);
+        }
+
 
         // Set default values if not provided
         if (!$this->has('risk_level')) {

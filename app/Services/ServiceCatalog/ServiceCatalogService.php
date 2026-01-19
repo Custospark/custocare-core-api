@@ -337,15 +337,15 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             }
 
             // Prevent updating service code if it would cause a duplicate within same facility
-            if (isset($data['service_code']) && $data['service_code'] !== $serviceCatalog->service_code) {
-                if ($this->repository->serviceCodeExists($data['service_code'], $this->facilityId, $uuid)) {
-                    return [
-                        'success' => false,
-                        'message' => 'Service code already exists in this facility. Please use a different code.',
-                        'data' => []
-                    ];
-                }
-            }
+            // if (isset($data['service_code']) && $data['service_code'] !== $serviceCatalog->service_code) {
+            //     if ($this->repository->serviceCodeExists($data['service_code'], $this->facilityId, $uuid)) {
+            //         return [
+            //             'success' => false,
+            //             'message' => 'Service code already exists in this facility. Please use a different code.',
+            //             'data' => []
+            //         ];
+            //     }
+            // }
 
             // Ensure effective_to is after effective_from if both are set
             $effectiveFrom = isset($data['effective_from']) 
@@ -788,19 +788,18 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             }
 
             // Validate service code uniqueness within facility
-            if (isset($data['service_code'])) {
-                $serviceCode = trim($data['service_code']);
-                $facilityId = $data['facility_id'] ?? $this->facilityId;
-                
-                if ($this->repository->serviceCodeExists($serviceCode, $facilityId, $excludeUuid)) {
+          if (isset($data['service_code'])) {
+                $serviceCode = trim((string) $data['service_code']);
+
+                // Validate service code length early
+                if ($serviceCode === '') {
                     return [
                         'success' => false,
-                        'message' => 'Service code already exists in this facility. Please use a different code.',
+                        'message' => 'Service code cannot be empty.',
                         'data' => []
                     ];
                 }
 
-                // Validate service code length
                 if (strlen($serviceCode) > 50) {
                     return [
                         'success' => false,
@@ -808,7 +807,30 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                         'data' => []
                     ];
                 }
+
+                $facilityId = (int) ($data['facility_id'] ?? $this->facilityId);
+
+                $query = ServiceCatalog::query()
+                    ->where('service_code', $serviceCode)
+                    ->where('facility_id', $facilityId);
+
+                // If updating, exclude the current record
+                if (!empty($excludeUuid)) {
+                    $query->where('service_uuid', '!=', $excludeUuid);
+                }
+
+                if ($query->exists()) {
+                    return [
+                        'success' => false,
+                        'message' => "Service code '{$serviceCode}' already exists in this facility. Please choose a different code.",
+                        'data' => [
+                            'field' => 'service_code',
+                            'code' => 'DUPLICATE_SERVICE_CODE'
+                        ]
+                    ];
+                }
             }
+
 
             // Validate code system
             if (isset($data['code_system'])) {

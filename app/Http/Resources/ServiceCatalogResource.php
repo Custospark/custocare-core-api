@@ -66,12 +66,6 @@ class ServiceCatalogResource extends JsonResource
                 }
             ),
             
-            // Links
-            'links' => [
-                'self' => route('api.service-catalogs.show', $this->service_uuid),
-                'update' => route('api.service-catalogs.update', $this->service_uuid),
-                'delete' => route('api.service-catalogs.destroy', $this->service_uuid),
-            ]
         ];
     }
 

@@ -38,6 +38,7 @@ class ServiceCatalogController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        Log::alert($request);
         try {
             // Validate facility header is present
             if (!$request->header('X-Facility-Id')) {

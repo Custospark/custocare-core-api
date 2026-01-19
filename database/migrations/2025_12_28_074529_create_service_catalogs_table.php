@@ -18,7 +18,7 @@ return new class extends Migration
             $table->id();
             $table->uuid('service_uuid')->unique()->index();
             // Service identification
-            $table->string('service_code', 50)->unique()->index()->comment('CPT, ICD, HCPCS, or local code');
+            $table->string('service_code', 50)->index()->comment('CPT, ICD, HCPCS, or local code');
             $table->enum('code_system', [
                 'cpt',              // Current Procedural Terminology
                 'hcpcs',           // Healthcare Common Procedure Coding System

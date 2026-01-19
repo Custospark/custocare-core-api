@@ -81,6 +81,7 @@ class UserContextResolverService
         if ($patient) {
             $capabilities['patient'] = [
                 'patient_id' => $patient->id,
+                'patient_uuid' => $patient->patient_uuid,
                 'primary_facility_id' => $patient->primary_facility_id,
                 'medical_record_number' => $patient->medical_record_number,
                 'modules' => $this->resolvePatientModules($allModules),
@@ -100,6 +101,7 @@ class UserContextResolverService
 
             $capabilities['staff'] = [
                 'staff_id' => $staff->id,
+                'staff_uuid' => $staff->staff_uuid,
                 'employee_id' => $staff->employee_id,
                 'professional_title' => $staff->professional_title,
             ];
@@ -260,6 +262,7 @@ class UserContextResolverService
             return [
                 'facility_id' => $role->facility_id,
                 'facility_name' => $role->facility->facility_name ?? null,
+                'facility_code' => $role->facility->facility_code ?? null,
                 'role_code' => $role->role_code,
                 'is_primary_facility' => $role->is_primary_facility,
             ];

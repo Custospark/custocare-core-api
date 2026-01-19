@@ -50,7 +50,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class ServiceCatalog extends Model
 {
-    use HasFactory, SoftDeletes, HasUuids;
+    use HasFactory, SoftDeletes;
 
     /**
      * The table associated with the model.
@@ -88,6 +88,9 @@ class ServiceCatalog extends Model
     protected $fillable = [
         'service_uuid',
         'service_code',
+        'facility_id',
+        'currency_code',
+        'price_amount',
         'code_system',
         'service_name',
         'service_description',
@@ -175,7 +178,7 @@ class ServiceCatalog extends Model
      */
     public function getRouteKeyName(): string
     {
-        return 'service_uuid';
+        return 'id';
     }
 
     /**

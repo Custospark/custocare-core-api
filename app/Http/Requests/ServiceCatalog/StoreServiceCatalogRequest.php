@@ -36,9 +36,19 @@ class StoreServiceCatalogRequest extends FormRequest
                 'unique:service_catalogs,service_code'
             ],
             'code_system' => [
-                'required',
+                'nullable',
                 'string',
                 'in:cpt,hcpcs,icd_10_pcs,cdt,local_custom'
+            ],
+            'price_amount' => [
+                'nullable',
+                'integer',
+                'min:0'
+            ],
+            'facility_id' => [
+                'required',
+                'integer',
+                'exists:facilities,id'
             ],
             'service_name' => [
                 'required',
@@ -164,7 +174,7 @@ class StoreServiceCatalogRequest extends FormRequest
                 'max:200'
             ],
             'applicable_region' => [
-                'required',
+                'nullable',
                 'string',
                 'max:10'
             ],
@@ -187,7 +197,7 @@ class StoreServiceCatalogRequest extends FormRequest
                 'in:active,inactive,deprecated,under_review'
             ],
             'effective_from' => [
-                'required',
+                'nullable',
                 'date_format:Y-m-d',
                 'after_or_equal:today'
             ],

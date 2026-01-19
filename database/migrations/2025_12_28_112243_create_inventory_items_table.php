@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('inventory_items', function (Blueprint $table) {
             $table->id();
             $table->uuid('item_uuid')->unique()->index();
-            $table->uuid('facility_id')->unique()->index();
+            $table->unsignedBigInteger('facility_id')->unique()->index();
 
             
             // Item identification

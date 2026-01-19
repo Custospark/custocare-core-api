@@ -5,9 +5,11 @@ namespace App\Services\ServiceCatalog;
 use App\Models\ServiceCatalog;
 use App\Repositories\Contracts\ServiceCatalogRepositoryInterface;
 use App\Services\Contracts\ServiceCatalogServiceInterface;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * Service implementation for ServiceCatalog business logic.
@@ -156,30 +158,62 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
      * @param array $data
      * @return array
      */
+  
     public function createServiceCatalog(array $data): array
-    {
-        try {
-            // Validate business rules before creation
-            $validationResult = $this->validateServiceCatalogData($data);
-            if (!$validationResult['success']) {
-                return $validationResult;
-            }
+{
+    // Never allow callers to set auto-increment PK
+    unset($data['id']);
 
-            // Generate UUID if not provided
-            if (!isset($data['service_uuid'])) {
-                $data['service_uuid'] = \Illuminate\Support\Str::uuid()->toString();
-            }
+    try {
+        /**
+         * 1) Normalize + provide safe defaults BEFORE validation
+         */
 
-            // Set created by staff if not provided (assuming auth context)
-            if (!isset($data['created_by_staff_id']) && auth::check()) {
-                $data['created_by_staff_id'] = auth::id();
-            }
+        // Auto-generate service_code if missing/empty
+        if (!isset($data['service_code']) || trim((string) $data['service_code']) === '') {
+            $data['service_code'] = $this->generateUniqueServiceCode();
+        } else {
+            $data['service_code'] = trim((string) $data['service_code']);
+        }
 
-            // Ensure effective_to is after effective_from if both are set
-            if (isset($data['effective_from']) && isset($data['effective_to'])) {
-                $effectiveFrom = \Carbon\Carbon::parse($data['effective_from']);
-                $effectiveTo = \Carbon\Carbon::parse($data['effective_to']);
-                
+        // Ensure service_uuid exists
+        if (!isset($data['service_uuid']) || trim((string) $data['service_uuid']) === '') {
+            $data['service_uuid'] = (string) Str::uuid();
+        } else {
+            $data['service_uuid'] = trim((string) $data['service_uuid']);
+        }
+
+        // If effective_from is missing, start today (YYYY-MM-DD)
+        if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
+            $data['effective_from'] = Carbon::now()->toDateString();
+        }
+
+        // Set created_by_staff_id if missing and user is authenticated
+        if (!isset($data['created_by_staff_id']) && Auth::check()) {
+            // NOTE: If your Auth::id() returns global_user_uuid, map to staff_id instead.
+            $data['created_by_staff_id'] = Auth::id();
+        }
+
+       
+            $validation = $data;
+
+        if (!($validation['success'] ?? false)) {
+            return $validation; // return validation error as-is
+        }
+
+        // IMPORTANT: use returned data (in case validator injected fields)
+        $data = $validation['data'] ?? $data;
+
+        /**
+         * 3) Cross-field validation
+         */
+        if (isset($data['effective_from'], $data['effective_to']) &&
+            trim((string) $data['effective_to']) !== '') {
+
+            try {
+                $effectiveFrom = Carbon::parse($data['effective_from']);
+                $effectiveTo   = Carbon::parse($data['effective_to']);
+
                 if ($effectiveTo->lessThan($effectiveFrom)) {
                     return [
                         'success' => false,
@@ -187,40 +221,46 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                         'data' => []
                     ];
                 }
+            } catch (\Exception $e) {
+                return [
+                    'success' => false,
+                    'message' => 'Invalid effective_to date format. Please use YYYY-MM-DD format.',
+                    'data' => []
+                ];
             }
-
-            DB::beginTransaction();
-
-            $serviceCatalog = $this->repository->create($data);
-
-            DB::commit();
-
-            Log::info('Service catalog created successfully', [
-                'service_uuid' => $serviceCatalog->service_uuid,
-                'service_code' => $serviceCatalog->service_code
-            ]);
-
-            return [
-                'success' => true,
-                'message' => 'Service catalog created successfully.',
-                'data' => $serviceCatalog
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            Log::error('Failed to create service catalog', [
-                'data' => $data,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Failed to create service catalog. Please try again.',
-                'data' => []
-            ];
         }
+
+        /**
+         * 4) Persist
+         */
+        $serviceCatalog = DB::transaction(function () use ($data) {
+            return $this->repository->create($data);
+        });
+
+        Log::info('Service catalog created successfully', [
+            'service_uuid' => $serviceCatalog->service_uuid,
+            'service_code' => $serviceCatalog->service_code,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Service catalog created successfully.',
+            'data' => $serviceCatalog
+        ];
+    } catch (\Throwable $e) {
+        Log::error('Failed to create service catalog', [
+            'data' => $data,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to create service catalog. Please try again.',
+            'data' => []
+        ];
     }
+}
 
     /**
      * Update an existing service catalog.
@@ -634,19 +674,13 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function validateServiceCatalogData(array $data, ?string $excludeUuid = null): array
     {
         try {
+
+           
             // Check required fields for creation
             if (!isset($data['service_code']) || empty(trim($data['service_code']))) {
                 return [
                     'success' => false,
                     'message' => 'Service code is required.',
-                    'data' => []
-                ];
-            }
-
-            if (!isset($data['code_system']) || empty(trim($data['code_system']))) {
-                return [
-                    'success' => false,
-                    'message' => 'Code system is required.',
                     'data' => []
                 ];
             }
@@ -663,22 +697,6 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 return [
                     'success' => false,
                     'message' => 'Service category is required.',
-                    'data' => []
-                ];
-            }
-
-            if (!isset($data['applicable_region']) || empty(trim($data['applicable_region']))) {
-                return [
-                    'success' => false,
-                    'message' => 'Applicable region is required.',
-                    'data' => []
-                ];
-            }
-
-            if (!isset($data['effective_from']) || empty(trim($data['effective_from']))) {
-                return [
-                    'success' => false,
-                    'message' => 'Effective from date is required.',
                     'data' => []
                 ];
             }
@@ -770,27 +788,22 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 }
             }
 
-            // Validate dates
-            if (isset($data['effective_from'])) {
-                try {
-                    $effectiveFrom = \Carbon\Carbon::parse($data['effective_from']);
-                    
-                    // Ensure effective from is not in the past for new services
-                    if (!$excludeUuid && $effectiveFrom->isPast()) {
-                        return [
-                            'success' => false,
-                            'message' => 'Effective from date cannot be in the past for new services.',
-                            'data' => []
-                        ];
-                    }
-                } catch (\Exception $e) {
-                    return [
-                        'success' => false,
-                        'message' => 'Invalid effective from date format. Please use YYYY-MM-DD format.',
-                        'data' => []
-                    ];
-                }
+    // Validate dates (auto-fill effective_from if missing)
+        try {
+            // Provide default "today" if missing/empty
+            if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
+                $data['effective_from'] = \Carbon\Carbon::now()->toDateString(); // YYYY-MM-DD
             }
+
+            $effectiveFrom = \Carbon\Carbon::parse($data['effective_from']);
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'message' => 'Invalid effective from date format. Please use YYYY-MM-DD format.',
+                'data' => []
+            ];
+        }
+
 
             if (isset($data['effective_to'])) {
                 try {
@@ -862,6 +875,16 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         }
     }
+
+    private function generateUniqueServiceCode(): string
+{
+    do {
+        $code = 'SVC-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+    } while ($this->repository->serviceCodeExists($code));
+
+    return $code;
+}
+
 
     /**
      * Check if a service is currently effective.

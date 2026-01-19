@@ -31,7 +31,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Display a listing of the resource.
+     * Display a listing of the resource for current facility.
      *
      * @param Request $request
      * @return JsonResponse
@@ -39,6 +39,15 @@ class ServiceCatalogController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Extract filters from request
             $filters = $request->only([
                 'status',
@@ -56,7 +65,7 @@ class ServiceCatalogController extends Controller
             $perPage = $request->get('per_page', 15);
             $perPage = min(max($perPage, 1), 100); // Limit between 1 and 100
 
-            // Get service catalogs from service layer
+            // Get service catalogs from service layer (already facility-scoped)
             $result = $this->service->getAllServiceCatalogs($filters, $perPage);
 
             if (!$result['success']) {
@@ -75,6 +84,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalogs list', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -88,7 +98,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Store a newly created resource in storage.
+     * Store a newly created resource in storage for current facility.
      *
      * @param StoreServiceCatalogRequest $request
      * @return JsonResponse
@@ -96,10 +106,19 @@ class ServiceCatalogController extends Controller
     public function store(StoreServiceCatalogRequest $request): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Get validated data from request
             $validatedData = $request->validated();
 
-            // Create service catalog through service layer
+            // Create service catalog through service layer (already facility-scoped)
             $result = $this->service->createServiceCatalog($validatedData);
 
             if (!$result['success']) {
@@ -117,6 +136,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to create service catalog', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'error' => $e->getMessage(),
                 'data' => $request->all(),
                 'trace' => $e->getTraceAsString()
@@ -131,15 +151,25 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Display the specified resource.
+     * Display the specified resource for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function show(string $uuid): JsonResponse
+    public function show(Request $request, string $uuid): JsonResponse
     {
         try {
-            // Get service catalog from service layer
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
+            // Get service catalog from service layer (already facility-scoped)
             $result = $this->service->getServiceCatalogByUuid($uuid);
 
             if (!$result['success']) {
@@ -157,6 +187,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalog', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -171,7 +202,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Update the specified resource in storage.
+     * Update the specified resource in storage for current facility.
      *
      * @param UpdateServiceCatalogRequest $request
      * @param string $uuid
@@ -180,10 +211,19 @@ class ServiceCatalogController extends Controller
     public function update(UpdateServiceCatalogRequest $request, string $uuid): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Get validated data from request
             $validatedData = $request->validated();
 
-            // Update service catalog through service layer
+            // Update service catalog through service layer (already facility-scoped)
             $result = $this->service->updateServiceCatalog($uuid, $validatedData);
 
             if (!$result['success']) {
@@ -201,6 +241,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to update service catalog', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'data' => $request->all(),
@@ -216,15 +257,25 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Remove the specified resource from storage.
+     * Remove the specified resource from storage for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function destroy(string $uuid): JsonResponse
+    public function destroy(Request $request, string $uuid): JsonResponse
     {
         try {
-            // Delete service catalog through service layer
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
+            // Delete service catalog through service layer (already facility-scoped)
             $result = $this->service->deleteServiceCatalog($uuid);
 
             if (!$result['success']) {
@@ -239,6 +290,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to delete service catalog', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -253,15 +305,25 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Restore the specified soft-deleted resource.
+     * Restore the specified soft-deleted resource for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function restore(string $uuid): JsonResponse
+    public function restore(Request $request, string $uuid): JsonResponse
     {
         try {
-            // Restore service catalog through service layer
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
+            // Restore service catalog through service layer (already facility-scoped)
             $result = $this->service->restoreServiceCatalog($uuid);
 
             if (!$result['success']) {
@@ -279,6 +341,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to restore service catalog', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -293,7 +356,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Get effective services for a specific date.
+     * Get effective services for a specific date for current facility.
      *
      * @param Request $request
      * @param string $date
@@ -302,6 +365,15 @@ class ServiceCatalogController extends Controller
     public function effectiveServices(Request $request, string $date): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Extract filters from request
             $filters = $request->only([
                 'service_category',
@@ -313,7 +385,7 @@ class ServiceCatalogController extends Controller
 
             $filters['effective_date'] = $date;
 
-            // Get effective services from service layer
+            // Get effective services from service layer (already facility-scoped)
             $result = $this->service->getEffectiveServices($date, $filters);
 
             if (!$result['success']) {
@@ -331,6 +403,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve effective services', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'date' => $date,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -345,7 +418,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Get services by code system.
+     * Get services by code system for current facility.
      *
      * @param Request $request
      * @param string $codeSystem
@@ -354,6 +427,15 @@ class ServiceCatalogController extends Controller
     public function byCodeSystem(Request $request, string $codeSystem): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Extract filters from request
             $filters = $request->only([
                 'status',
@@ -362,7 +444,7 @@ class ServiceCatalogController extends Controller
                 'risk_level'
             ]);
 
-            // Get services by code system from service layer
+            // Get services by code system from service layer (already facility-scoped)
             $result = $this->service->getByCodeSystem($codeSystem, $filters);
 
             if (!$result['success']) {
@@ -380,6 +462,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve services by code system', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'code_system' => $codeSystem,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -394,7 +477,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Get services by category.
+     * Get services by category for current facility.
      *
      * @param Request $request
      * @param string $category
@@ -403,6 +486,15 @@ class ServiceCatalogController extends Controller
     public function byCategory(Request $request, string $category): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Extract filters from request
             $filters = $request->only([
                 'status',
@@ -411,7 +503,7 @@ class ServiceCatalogController extends Controller
                 'risk_level'
             ]);
 
-            // Get services by category from service layer
+            // Get services by category from service layer (already facility-scoped)
             $result = $this->service->getByCategory($category, $filters);
 
             if (!$result['success']) {
@@ -429,6 +521,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve services by category', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'category' => $category,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -443,7 +536,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Search services by name or code.
+     * Search services by name or code for current facility.
      *
      * @param Request $request
      * @return JsonResponse
@@ -451,6 +544,15 @@ class ServiceCatalogController extends Controller
     public function search(Request $request): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             // Validate search term
             $searchTerm = $request->get('q');
             
@@ -470,7 +572,7 @@ class ServiceCatalogController extends Controller
                 'applicable_region'
             ]);
 
-            // Search services from service layer
+            // Search services from service layer (already facility-scoped)
             $result = $this->service->searchServiceCatalogs($searchTerm, $filters);
 
             if (!$result['success']) {
@@ -488,6 +590,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to search service catalogs', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'search_term' => $request->get('q'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -502,7 +605,7 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Check if a service is currently effective.
+     * Check if a service is currently effective for current facility.
      *
      * @param Request $request
      * @param string $uuid
@@ -511,9 +614,18 @@ class ServiceCatalogController extends Controller
     public function checkEffectiveness(Request $request, string $uuid): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
             $date = $request->get('date', now()->toDateString());
 
-            // Check service effectiveness from service layer
+            // Check service effectiveness from service layer (already facility-scoped)
             $result = $this->service->checkServiceEffectiveness($uuid, $date);
 
             if (!$result['success']) {
@@ -524,6 +636,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to check service effectiveness', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'date' => $date ?? 'current date',
                 'error' => $e->getMessage(),
@@ -539,15 +652,25 @@ class ServiceCatalogController extends Controller
     }
 
     /**
-     * Get service by service code.
+     * Get service by service code for current facility.
      *
+     * @param Request $request
      * @param string $serviceCode
      * @return JsonResponse
      */
-    public function showByCode(string $serviceCode): JsonResponse
+    public function showByCode(Request $request, string $serviceCode): JsonResponse
     {
         try {
-            // Get service catalog by code from service layer
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
+            // Get service catalog by code from service layer (already facility-scoped)
             $result = $this->service->getServiceCatalogByCode($serviceCode);
 
             if (!$result['success']) {
@@ -565,6 +688,7 @@ class ServiceCatalogController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalog by code', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'service_code' => $serviceCode,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()

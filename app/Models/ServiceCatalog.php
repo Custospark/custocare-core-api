@@ -181,56 +181,6 @@ class ServiceCatalog extends Model
         return 'id';
     }
 
-    /**
-     * Scope a query to only include active services.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeActive($query)
-    {
-        return $query->where('status', 'active');
-    }
-
-    /**
-     * Scope a query to only include services effective on a given date.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @param  string  $date
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeEffectiveOn($query, string $date)
-    {
-        return $query->where('effective_from', '<=', $date)
-            ->where(function ($q) use ($date) {
-                $q->whereNull('effective_to')
-                  ->orWhere('effective_to', '>=', $date);
-            });
-    }
-
-    /**
-     * Scope a query to only include services by code system.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @param  string  $codeSystem
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeByCodeSystem($query, string $codeSystem)
-    {
-        return $query->where('code_system', $codeSystem);
-    }
-
-    /**
-     * Scope a query to only include services by category.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @param  string  $category
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeByCategory($query, string $category)
-    {
-        return $query->where('service_category', $category);
-    }
 
     /**
      * Check if the service is currently effective.
@@ -283,4 +233,28 @@ class ServiceCatalog extends Model
     {
         return $this->belongsTo(\App\Models\Staff::class, 'created_by_staff_id');
     }
+    // In ServiceCatalog model
+public function scopeActive($query)
+{
+    return $query->where('status', 'active');
+}
+
+public function scopeEffectiveOn($query, string $date)
+{
+    return $query->where('effective_from', '<=', $date)
+        ->where(function ($q) use ($date) {
+            $q->where('effective_to', '>=', $date)
+              ->orWhereNull('effective_to');
+        });
+}
+
+public function scopeByCodeSystem($query, string $codeSystem)
+{
+    return $query->where('code_system', $codeSystem);
+}
+
+public function scopeByCategory($query, string $category)
+{
+    return $query->where('service_category', $category);
+}
 }

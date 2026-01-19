@@ -30,7 +30,7 @@ class StoreServiceCatalogRequest extends FormRequest
     {
         return [
             'service_code' => [
-                'required',
+                'nullable',
                 'string',
                 'max:50',
                 'unique:service_catalogs,service_code'
@@ -46,7 +46,7 @@ class StoreServiceCatalogRequest extends FormRequest
                 'min:0'
             ],
             'facility_id' => [
-                'required',
+                'sometimes',
                 'integer',
                 'exists:facilities,id'
             ],

@@ -13,7 +13,7 @@ use Illuminate\Support\Str;
 
 /**
  * Service implementation for ServiceCatalog business logic.
- * Contains all business rules and operations for ServiceCatalog entities.
+ * All operations are scoped by facility_id from request headers.
  */
 class ServiceCatalogService implements ServiceCatalogServiceInterface
 {
@@ -25,6 +25,13 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     protected ServiceCatalogRepositoryInterface $repository;
 
     /**
+     * Current facility ID from headers.
+     *
+     * @var int|null
+     */
+    protected ?int $facilityId = null;
+
+    /**
      * Create a new service instance.
      *
      * @param ServiceCatalogRepositoryInterface $repository
@@ -32,10 +39,36 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function __construct(ServiceCatalogRepositoryInterface $repository)
     {
         $this->repository = $repository;
+        $this->facilityId = $this->getCurrentFacilityId();
     }
 
     /**
-     * Get all service catalogs with pagination.
+     * Get current facility ID from request headers.
+     *
+     * @return int|null
+     */
+    protected function getCurrentFacilityId(): ?int
+    {
+        return request()->header('X-Facility-Id') 
+            ? (int) request()->header('X-Facility-Id')
+            : null;
+    }
+
+    /**
+     * Validate facility ID is present.
+     *
+     * @return bool
+     */
+    protected function validateFacilityId(): bool
+    {
+        if (!$this->facilityId) {
+            throw new \RuntimeException('Facility ID is required in request headers (X-Facility-Id)');
+        }
+        return true;
+    }
+
+    /**
+     * Get all service catalogs for current facility with pagination.
      *
      * @param array $filters
      * @param int $perPage
@@ -44,6 +77,11 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getAllServiceCatalogs(array $filters = [], int $perPage = 15): array
     {
         try {
+            $this->validateFacilityId();
+            
+            // Always scope by current facility
+            $filters['facility_id'] = $this->facilityId;
+            
             $paginator = $this->repository->paginate($perPage, $filters);
 
             return [
@@ -63,6 +101,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalogs', [
+                'facility_id' => $this->facilityId,
                 'error' => $e->getMessage(),
                 'filters' => $filters,
                 'trace' => $e->getTraceAsString()
@@ -77,7 +116,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Get a service catalog by UUID.
+     * Get a service catalog by UUID for current facility.
      *
      * @param string $uuid
      * @return array
@@ -85,7 +124,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getServiceCatalogByUuid(string $uuid): array
     {
         try {
-            $serviceCatalog = $this->repository->findByUuid($uuid);
+            $this->validateFacilityId();
+            
+            $serviceCatalog = $this->repository->findByUuidAndFacility($uuid, $this->facilityId);
 
             if (!$serviceCatalog) {
                 return [
@@ -103,6 +144,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalog by UUID', [
                 'uuid' => $uuid,
+                'facility_id' => $this->facilityId,
                 'error' => $e->getMessage()
             ]);
 
@@ -115,7 +157,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Get a service catalog by service code.
+     * Get a service catalog by service code for current facility.
      *
      * @param string $serviceCode
      * @return array
@@ -123,7 +165,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getServiceCatalogByCode(string $serviceCode): array
     {
         try {
-            $serviceCatalog = $this->repository->findByServiceCode($serviceCode);
+            $this->validateFacilityId();
+            
+            $serviceCatalog = $this->repository->findByServiceCodeAndFacility($serviceCode, $this->facilityId);
 
             if (!$serviceCatalog) {
                 return [
@@ -141,6 +185,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
         } catch (\Exception $e) {
             Log::error('Failed to retrieve service catalog by code', [
                 'service_code' => $serviceCode,
+                'facility_id' => $this->facilityId,
                 'error' => $e->getMessage()
             ]);
 
@@ -153,117 +198,118 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Create a new service catalog.
+     * Create a new service catalog for current facility.
      *
      * @param array $data
      * @return array
      */
-  
     public function createServiceCatalog(array $data): array
-{
-    // Never allow callers to set auto-increment PK
-    unset($data['id']);
+    {
+        // Never allow callers to set auto-increment PK
+        unset($data['id']);
 
-    try {
-        /**
-         * 1) Normalize + provide safe defaults BEFORE validation
-         */
+        try {
+            $this->validateFacilityId();
+            
+            /**
+             * 1) Normalize + provide safe defaults BEFORE validation
+             */
 
-        // Auto-generate service_code if missing/empty
-        if (!isset($data['service_code']) || trim((string) $data['service_code']) === '') {
-            $data['service_code'] = $this->generateUniqueServiceCode();
-        } else {
-            $data['service_code'] = trim((string) $data['service_code']);
-        }
+            // Auto-generate service_code if missing/empty
+            if (!isset($data['service_code']) || trim((string) $data['service_code']) === '') {
+                $data['service_code'] = $this->generateUniqueServiceCode($this->facilityId);
+            } else {
+                $data['service_code'] = trim((string) $data['service_code']);
+            }
 
-        // Ensure service_uuid exists
-        if (!isset($data['service_uuid']) || trim((string) $data['service_uuid']) === '') {
-            $data['service_uuid'] = (string) Str::uuid();
-        } else {
-            $data['service_uuid'] = trim((string) $data['service_uuid']);
-        }
+            // Ensure service_uuid exists
+            if (!isset($data['service_uuid']) || trim((string) $data['service_uuid']) === '') {
+                $data['service_uuid'] = (string) Str::uuid();
+            } else {
+                $data['service_uuid'] = trim((string) $data['service_uuid']);
+            }
 
-        // If effective_from is missing, start today (YYYY-MM-DD)
-        if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
-            $data['effective_from'] = Carbon::now()->toDateString();
-        }
+            // Set facility_id from headers (cannot be overridden)
+            $data['facility_id'] = $this->facilityId;
 
-        // Set created_by_staff_id if missing and user is authenticated
-        if (!isset($data['created_by_staff_id']) && Auth::check()) {
-            // NOTE: If your Auth::id() returns global_user_uuid, map to staff_id instead.
-            $data['created_by_staff_id'] = Auth::id();
-        }
+            // If effective_from is missing, start today (YYYY-MM-DD)
+            if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
+                $data['effective_from'] = Carbon::now()->toDateString();
+            }
 
-       
-            $validation = $data;
+            // Set created_by_staff_id if missing and user is authenticated
+            if (!isset($data['created_by_staff_id']) && Auth::check()) {
+                $data['created_by_staff_id'] = Auth::id();
+            }
 
-        if (!($validation['success'] ?? false)) {
-            return $validation; // return validation error as-is
-        }
+            // Validate business rules before creation
+            $validationResult = $this->validateServiceCatalogData($data);
+            if (!$validationResult['success']) {
+                return $validationResult;
+            }
 
-        // IMPORTANT: use returned data (in case validator injected fields)
-        $data = $validation['data'] ?? $data;
+            /**
+             * 3) Cross-field validation
+             */
+            if (isset($data['effective_from'], $data['effective_to']) &&
+                trim((string) $data['effective_to']) !== '') {
 
-        /**
-         * 3) Cross-field validation
-         */
-        if (isset($data['effective_from'], $data['effective_to']) &&
-            trim((string) $data['effective_to']) !== '') {
+                try {
+                    $effectiveFrom = Carbon::parse($data['effective_from']);
+                    $effectiveTo   = Carbon::parse($data['effective_to']);
 
-            try {
-                $effectiveFrom = Carbon::parse($data['effective_from']);
-                $effectiveTo   = Carbon::parse($data['effective_to']);
-
-                if ($effectiveTo->lessThan($effectiveFrom)) {
+                    if ($effectiveTo->lessThan($effectiveFrom)) {
+                        return [
+                            'success' => false,
+                            'message' => 'Effective to date must be after effective from date.',
+                            'data' => []
+                        ];
+                    }
+                } catch (\Exception $e) {
                     return [
                         'success' => false,
-                        'message' => 'Effective to date must be after effective from date.',
+                        'message' => 'Invalid effective_to date format. Please use YYYY-MM-DD format.',
                         'data' => []
                     ];
                 }
-            } catch (\Exception $e) {
-                return [
-                    'success' => false,
-                    'message' => 'Invalid effective_to date format. Please use YYYY-MM-DD format.',
-                    'data' => []
-                ];
             }
+
+            /**
+             * 4) Persist
+             */
+            $serviceCatalog = DB::transaction(function () use ($data) {
+                return $this->repository->create($data);
+            });
+
+            Log::info('Service catalog created successfully', [
+                'facility_id' => $this->facilityId,
+                'service_uuid' => $serviceCatalog->service_uuid,
+                'service_code' => $serviceCatalog->service_code,
+            ]);
+
+            return [
+                'success' => true,
+                'message' => 'Service catalog created successfully.',
+                'data' => $serviceCatalog
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Failed to create service catalog', [
+                'facility_id' => $this->facilityId,
+                'data' => $data,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to create service catalog. Please try again.',
+                'data' => []
+            ];
         }
-
-        /**
-         * 4) Persist
-         */
-        $serviceCatalog = DB::transaction(function () use ($data) {
-            return $this->repository->create($data);
-        });
-
-        Log::info('Service catalog created successfully', [
-            'service_uuid' => $serviceCatalog->service_uuid,
-            'service_code' => $serviceCatalog->service_code,
-        ]);
-
-        return [
-            'success' => true,
-            'message' => 'Service catalog created successfully.',
-            'data' => $serviceCatalog
-        ];
-    } catch (\Throwable $e) {
-        Log::error('Failed to create service catalog', [
-            'data' => $data,
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
-        ]);
-
-        return [
-            'success' => false,
-            'message' => 'Failed to create service catalog. Please try again.',
-            'data' => []
-        ];
     }
-}
 
     /**
-     * Update an existing service catalog.
+     * Update an existing service catalog for current facility.
      *
      * @param string $uuid
      * @param array $data
@@ -272,7 +318,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function updateServiceCatalog(string $uuid, array $data): array
     {
         try {
-            $serviceCatalog = $this->repository->findByUuid($uuid);
+            $this->validateFacilityId();
+            
+            $serviceCatalog = $this->repository->findByUuidAndFacility($uuid, $this->facilityId);
 
             if (!$serviceCatalog) {
                 return [
@@ -288,12 +336,12 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 return $validationResult;
             }
 
-            // Prevent updating service code if it would cause a duplicate
+            // Prevent updating service code if it would cause a duplicate within same facility
             if (isset($data['service_code']) && $data['service_code'] !== $serviceCatalog->service_code) {
-                if ($this->repository->serviceCodeExists($data['service_code'], $uuid)) {
+                if ($this->repository->serviceCodeExists($data['service_code'], $this->facilityId, $uuid)) {
                     return [
                         'success' => false,
-                        'message' => 'Service code already exists. Please use a different code.',
+                        'message' => 'Service code already exists in this facility. Please use a different code.',
                         'data' => []
                     ];
                 }
@@ -334,6 +382,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             $serviceCatalog->refresh();
 
             Log::info('Service catalog updated successfully', [
+                'facility_id' => $this->facilityId,
                 'service_uuid' => $uuid,
                 'service_code' => $serviceCatalog->service_code
             ]);
@@ -347,6 +396,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             DB::rollBack();
             
             Log::error('Failed to update service catalog', [
+                'facility_id' => $this->facilityId,
                 'uuid' => $uuid,
                 'data' => $data,
                 'error' => $e->getMessage(),
@@ -362,7 +412,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Delete a service catalog.
+     * Delete a service catalog for current facility.
      *
      * @param string $uuid
      * @return array
@@ -370,7 +420,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function deleteServiceCatalog(string $uuid): array
     {
         try {
-            $serviceCatalog = $this->repository->findByUuid($uuid);
+            $this->validateFacilityId();
+            
+            $serviceCatalog = $this->repository->findByUuidAndFacility($uuid, $this->facilityId);
 
             if (!$serviceCatalog) {
                 return [
@@ -394,6 +446,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             }
 
             Log::info('Service catalog deleted successfully', [
+                'facility_id' => $this->facilityId,
                 'service_uuid' => $uuid,
                 'service_code' => $serviceCatalog->service_code
             ]);
@@ -405,6 +458,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to delete service catalog', [
+                'facility_id' => $this->facilityId,
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -419,7 +473,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Restore a soft-deleted service catalog.
+     * Restore a soft-deleted service catalog for current facility.
      *
      * @param string $uuid
      * @return array
@@ -427,8 +481,13 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function restoreServiceCatalog(string $uuid): array
     {
         try {
-            // Find including trashed
-            $serviceCatalog = ServiceCatalog::withTrashed()->where('service_uuid', $uuid)->first();
+            $this->validateFacilityId();
+            
+            // Find including trashed, scoped by facility
+            $serviceCatalog = ServiceCatalog::withTrashed()
+                ->where('service_uuid', $uuid)
+                ->where('facility_id', $this->facilityId)
+                ->first();
 
             if (!$serviceCatalog) {
                 return [
@@ -459,6 +518,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             $serviceCatalog->refresh();
 
             Log::info('Service catalog restored successfully', [
+                'facility_id' => $this->facilityId,
                 'service_uuid' => $uuid,
                 'service_code' => $serviceCatalog->service_code
             ]);
@@ -470,6 +530,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to restore service catalog', [
+                'facility_id' => $this->facilityId,
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -484,7 +545,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Get active service catalogs effective on a specific date.
+     * Get active service catalogs effective on a specific date for current facility.
      *
      * @param string $date
      * @param array $filters
@@ -493,6 +554,8 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getEffectiveServices(string $date, array $filters = []): array
     {
         try {
+            $this->validateFacilityId();
+            
             // Validate date format
             if (!\Carbon\Carbon::canBeCreatedFromFormat($date, 'Y-m-d')) {
                 return [
@@ -501,6 +564,10 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                     'data' => []
                 ];
             }
+
+            // Always scope by current facility
+            $filters['facility_id'] = $this->facilityId;
+            $filters['effective_date'] = $date;
 
             $services = $this->repository->getEffectiveServices($date, $filters);
 
@@ -511,6 +578,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to get effective services', [
+                'facility_id' => $this->facilityId,
                 'date' => $date,
                 'error' => $e->getMessage(),
                 'filters' => $filters
@@ -525,7 +593,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Get service catalogs by code system.
+     * Get service catalogs by code system for current facility.
      *
      * @param string $codeSystem
      * @param array $filters
@@ -534,6 +602,8 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getByCodeSystem(string $codeSystem, array $filters = []): array
     {
         try {
+            $this->validateFacilityId();
+            
             $validCodeSystems = ['cpt', 'hcpcs', 'icd_10_pcs', 'cdt', 'local_custom'];
             
             if (!in_array($codeSystem, $validCodeSystems)) {
@@ -544,6 +614,10 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 ];
             }
 
+            // Always scope by current facility
+            $filters['facility_id'] = $this->facilityId;
+            $filters['code_system'] = $codeSystem;
+
             $services = $this->repository->getByCodeSystem($codeSystem, $filters);
 
             return [
@@ -553,6 +627,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to get service catalogs by code system', [
+                'facility_id' => $this->facilityId,
                 'code_system' => $codeSystem,
                 'error' => $e->getMessage(),
                 'filters' => $filters
@@ -567,7 +642,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Get service catalogs by category.
+     * Get service catalogs by category for current facility.
      *
      * @param string $category
      * @param array $filters
@@ -576,6 +651,8 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function getByCategory(string $category, array $filters = []): array
     {
         try {
+            $this->validateFacilityId();
+            
             $validCategories = [
                 'evaluation_management',
                 'diagnostic_imaging',
@@ -602,6 +679,10 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 ];
             }
 
+            // Always scope by current facility
+            $filters['facility_id'] = $this->facilityId;
+            $filters['service_category'] = $category;
+
             $services = $this->repository->getByCategory($category, $filters);
 
             return [
@@ -611,6 +692,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to get service catalogs by category', [
+                'facility_id' => $this->facilityId,
                 'category' => $category,
                 'error' => $e->getMessage(),
                 'filters' => $filters
@@ -625,7 +707,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     }
 
     /**
-     * Search service catalogs by name or code.
+     * Search service catalogs by name or code for current facility.
      *
      * @param string $searchTerm
      * @param array $filters
@@ -634,6 +716,8 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function searchServiceCatalogs(string $searchTerm, array $filters = []): array
     {
         try {
+            $this->validateFacilityId();
+            
             if (strlen($searchTerm) < 2) {
                 return [
                     'success' => false,
@@ -641,6 +725,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                     'data' => []
                 ];
             }
+
+            // Always scope by current facility
+            $filters['facility_id'] = $this->facilityId;
 
             $services = $this->repository->search($searchTerm, $filters);
 
@@ -651,6 +738,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to search service catalogs', [
+                'facility_id' => $this->facilityId,
                 'search_term' => $searchTerm,
                 'error' => $e->getMessage(),
                 'filters' => $filters
@@ -674,8 +762,6 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function validateServiceCatalogData(array $data, ?string $excludeUuid = null): array
     {
         try {
-
-           
             // Check required fields for creation
             if (!isset($data['service_code']) || empty(trim($data['service_code']))) {
                 return [
@@ -701,14 +787,15 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 ];
             }
 
-            // Validate service code uniqueness
+            // Validate service code uniqueness within facility
             if (isset($data['service_code'])) {
                 $serviceCode = trim($data['service_code']);
+                $facilityId = $data['facility_id'] ?? $this->facilityId;
                 
-                if ($this->repository->serviceCodeExists($serviceCode, $excludeUuid)) {
+                if ($this->repository->serviceCodeExists($serviceCode, $facilityId, $excludeUuid)) {
                     return [
                         'success' => false,
-                        'message' => 'Service code already exists. Please use a different code.',
+                        'message' => 'Service code already exists in this facility. Please use a different code.',
                         'data' => []
                     ];
                 }
@@ -788,22 +875,21 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
                 }
             }
 
-    // Validate dates (auto-fill effective_from if missing)
-        try {
-            // Provide default "today" if missing/empty
-            if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
-                $data['effective_from'] = \Carbon\Carbon::now()->toDateString(); // YYYY-MM-DD
+            // Validate dates (auto-fill effective_from if missing)
+            try {
+                // Provide default "today" if missing/empty
+                if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
+                    $data['effective_from'] = \Carbon\Carbon::now()->toDateString(); // YYYY-MM-DD
+                }
+
+                $effectiveFrom = \Carbon\Carbon::parse($data['effective_from']);
+            } catch (\Exception $e) {
+                return [
+                    'success' => false,
+                    'message' => 'Invalid effective from date format. Please use YYYY-MM-DD format.',
+                    'data' => []
+                ];
             }
-
-            $effectiveFrom = \Carbon\Carbon::parse($data['effective_from']);
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'message' => 'Invalid effective from date format. Please use YYYY-MM-DD format.',
-                'data' => []
-            ];
-        }
-
 
             if (isset($data['effective_to'])) {
                 try {
@@ -864,6 +950,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to validate service catalog data', [
+                'facility_id' => $this->facilityId,
                 'data' => $data,
                 'error' => $e->getMessage()
             ]);
@@ -876,18 +963,23 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
         }
     }
 
-    private function generateUniqueServiceCode(): string
-{
-    do {
-        $code = 'SVC-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
-    } while ($this->repository->serviceCodeExists($code));
+    /**
+     * Generate unique service code for facility.
+     *
+     * @param int $facilityId
+     * @return string
+     */
+    private function generateUniqueServiceCode(int $facilityId): string
+    {
+        do {
+            $code = 'SVC-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+        } while ($this->repository->serviceCodeExists($code, $facilityId));
 
-    return $code;
-}
-
+        return $code;
+    }
 
     /**
-     * Check if a service is currently effective.
+     * Check if a service is currently effective for current facility.
      *
      * @param string $uuid
      * @param string|null $date
@@ -896,7 +988,9 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
     public function checkServiceEffectiveness(string $uuid, ?string $date = null): array
     {
         try {
-            $serviceCatalog = $this->repository->findByUuid($uuid);
+            $this->validateFacilityId();
+            
+            $serviceCatalog = $this->repository->findByUuidAndFacility($uuid, $this->facilityId);
 
             if (!$serviceCatalog) {
                 return [
@@ -923,6 +1017,7 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
             ];
         } catch (\Exception $e) {
             Log::error('Failed to check service effectiveness', [
+                'facility_id' => $this->facilityId,
                 'uuid' => $uuid,
                 'date' => $date,
                 'error' => $e->getMessage()

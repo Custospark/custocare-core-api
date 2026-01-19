@@ -6,6 +6,8 @@ use App\Models\ServiceCatalog;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class UpdateServiceCatalogRequest extends FormRequest
 {
@@ -17,22 +19,54 @@ class UpdateServiceCatalogRequest extends FormRequest
     protected ?ServiceCatalog $serviceCatalog = null;
 
     /**
+     * The facility ID from request headers.
+     *
+     * @var int|null
+     */
+    protected ?int $facilityId = null;
+
+    /**
      * Determine if the user is authorized to make this request.
      *
      * @return bool
      */
     public function authorize(): bool
     {
-        // Find the service catalog by UUID
-        $this->serviceCatalog = ServiceCatalog::where('service_uuid', $this->route('serviceCatalog'))->first();
-        
-        if (!$this->serviceCatalog) {
+        try {
+            // Get facility ID from headers
+            $this->facilityId = $this->header('X-Facility-Id');
+            
+            if (!$this->facilityId) {
+                Log::warning('Facility ID missing in request headers for service catalog update', [
+                    'route' => $this->route('serviceCatalog')
+                ]);
+                return false;
+            }
+
+            // Find the service catalog by UUID and facility ID
+            $this->serviceCatalog = ServiceCatalog::where('service_uuid', $this->route('serviceCatalog'))
+                ->where('facility_id', $this->facilityId)
+                ->first();
+            
+            if (!$this->serviceCatalog) {
+                Log::warning('Service catalog not found for update', [
+                    'service_uuid' => $this->route('serviceCatalog'),
+                    'facility_id' => $this->facilityId
+                ]);
+                return false;
+            }
+
+            // Check if user has permission to update service catalogs for this facility
+            // Example: return $this->user()->can('update', $this->serviceCatalog);
+            return true;
+
+        } catch (\Exception $e) {
+            Log::error('Authorization failed for service catalog update', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return false;
         }
-
-        // Check if user has permission to update service catalogs
-        // Example: return $this->user()->can('update', $this->serviceCatalog);
-        return true;
     }
 
     /**
@@ -43,15 +77,25 @@ class UpdateServiceCatalogRequest extends FormRequest
     public function rules(): array
     {
         $serviceUuid = $this->route('serviceCatalog');
+        $facilityId = $this->header('X-Facility-Id');
         
+        // Base rules for service code uniqueness within facility
+        $serviceCodeRule = [
+            'sometimes',
+            'required',
+            'string',
+            'max:50'
+        ];
+
+        // Add unique constraint within facility
+        if ($facilityId) {
+            $serviceCodeRule[] = 'unique:service_catalogs,service_code,' . $serviceUuid . ',service_uuid,facility_id,' . $facilityId;
+        } else {
+            $serviceCodeRule[] = 'unique:service_catalogs,service_code,' . $serviceUuid . ',service_uuid';
+        }
+
         return [
-            'service_code' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:50',
-                'unique:service_catalogs,service_code,' . $serviceUuid . ',service_uuid'
-            ],
+            'service_code' => $serviceCodeRule,
             'code_system' => [
                 'sometimes',
                 'required',
@@ -184,8 +228,7 @@ class UpdateServiceCatalogRequest extends FormRequest
                 'max:200'
             ],
             'applicable_region' => [
-                'sometimes',
-                'required',
+                'nullable',
                 'string',
                 'max:10'
             ],
@@ -215,11 +258,32 @@ class UpdateServiceCatalogRequest extends FormRequest
             'effective_to' => [
                 'nullable',
                 'date_format:Y-m-d',
-                'after:effective_from'
+                'after_or_equal:effective_from'
             ],
             'metadata' => [
                 'nullable',
                 'array'
+            ],
+            'currency_code' => [
+                'nullable',
+                'string',
+                'size:3',
+                'alpha'
+            ],
+            'price_amount' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                'max:9999999999.99' // Matches decimal(12,2)
+            ],
+            'facility_id' => [
+                'prohibited' // Prevent updating facility_id through API
+            ],
+            'service_uuid' => [
+                'prohibited' // Prevent updating service_uuid through API
+            ],
+            'created_by_staff_id' => [
+                'prohibited' // Prevent updating created_by_staff_id through API
             ]
         ];
     }
@@ -232,7 +296,7 @@ class UpdateServiceCatalogRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'service_code.unique' => 'This service code already exists. Please use a different code.',
+            'service_code.unique' => 'This service code already exists in your facility. Please use a different code.',
             'service_code.max' => 'The service code must not exceed 50 characters.',
             'code_system.in' => 'The selected code system is invalid. Valid options are: CPT, HCPCS, ICD-10-PCS, CDT, or local custom.',
             'service_name.max' => 'The service name must not exceed 300 characters.',
@@ -240,10 +304,18 @@ class UpdateServiceCatalogRequest extends FormRequest
             'applicable_region.max' => 'The applicable region must not exceed 10 characters.',
             'effective_from.date_format' => 'The effective from date must be in the format YYYY-MM-DD.',
             'effective_to.date_format' => 'The effective to date must be in the format YYYY-MM-DD.',
-            'effective_to.after' => 'The effective to date must be after the effective from date.',
+            'effective_to.after_or_equal' => 'The effective to date must be on or after the effective from date.',
             'approved_countries.*.size' => 'Each country code must be exactly 2 characters.',
             'approved_countries.*.alpha' => 'Country codes must contain only letters.',
-            'default_duration_minutes.max' => 'The default duration cannot exceed 1440 minutes (24 hours).'
+            'default_duration_minutes.max' => 'The default duration cannot exceed 1440 minutes (24 hours).',
+            'currency_code.size' => 'Currency code must be exactly 3 characters.',
+            'currency_code.alpha' => 'Currency code must contain only letters.',
+            'price_amount.numeric' => 'Price amount must be a valid number.',
+            'price_amount.min' => 'Price amount cannot be negative.',
+            'price_amount.max' => 'Price amount is too large.',
+            'facility_id.prohibited' => 'Facility ID cannot be updated through this endpoint.',
+            'service_uuid.prohibited' => 'Service UUID cannot be updated.',
+            'created_by_staff_id.prohibited' => 'Created by staff ID cannot be updated.'
         ];
     }
 
@@ -261,7 +333,12 @@ class UpdateServiceCatalogRequest extends FormRequest
             'service_category' => 'service category',
             'applicable_region' => 'applicable region',
             'effective_from' => 'effective from date',
-            'effective_to' => 'effective to date'
+            'effective_to' => 'effective to date',
+            'currency_code' => 'currency code',
+            'price_amount' => 'price amount',
+            'facility_id' => 'facility ID',
+            'service_uuid' => 'service UUID',
+            'created_by_staff_id' => 'created by staff ID'
         ];
     }
 
@@ -275,11 +352,20 @@ class UpdateServiceCatalogRequest extends FormRequest
      */
     protected function failedValidation(Validator $validator): void
     {
+        $errors = $validator->errors();
+        
+        Log::warning('Service catalog update validation failed', [
+            'facility_id' => $this->facilityId,
+            'service_uuid' => $this->route('serviceCatalog'),
+            'errors' => $errors->toArray(),
+            'input' => $this->all()
+        ]);
+
         throw new HttpResponseException(
             response()->json([
                 'success' => false,
-                'message' => 'Validation failed.',
-                'errors' => $validator->errors(),
+                'message' => 'Validation failed. Please check your input.',
+                'errors' => $errors,
                 'data' => []
             ], 422)
         );
@@ -292,10 +378,16 @@ class UpdateServiceCatalogRequest extends FormRequest
      */
     protected function failedAuthorization(): void
     {
+        Log::warning('Unauthorized service catalog update attempt', [
+            'facility_id' => $this->facilityId,
+            'service_uuid' => $this->route('serviceCatalog'),
+            'user_id' => Auth::id()
+        ]);
+
         throw new HttpResponseException(
             response()->json([
                 'success' => false,
-                'message' => 'You are not authorized to update this service catalog.',
+                'message' => 'You are not authorized to update this service catalog in your facility.',
                 'errors' => [],
                 'data' => []
             ], 403)
@@ -342,5 +434,68 @@ class UpdateServiceCatalogRequest extends FormRequest
                 }
             }
         }
+
+        // Clean and format numeric fields
+        if ($this->has('price_amount')) {
+            $priceAmount = $this->input('price_amount');
+            if (is_string($priceAmount)) {
+                // Remove any non-numeric characters except decimal point
+                $priceAmount = preg_replace('/[^0-9.]/', '', $priceAmount);
+                $this->merge(['price_amount' => $priceAmount]);
+            }
+        }
+
+        if ($this->has('default_duration_minutes')) {
+            $duration = $this->input('default_duration_minutes');
+            if (is_string($duration)) {
+                $this->merge(['default_duration_minutes' => (int) preg_replace('/[^0-9]/', '', $duration)]);
+            }
+        }
+
+        // Trim string fields
+        $stringFields = [
+            'service_code',
+            'service_name',
+            'service_description',
+            'department_specialty',
+            'consent_form_template',
+            'applicable_region',
+            'currency_code'
+        ];
+
+        foreach ($stringFields as $field) {
+            if ($this->has($field) && is_string($this->input($field))) {
+                $this->merge([$field => trim($this->input($field))]);
+            }
+        }
+
+        // Convert to uppercase for currency code
+        if ($this->has('currency_code')) {
+            $this->merge(['currency_code' => strtoupper(trim($this->input('currency_code')))]);
+        }
+    }
+
+    /**
+     * Get the validated data from the request.
+     * Override to add facility context.
+     *
+     * @param string|null $key
+     * @param mixed $default
+     * @return mixed
+     */
+    public function validated($key = null, $default = null)
+    {
+        $validated = parent::validated($key, $default);
+
+        // Always include facility context in logs
+        if ($this->facilityId) {
+            Log::info('Service catalog update validation passed', [
+                'facility_id' => $this->facilityId,
+                'service_uuid' => $this->route('serviceCatalog'),
+                'validated_fields' => array_keys($validated)
+            ]);
+        }
+
+        return $validated;
     }
 }

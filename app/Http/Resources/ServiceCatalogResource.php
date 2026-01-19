@@ -20,6 +20,8 @@ class ServiceCatalogResource extends JsonResource
             'service_code' => $this->service_code,
             'code_system' => $this->code_system,
             'service_name' => $this->service_name,
+            'price_amount' => $this->price_amount,
+            'currency_code' => $this->currency_code,
             'service_description' => $this->service_description,
             'alternate_names' => $this->alternate_names,
             'service_category' => $this->service_category,

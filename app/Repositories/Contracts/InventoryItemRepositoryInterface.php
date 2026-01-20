@@ -9,41 +9,34 @@ use Illuminate\Database\Eloquent\Collection;
 interface InventoryItemRepositoryInterface
 {
     /**
-     * Find inventory item by ID.
-     *
-     * @param  int  $id
-     * @return InventoryItem|null
-     */
-    public function findById(int $id): ?InventoryItem;
-
-    /**
-     * Find inventory item by UUID.
-     *
-     * @param  string  $uuid
-     * @return InventoryItem|null
-     */
-    public function findByUuid(string $uuid): ?InventoryItem;
-
-    /**
-     * Find inventory item by item code.
-     *
-     * @param  string  $itemCode
-     * @return InventoryItem|null
-     */
-    public function findByItemCode(string $itemCode): ?InventoryItem;
-
-    /**
      * Get all inventory items with pagination.
      *
-     * @param  array  $filters
      * @param  int  $perPage
-     * @param  array  $columns
+     * @param  array  $filters
      * @return LengthAwarePaginator
      */
-    public function getAllPaginated(array $filters = [], int $perPage = 15, array $columns = ['*']): LengthAwarePaginator;
+    public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator;
 
     /**
-     * Get all inventory items by category.
+     * Find inventory item by UUID for specific facility.
+     *
+     * @param  string  $uuid
+     * @param  int  $facilityId
+     * @return InventoryItem|null
+     */
+    public function findByUuidAndFacility(string $uuid, int $facilityId): ?InventoryItem;
+
+    /**
+     * Find inventory item by item code for specific facility.
+     *
+     * @param  string  $itemCode
+     * @param  int  $facilityId
+     * @return InventoryItem|null
+     */
+    public function findByItemCodeAndFacility(string $itemCode, int $facilityId): ?InventoryItem;
+
+    /**
+     * Get inventory items by category.
      *
      * @param  string  $category
      * @param  array  $filters
@@ -101,38 +94,31 @@ interface InventoryItemRepositoryInterface
     public function restore(InventoryItem $inventoryItem): bool;
 
     /**
-     * Permanently delete an inventory item.
-     *
-     * @param  InventoryItem  $inventoryItem
-     * @return bool
-     */
-    public function forceDelete(InventoryItem $inventoryItem): bool;
-
-    /**
-     * Search inventory items by various criteria.
+     * Search inventory items.
      *
      * @param  string  $searchTerm
      * @param  array  $filters
-     * @param  int  $perPage
-     * @return LengthAwarePaginator
+     * @return Collection
      */
-    public function search(string $searchTerm, array $filters = [], int $perPage = 15): LengthAwarePaginator;
+    public function search(string $searchTerm, array $filters = []): Collection;
 
     /**
-     * Check if item code exists.
+     * Check if item code exists within a facility.
      *
      * @param  string  $itemCode
-     * @param  int|null  $excludeId
+     * @param  int  $facilityId
+     * @param  string|null  $excludeUuid
      * @return bool
      */
-    public function itemCodeExists(string $itemCode, ?int $excludeId = null): bool;
+    public function itemCodeExists(string $itemCode, int $facilityId, ?string $excludeUuid = null): bool;
 
     /**
-     * Check if NDC code exists.
+     * Check if NDC code exists within a facility.
      *
      * @param  string  $ndcCode
-     * @param  int|null  $excludeId
+     * @param  int  $facilityId
+     * @param  string|null  $excludeUuid
      * @return bool
      */
-    public function ndcCodeExists(string $ndcCode, ?int $excludeId = null): bool;
+    public function ndcCodeExists(string $ndcCode, int $facilityId, ?string $excludeUuid = null): bool;
 }

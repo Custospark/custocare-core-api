@@ -2,14 +2,10 @@
 
 namespace App\Services\Contracts;
 
-use App\Models\InventoryItem;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Database\Eloquent\Collection;
-
 interface InventoryItemServiceInterface
 {
     /**
-     * Get all inventory items with pagination.
+     * Get all inventory items for current facility with pagination.
      *
      * @param  array  $filters
      * @param  int  $perPage
@@ -18,7 +14,7 @@ interface InventoryItemServiceInterface
     public function getAllInventoryItems(array $filters = [], int $perPage = 15): array;
 
     /**
-     * Get inventory item by UUID.
+     * Get an inventory item by UUID for current facility.
      *
      * @param  string  $uuid
      * @return array
@@ -26,7 +22,7 @@ interface InventoryItemServiceInterface
     public function getInventoryItemByUuid(string $uuid): array;
 
     /**
-     * Get inventory item by item code.
+     * Get an inventory item by item code for current facility.
      *
      * @param  string  $itemCode
      * @return array
@@ -34,7 +30,7 @@ interface InventoryItemServiceInterface
     public function getInventoryItemByCode(string $itemCode): array;
 
     /**
-     * Create a new inventory item.
+     * Create a new inventory item for current facility.
      *
      * @param  array  $data
      * @return array
@@ -42,7 +38,7 @@ interface InventoryItemServiceInterface
     public function createInventoryItem(array $data): array;
 
     /**
-     * Update an existing inventory item.
+     * Update an existing inventory item for current facility.
      *
      * @param  string  $uuid
      * @param  array  $data
@@ -51,7 +47,7 @@ interface InventoryItemServiceInterface
     public function updateInventoryItem(string $uuid, array $data): array;
 
     /**
-     * Delete an inventory item.
+     * Delete an inventory item for current facility.
      *
      * @param  string  $uuid
      * @return array
@@ -59,7 +55,7 @@ interface InventoryItemServiceInterface
     public function deleteInventoryItem(string $uuid): array;
 
     /**
-     * Restore a deleted inventory item.
+     * Restore a soft-deleted inventory item for current facility.
      *
      * @param  string  $uuid
      * @return array
@@ -67,7 +63,7 @@ interface InventoryItemServiceInterface
     public function restoreInventoryItem(string $uuid): array;
 
     /**
-     * Get inventory items by category.
+     * Get inventory items by category for current facility.
      *
      * @param  string  $category
      * @param  array  $filters
@@ -76,7 +72,7 @@ interface InventoryItemServiceInterface
     public function getInventoryItemsByCategory(string $category, array $filters = []): array;
 
     /**
-     * Get controlled substances.
+     * Get controlled substances for current facility.
      *
      * @param  array  $filters
      * @return array
@@ -84,7 +80,7 @@ interface InventoryItemServiceInterface
     public function getControlledSubstances(array $filters = []): array;
 
     /**
-     * Get items requiring special handling.
+     * Get items requiring special handling for current facility.
      *
      * @param  array  $filters
      * @return array
@@ -92,21 +88,20 @@ interface InventoryItemServiceInterface
     public function getSpecialHandlingItems(array $filters = []): array;
 
     /**
-     * Search inventory items.
+     * Search inventory items by name or code for current facility.
      *
      * @param  string  $searchTerm
      * @param  array  $filters
-     * @param  int  $perPage
      * @return array
      */
-    public function searchInventoryItems(string $searchTerm, array $filters = [], int $perPage = 15): array;
+    public function searchInventoryItems(string $searchTerm, array $filters = []): array;
 
     /**
-     * Validate item data before creation/update.
+     * Validate inventory item data before creation/update.
      *
      * @param  array  $data
-     * @param  int|null  $excludeId
+     * @param  string|null  $excludeUuid
      * @return array
      */
-    public function validateItemData(array $data, ?int $excludeId = null): array;
+    public function validateInventoryItemData(array $data, ?string $excludeUuid = null): array;
 }

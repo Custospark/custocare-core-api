@@ -14,22 +14,24 @@ use Illuminate\Support\Facades\Log;
 class InventoryItemController extends Controller
 {
     /**
+     * The inventory item service instance.
+     *
      * @var InventoryItemServiceInterface
      */
-    protected $inventoryItemService;
+    protected InventoryItemServiceInterface $service;
 
     /**
-     * InventoryItemController constructor.
+     * Create a new controller instance.
      *
-     * @param InventoryItemServiceInterface $inventoryItemService
+     * @param InventoryItemServiceInterface $service
      */
-    public function __construct(InventoryItemServiceInterface $inventoryItemService)
+    public function __construct(InventoryItemServiceInterface $service)
     {
-        $this->inventoryItemService = $inventoryItemService;
+        $this->service = $service;
     }
 
     /**
-     * Display a listing of the inventory items.
+     * Display a listing of the resource for current facility.
      *
      * @param Request $request
      * @return JsonResponse
@@ -37,35 +39,64 @@ class InventoryItemController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['status', 'category', 'is_controlled_substance', 'requires_prescription']);
-            $perPage = $request->get('per_page', 15);
-            
-            $result = $this->inventoryItemService->getAllInventoryItems($filters, $perPage);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                InventoryItemResource::collection($result['data']),
-                $result['message'],
-                $result['data']->toArray() // Include pagination metadata
-            );
+
+            // Extract filters from request
+            $filters = $request->only([
+                'status',
+                'item_category',
+                'is_controlled_substance',
+                'requires_prescription',
+                'requires_refrigeration',
+                'requires_controlled_access',
+                'is_hazardous',
+                'is_billable'
+            ]);
+
+            $perPage = $request->get('per_page', 15);
+            $perPage = min(max($perPage, 1), 100); // Limit between 1 and 100
+
+            // Get inventory items from service layer (already facility-scoped)
+            $result = $this->service->getAllInventoryItems($filters, $perPage);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the data using API resources
+            $transformedData = InventoryItemResource::collection($result['data']['items']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData,
+                'pagination' => $result['data']['pagination']
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory items index error', [
+            Log::error('Failed to retrieve inventory items list', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while retrieving inventory items.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Store a newly created inventory item in storage.
+     * Store a newly created resource in storage for current facility.
      *
      * @param StoreInventoryItemRequest $request
      * @return JsonResponse
@@ -73,73 +104,103 @@ class InventoryItemController extends Controller
     public function store(StoreInventoryItemRequest $request): JsonResponse
     {
         try {
-            $validatedData = $request->validated();
-            
-            $result = $this->inventoryItemService->createInventoryItem($validatedData);
-            
-            if (!$result['success']) {
-                return $this->errorResponse(
-                    $result['message'],
-                    $result['error_code'] ?? null,
-                    $result['errors'] ?? null,
-                    422
-                );
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                new InventoryItemResource($result['data']),
-                $result['message'],
-                [],
-                201
-            );
+
+            // Get validated data from request
+            $validatedData = $request->validated();
+
+            // Create inventory item through service layer (already facility-scoped)
+            $result = $this->service->createInventoryItem($validatedData);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the created inventory item
+            $transformedData = new InventoryItemResource($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ], 201);
+
         } catch (\Exception $e) {
-              Log::error('Inventory item store error', [
+            Log::error('Failed to create inventory item', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'error' => $e->getMessage(),
+                'data' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while creating the inventory item.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while creating the inventory item.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Display the specified inventory item.
+     * Display the specified resource for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function show(string $uuid): JsonResponse
+    public function show(Request $request, string $uuid): JsonResponse
     {
         try {
-            $result = $this->inventoryItemService->getInventoryItemByUuid($uuid);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null, [], 404);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                new InventoryItemResource($result['data']),
-                $result['message']
-            );
+
+            // Get inventory item from service layer (already facility-scoped)
+            $result = $this->service->getInventoryItemByUuid($uuid);
+
+            if (!$result['success']) {
+                return response()->json($result, 404);
+            }
+
+            // Transform the inventory item
+            $transformedData = new InventoryItemResource($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory item show error', [
+            Log::error('Failed to retrieve inventory item', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while retrieving the inventory item.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Update the specified inventory item in storage.
+     * Update the specified resource in storage for current facility.
      *
      * @param UpdateInventoryItemRequest $request
      * @param string $uuid
@@ -148,107 +209,152 @@ class InventoryItemController extends Controller
     public function update(UpdateInventoryItemRequest $request, string $uuid): JsonResponse
     {
         try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
+
+            // Get validated data from request
             $validatedData = $request->validated();
-            
-            $result = $this->inventoryItemService->updateInventoryItem($uuid, $validatedData);
-            
+
+            // Update inventory item through service layer (already facility-scoped)
+            $result = $this->service->updateInventoryItem($uuid, $validatedData);
+
             if (!$result['success']) {
-                return $this->errorResponse(
-                    $result['message'],
-                    $result['error_code'] ?? null,
-                    $result['errors'] ?? null,
-                    422
-                );
+                return response()->json($result, 400);
             }
-            
-            return $this->successResponse(
-                new InventoryItemResource($result['data']),
-                $result['message']
-            );
+
+            // Transform the updated inventory item
+            $transformedData = new InventoryItemResource($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory item update error', [
+            Log::error('Failed to update inventory item', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
+                'data' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while updating the inventory item.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while updating the inventory item.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Remove the specified inventory item from storage.
+     * Remove the specified resource from storage for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function destroy(string $uuid): JsonResponse
+    public function destroy(Request $request, string $uuid): JsonResponse
     {
         try {
-            $result = $this->inventoryItemService->deleteInventoryItem($uuid);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                null,
-                $result['message'],
-                [],
-                204
-            );
+
+            // Delete inventory item through service layer (already facility-scoped)
+            $result = $this->service->deleteInventoryItem($uuid);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $result['data']
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory item destroy error', [
+            Log::error('Failed to delete inventory item', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while deleting the inventory item.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while deleting the inventory item.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Restore the specified soft-deleted inventory item.
+     * Restore the specified soft-deleted resource for current facility.
      *
+     * @param Request $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function restore(string $uuid): JsonResponse
+    public function restore(Request $request, string $uuid): JsonResponse
     {
         try {
-            $result = $this->inventoryItemService->restoreInventoryItem($uuid);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                new InventoryItemResource($result['data']),
-                $result['message']
-            );
+
+            // Restore inventory item through service layer (already facility-scoped)
+            $result = $this->service->restoreInventoryItem($uuid);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the restored inventory item
+            $transformedData = new InventoryItemResource($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory item restore error', [
+            Log::error('Failed to restore inventory item', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while restoring the inventory item.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred while restoring the inventory item.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Get inventory items by category.
+     * Get inventory items by category for current facility.
      *
      * @param Request $request
      * @param string $category
@@ -257,34 +363,56 @@ class InventoryItemController extends Controller
     public function byCategory(Request $request, string $category): JsonResponse
     {
         try {
-            $filters = $request->only(['status']);
-            
-            $result = $this->inventoryItemService->getInventoryItemsByCategory($category, $filters);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                InventoryItemResource::collection($result['data']),
-                $result['message']
-            );
+
+            // Extract filters from request
+            $filters = $request->only([
+                'status',
+                'is_controlled_substance',
+                'requires_prescription'
+            ]);
+
+            // Get inventory items by category from service layer (already facility-scoped)
+            $result = $this->service->getInventoryItemsByCategory($category, $filters);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the data using API resources
+            $transformedData = InventoryItemResource::collection($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory items by category error', [
+            Log::error('Failed to retrieve inventory items by category', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'category' => $category,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while retrieving inventory items by category.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Get controlled substances.
+     * Get controlled substances for current facility.
      *
      * @param Request $request
      * @return JsonResponse
@@ -292,122 +420,228 @@ class InventoryItemController extends Controller
     public function controlledSubstances(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['status']);
-            
-            $result = $this->inventoryItemService->getControlledSubstances($filters);
-            
-            if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
-            
-            return $this->successResponse(
-                InventoryItemResource::collection($result['data']),
-                $result['message']
-            );
+
+            // Extract filters from request
+            $filters = $request->only([
+                'status',
+                'item_category',
+                'controlled_substance_schedule'
+            ]);
+
+            // Get controlled substances from service layer (already facility-scoped)
+            $result = $this->service->getControlledSubstances($filters);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the data using API resources
+            $transformedData = InventoryItemResource::collection($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Controlled substances error', [
+            Log::error('Failed to retrieve controlled substances', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while retrieving controlled substances.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Search inventory items.
+     * Search inventory items by name or code for current facility.
      *
      * @param Request $request
      * @return JsonResponse
      */
     public function search(Request $request): JsonResponse
     {
-        Log::info($request);
         try {
-            $searchTerm = $request->get('q', '');
-            $filters = $request->only(['status', 'category']);
-            $perPage = $request->get('per_page', 15);
-            
-            if (empty($searchTerm)) {
-                return $this->errorResponse('Search term is required', 'SEARCH_TERM_REQUIRED', [], 400);
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
             }
+
+            // Validate search term
+            $searchTerm = $request->get('q');
             
-            $result = $this->inventoryItemService->searchInventoryItems($searchTerm, $filters, $perPage);
-            
+            if (!$searchTerm || strlen(trim($searchTerm)) < 2) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Search term must be at least 2 characters long.',
+                    'data' => []
+                ], 400);
+            }
+
+            // Extract filters from request
+            $filters = $request->only([
+                'status',
+                'item_category',
+                'is_controlled_substance',
+                'requires_prescription'
+            ]);
+
+            // Search inventory items from service layer (already facility-scoped)
+            $result = $this->service->searchInventoryItems($searchTerm, $filters);
+
             if (!$result['success']) {
-                return $this->errorResponse($result['message'], $result['error_code'] ?? null);
+                return response()->json($result, 400);
             }
-            
-            return $this->successResponse(
-                InventoryItemResource::collection($result['data']),
-                $result['message'],
-                $result['data']->toArray() // Include pagination metadata
-            );
+
+            // Transform the data using API resources
+            $transformedData = InventoryItemResource::collection($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
         } catch (\Exception $e) {
-              Log::error('Inventory items search error', [
+            Log::error('Failed to search inventory items', [
+                'facility_id' => $request->header('X-Facility-Id'),
                 'search_term' => $searchTerm,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            return $this->errorResponse(
-                'An unexpected error occurred while searching inventory items.',
-                'SERVER_ERROR'
-            );
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred during search.',
+                'data' => []
+            ], 500);
         }
     }
 
     /**
-     * Return a successful JSON response.
+     * Get inventory item by item code for current facility.
      *
-     * @param mixed $data
-     * @param string $message
-     * @param array $meta
-     * @param int $statusCode
+     * @param Request $request
+     * @param string $itemCode
      * @return JsonResponse
      */
-    protected function successResponse($data = null, string $message = '', array $meta = [], int $statusCode = 200): JsonResponse
+    public function showByCode(Request $request, string $itemCode): JsonResponse
     {
-        $response = [
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ];
+        try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
 
-        if (!empty($meta)) {
-            $response['meta'] = $meta;
+            // Get inventory item by code from service layer (already facility-scoped)
+            $result = $this->service->getInventoryItemByCode($itemCode);
+
+            if (!$result['success']) {
+                return response()->json($result, 404);
+            }
+
+            // Transform the inventory item
+            $transformedData = new InventoryItemResource($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve inventory item by code', [
+                'facility_id' => $request->header('X-Facility-Id'),
+                'item_code' => $itemCode,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
-
-        return response()->json($response, $statusCode);
     }
 
     /**
-     * Return an error JSON response.
+     * Get special handling items for current facility.
      *
-     * @param string $message
-     * @param string|null $errorCode
-     * @param array|null $errors
-     * @param int $statusCode
+     * @param Request $request
      * @return JsonResponse
      */
-    protected function errorResponse(string $message, ?string $errorCode = null, ?array $errors = null, int $statusCode = 400): JsonResponse
+    public function specialHandling(Request $request): JsonResponse
     {
-        $response = [
-            'success' => false,
-            'message' => $message,
-        ];
+        try {
+            // Validate facility header is present
+            if (!$request->header('X-Facility-Id')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID is required in request headers (X-Facility-Id)',
+                    'data' => []
+                ], 400);
+            }
 
-        if ($errorCode) {
-            $response['error_code'] = $errorCode;
+            // Extract filters from request
+            $filters = $request->only([
+                'status',
+                'item_category',
+                'is_hazardous',
+                'requires_refrigeration',
+                'requires_controlled_access'
+            ]);
+
+            // Get special handling items from service layer (already facility-scoped)
+            $result = $this->service->getSpecialHandlingItems($filters);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            // Transform the data using API resources
+            $transformedData = InventoryItemResource::collection($result['data']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $transformedData
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve special handling items', [
+                'facility_id' => $request->header('X-Facility-Id'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'data' => []
+            ], 500);
         }
-
-        if ($errors) {
-            $response['errors'] = $errors;
-        }
-
-        return response()->json($response, $statusCode);
     }
 }

@@ -6,146 +6,615 @@ use App\Models\InventoryItem;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class UpdateInventoryItemRequest extends FormRequest
 {
     /**
+     * The inventory item being updated.
+     *
+     * @var InventoryItem|null
+     */
+    protected ?InventoryItem $inventoryItem = null;
+
+    /**
+     * The facility ID from request headers.
+     *
+     * @var int|null
+     */
+    protected ?int $facilityId = null;
+
+    /**
      * Determine if the user is authorized to make this request.
+     *
+     * @return bool
      */
     public function authorize(): bool
     {
-        $inventoryItem = $this->route('inventory_item');
-        return $this->user()->can('update', $inventoryItem);
+        try {
+            // Get facility ID from headers
+            $this->facilityId = $this->header('X-Facility-Id');
+            
+            if (!$this->facilityId) {
+                Log::warning('Facility ID missing in request headers for inventory item update', [
+                    'route' => $this->route('inventory_item')
+                ]);
+                return false;
+            }
+
+            // Find the inventory item by UUID and facility ID
+            $this->inventoryItem = InventoryItem::where('item_uuid', $this->route('inventory_item'))
+                ->where('facility_id', $this->facilityId)
+                ->first();
+            
+            if (!$this->inventoryItem) {
+                Log::warning('Inventory item not found for update', [
+                    'item_uuid' => $this->route('inventory_item'),
+                    'facility_id' => $this->facilityId
+                ]);
+                return false;
+            }
+
+            // Check if user has permission to update inventory items for this facility
+            // Example: return $this->user()->can('update', $this->inventoryItem);
+            return true;
+
+        } catch (\Exception $e) {
+            Log::error('Authorization failed for inventory item update', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return false;
+        }
     }
 
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, mixed>
      */
     public function rules(): array
     {
-        $inventoryItem = $this->route('inventory_item');
+        $itemUuid = $this->route('inventory_item');
+        $facilityId = $this->header('X-Facility-Id');
         
-        return [
-            'item_code' => 'sometimes|required|string|max:100|unique:inventory_items,item_code,' . $inventoryItem->id,
-            'item_name' => 'sometimes|required|string|max:300',
-            'item_description' => 'nullable|string',
-            'facility_id' => 'sometimes|integer|exists:facilities,id',
+        // Base rules for item code uniqueness within facility
+        $itemCodeRule = [
+            'sometimes',
+            'required',
+            'string',
+            'max:100'
+        ];
 
-            
-            'item_category' => 'sometimes|required|in:medication,medical_supply,surgical_instrument,diagnostic_equipment,implantable_device,prosthetic,laboratory_reagent,personal_protective_equipment,administrative_supply,other',
-            'item_subcategory' => 'nullable|string|max:100',
-            
-            'generic_name' => 'nullable|string|max:300',
-            'brand_name' => 'nullable|string|max:300',
-            'ndc_code' => 'nullable|string|max:20|unique:inventory_items,ndc_code,' . $inventoryItem->id,
-            'drug_class' => 'nullable|string|max:100',
-            'controlled_substance_schedule' => 'nullable|in:I,II,III,IV,V,non_controlled',
-            'active_ingredients' => 'nullable|json',
-            'dosage_form' => 'nullable|string|max:100',
-            'strength' => 'nullable|string|max:100',
-            'route_of_administration' => 'nullable|string|max:100',
-            
-            'manufacturer' => 'nullable|string|max:200',
-            'manufacturer_item_number' => 'nullable|string|max:100',
-            'supplier' => 'nullable|string|max:200',
-            
-            'unit_of_measure' => 'sometimes|required|string|max:50',
-            'package_quantity' => 'sometimes|required|integer|min:1',
-            'packaging_type' => 'nullable|string|max:100',
-            
-            'unit_cost' => 'nullable|numeric|min:0|max:99999999.99',
-            'average_wholesale_price' => 'nullable|numeric|min:0|max:99999999.99',
-            'currency_code' => 'sometimes|required|string|size:3',
-            
-            'storage_requirements' => 'nullable|json',
-            'requires_refrigeration' => 'sometimes|boolean',
-            'requires_controlled_access' => 'sometimes|boolean',
-            'storage_location_type' => 'nullable|string|max:100',
-            
-            'requires_prescription' => 'sometimes|boolean',
-            'regulatory_approvals' => 'nullable|json',
-            'fda_approval_number' => 'nullable|string|max:100',
-            
-            'is_hazardous' => 'sometimes|boolean',
-            'safety_warnings' => 'nullable|json',
-            'contraindications' => 'nullable|json',
-            'special_handling_instructions' => 'nullable|string',
-            
-            'is_billable' => 'sometimes|boolean',
-            'track_by_lot' => 'sometimes|boolean',
-            'track_by_serial' => 'sometimes|boolean',
-            'reorder_point' => 'nullable|integer|min:0',
-            'reorder_quantity' => 'nullable|integer|min:1',
-            'safety_stock_level' => 'nullable|integer|min:0',
-            'max_stock_level' => 'nullable|integer|min:0',
-            
-            'status' => 'sometimes|required|in:active,inactive,discontinued,recalled',
-            
-            'metadata' => 'nullable|json',
+        // Add unique constraint within facility
+        if ($facilityId) {
+            $itemCodeRule[] = 'unique:inventory_items,item_code,' . $itemUuid . ',item_uuid,facility_id,' . $facilityId;
+        } else {
+            $itemCodeRule[] = 'unique:inventory_items,item_code,' . $itemUuid . ',item_uuid';
+        }
+
+        // Base rules for NDC code uniqueness within facility
+        $ndcCodeRule = [
+            'nullable',
+            'string',
+            'max:20'
+        ];
+
+        // Add unique constraint within facility
+        if ($facilityId) {
+            $ndcCodeRule[] = 'unique:inventory_items,ndc_code,' . $itemUuid . ',item_uuid,facility_id,' . $facilityId . ',ndc_code,!NULL';
+        } else {
+            $ndcCodeRule[] = 'unique:inventory_items,ndc_code,' . $itemUuid . ',item_uuid,ndc_code,!NULL';
+        }
+
+        return [
+            'item_code' => $itemCodeRule,
+            'item_name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:300'
+            ],
+            'item_description' => [
+                'nullable',
+                'string'
+            ],
+            'item_category' => [
+                'sometimes',
+                'required',
+                'string',
+                'in:medication,medical_supply,surgical_instrument,diagnostic_equipment,implantable_device,prosthetic,laboratory_reagent,personal_protective_equipment,administrative_supply,other'
+            ],
+            'item_subcategory' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'generic_name' => [
+                'nullable',
+                'string',
+                'max:300'
+            ],
+            'brand_name' => [
+                'nullable',
+                'string',
+                'max:300'
+            ],
+            'ndc_code' => $ndcCodeRule,
+            'drug_class' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'controlled_substance_schedule' => [
+                'nullable',
+                'string',
+                'in:I,II,III,IV,V,non_controlled'
+            ],
+            'active_ingredients' => [
+                'nullable',
+                'array'
+            ],
+            'active_ingredients.*' => [
+                'string',
+                'max:200'
+            ],
+            'dosage_form' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'strength' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'route_of_administration' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'manufacturer' => [
+                'nullable',
+                'string',
+                'max:200'
+            ],
+            'manufacturer_item_number' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'supplier' => [
+                'nullable',
+                'string',
+                'max:200'
+            ],
+            'unit_of_measure' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:50'
+            ],
+            'package_quantity' => [
+                'sometimes',
+                'required',
+                'integer',
+                'min:1',
+                'max:65535'
+            ],
+            'packaging_type' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'unit_cost' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                'max:99999999.99'
+            ],
+            'average_wholesale_price' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                'max:99999999.99'
+            ],
+            'currency_code' => [
+                'sometimes',
+                'required',
+                'string',
+                'size:3',
+                'alpha'
+            ],
+            'storage_requirements' => [
+                'nullable',
+                'array'
+            ],
+            'requires_refrigeration' => [
+                'nullable',
+                'boolean'
+            ],
+            'requires_controlled_access' => [
+                'nullable',
+                'boolean'
+            ],
+            'storage_location_type' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'requires_prescription' => [
+                'nullable',
+                'boolean'
+            ],
+            'regulatory_approvals' => [
+                'nullable',
+                'array'
+            ],
+            'fda_approval_number' => [
+                'nullable',
+                'string',
+                'max:100'
+            ],
+            'is_hazardous' => [
+                'nullable',
+                'boolean'
+            ],
+            'safety_warnings' => [
+                'nullable',
+                'array'
+            ],
+            'safety_warnings.*' => [
+                'string',
+                'max:500'
+            ],
+            'contraindications' => [
+                'nullable',
+                'array'
+            ],
+            'contraindications.*' => [
+                'string',
+                'max:500'
+            ],
+            'special_handling_instructions' => [
+                'nullable',
+                'string'
+            ],
+            'is_billable' => [
+                'nullable',
+                'boolean'
+            ],
+            'track_by_lot' => [
+                'nullable',
+                'boolean'
+            ],
+            'track_by_serial' => [
+                'nullable',
+                'boolean'
+            ],
+            'reorder_point' => [
+                'nullable',
+                'integer',
+                'min:0',
+                'max:65535'
+            ],
+            'reorder_quantity' => [
+                'nullable',
+                'integer',
+                'min:1',
+                'max:65535'
+            ],
+            'safety_stock_level' => [
+                'nullable',
+                'integer',
+                'min:0',
+                'max:65535'
+            ],
+            'max_stock_level' => [
+                'nullable',
+                'integer',
+                'min:0',
+                'max:65535'
+            ],
+            'status' => [
+                'sometimes',
+                'required',
+                'string',
+                'in:active,inactive,discontinued,recalled'
+            ],
+            'metadata' => [
+                'nullable',
+                'array'
+            ],
+            'facility_id' => [
+                'prohibited' // Prevent updating facility_id through API
+            ],
+            'item_uuid' => [
+                'prohibited' // Prevent updating item_uuid through API
+            ],
+            'created_by_staff_id' => [
+                'prohibited' // Prevent updating created_by_staff_id through API
+            ]
         ];
     }
 
     /**
      * Get custom messages for validator errors.
      *
-     * @return array
+     * @return array<string, string>
      */
     public function messages(): array
     {
         return [
-            'item_code.required' => 'Item code is required.',
-            'item_code.unique' => 'This item code is already in use.',
-            'item_name.required' => 'Item name is required.',
-            'item_category.required' => 'Item category is required.',
-            'item_category.in' => 'Invalid item category selected.',
-            'ndc_code.unique' => 'This NDC code is already registered.',
-            'unit_of_measure.required' => 'Unit of measure is required.',
-            'package_quantity.required' => 'Package quantity is required.',
-            'currency_code.required' => 'Currency code is required.',
-            'status.required' => 'Status is required.',
-            'status.in' => 'Invalid status selected.',
-            'facility_id.required' => 'Facility ID is required.',
-            'facility_id.exists' => 'The selected facility does not exist.',
+            'item_code.unique' => 'This item code already exists in your facility. Please use a different code.',
+            'item_code.max' => 'The item code must not exceed 100 characters.',
+            'item_name.max' => 'The item name must not exceed 300 characters.',
+            'item_category.in' => 'The selected item category is invalid.',
+            'ndc_code.unique' => 'This NDC code already exists in your facility. Please use a different code.',
+            'ndc_code.max' => 'The NDC code must not exceed 20 characters.',
+            'unit_of_measure.max' => 'The unit of measure must not exceed 50 characters.',
+            'package_quantity.min' => 'The package quantity must be at least 1.',
+            'package_quantity.max' => 'The package quantity must not exceed 65535.',
+            'unit_cost.numeric' => 'The unit cost must be a valid number.',
+            'unit_cost.min' => 'The unit cost cannot be negative.',
+            'unit_cost.max' => 'The unit cost is too large.',
+            'average_wholesale_price.numeric' => 'The average wholesale price must be a valid number.',
+            'average_wholesale_price.min' => 'The average wholesale price cannot be negative.',
+            'average_wholesale_price.max' => 'The average wholesale price is too large.',
+            'currency_code.size' => 'The currency code must be exactly 3 characters.',
+            'currency_code.alpha' => 'The currency code must contain only letters.',
+            'status.in' => 'The selected status is invalid.',
+            'facility_id.prohibited' => 'Facility ID cannot be updated through this endpoint.',
+            'item_uuid.prohibited' => 'Item UUID cannot be updated.',
+            'created_by_staff_id.prohibited' => 'Created by staff ID cannot be updated.',
+            'reorder_point.min' => 'The reorder point cannot be negative.',
+            'reorder_point.max' => 'The reorder point must not exceed 65535.',
+            'reorder_quantity.min' => 'The reorder quantity must be at least 1.',
+            'reorder_quantity.max' => 'The reorder quantity must not exceed 65535.',
+            'safety_stock_level.min' => 'The safety stock level cannot be negative.',
+            'safety_stock_level.max' => 'The safety stock level must not exceed 65535.',
+            'max_stock_level.min' => 'The max stock level cannot be negative.',
+            'max_stock_level.max' => 'The max stock level must not exceed 65535.'
+        ];
+    }
+
+    /**
+     * Get custom attributes for validator errors.
+     *
+     * @return array<string, string>
+     */
+    public function attributes(): array
+    {
+        return [
+            'item_code' => 'item code',
+            'item_name' => 'item name',
+            'item_category' => 'item category',
+            'item_subcategory' => 'item subcategory',
+            'generic_name' => 'generic name',
+            'brand_name' => 'brand name',
+            'ndc_code' => 'NDC code',
+            'drug_class' => 'drug class',
+            'controlled_substance_schedule' => 'controlled substance schedule',
+            'active_ingredients' => 'active ingredients',
+            'dosage_form' => 'dosage form',
+            'strength' => 'strength',
+            'route_of_administration' => 'route of administration',
+            'manufacturer' => 'manufacturer',
+            'manufacturer_item_number' => 'manufacturer item number',
+            'supplier' => 'supplier',
+            'unit_of_measure' => 'unit of measure',
+            'package_quantity' => 'package quantity',
+            'packaging_type' => 'packaging type',
+            'unit_cost' => 'unit cost',
+            'average_wholesale_price' => 'average wholesale price',
+            'currency_code' => 'currency code',
+            'storage_requirements' => 'storage requirements',
+            'requires_refrigeration' => 'requires refrigeration',
+            'requires_controlled_access' => 'requires controlled access',
+            'storage_location_type' => 'storage location type',
+            'requires_prescription' => 'requires prescription',
+            'regulatory_approvals' => 'regulatory approvals',
+            'fda_approval_number' => 'FDA approval number',
+            'is_hazardous' => 'is hazardous',
+            'safety_warnings' => 'safety warnings',
+            'contraindications' => 'contraindications',
+            'special_handling_instructions' => 'special handling instructions',
+            'is_billable' => 'is billable',
+            'track_by_lot' => 'track by lot',
+            'track_by_serial' => 'track by serial',
+            'reorder_point' => 'reorder point',
+            'reorder_quantity' => 'reorder quantity',
+            'safety_stock_level' => 'safety stock level',
+            'max_stock_level' => 'max stock level',
+            'status' => 'status',
+            'metadata' => 'metadata',
+            'facility_id' => 'facility ID',
+            'item_uuid' => 'item UUID',
+            'created_by_staff_id' => 'created by staff ID'
         ];
     }
 
     /**
      * Handle a failed validation attempt.
      *
-     * @param  \Illuminate\Contracts\Validation\Validator  $validator
+     * @param Validator $validator
      * @return void
      *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException
+     * @throws HttpResponseException
      */
     protected function failedValidation(Validator $validator): void
     {
-        $response = response()->json([
-            'success' => false,
-            'message' => 'Validation errors occurred',
-            'errors' => $validator->errors(),
-            'error_code' => 'VALIDATION_FAILED'
-        ], 422);
+        $errors = $validator->errors();
+        
+        Log::warning('Inventory item update validation failed', [
+            'facility_id' => $this->facilityId,
+            'item_uuid' => $this->route('inventory_item'),
+            'errors' => $errors->toArray(),
+            'input' => $this->all()
+        ]);
 
-        throw new HttpResponseException($response);
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'Validation failed. Please check your input.',
+                'errors' => $errors,
+                'data' => []
+            ], 422)
+        );
     }
 
     /**
      * Handle a failed authorization attempt.
      *
      * @return void
-     *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException
      */
     protected function failedAuthorization(): void
     {
-        $response = response()->json([
-            'success' => false,
-            'message' => 'You are not authorized to update this inventory item',
-            'error_code' => 'UNAUTHORIZED_ACTION'
-        ], 403);
+        Log::warning('Unauthorized inventory item update attempt', [
+            'facility_id' => $this->facilityId,
+            'item_uuid' => $this->route('inventory_item'),
+            'user_id' => Auth::id()
+        ]);
 
-        throw new HttpResponseException($response);
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'You are not authorized to update this inventory item in your facility.',
+                'errors' => [],
+                'data' => []
+            ], 403)
+        );
+    }
+
+    /**
+     * Prepare the data for validation.
+     *
+     * @return void
+     */
+    protected function prepareForValidation(): void
+    {
+        // Ensure boolean fields are properly cast
+        $booleanFields = [
+            'requires_refrigeration',
+            'requires_controlled_access',
+            'requires_prescription',
+            'is_hazardous',
+            'is_billable',
+            'track_by_lot',
+            'track_by_serial'
+        ];
+
+        foreach ($booleanFields as $field) {
+            if ($this->has($field)) {
+                $this->merge([
+                    $field => filter_var($this->input($field), FILTER_VALIDATE_BOOLEAN)
+                ]);
+            }
+        }
+
+        // Parse JSON strings to arrays if provided as strings
+        $jsonFields = [
+            'active_ingredients',
+            'storage_requirements',
+            'regulatory_approvals',
+            'safety_warnings',
+            'contraindications',
+            'metadata'
+        ];
+
+        foreach ($jsonFields as $field) {
+            if ($this->has($field) && is_string($this->input($field))) {
+                $decoded = json_decode($this->input($field), true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $this->merge([$field => $decoded]);
+                }
+            }
+        }
+
+        // Clean and format numeric fields
+        $numericFields = [
+            'unit_cost',
+            'average_wholesale_price',
+            'package_quantity',
+            'reorder_point',
+            'reorder_quantity',
+            'safety_stock_level',
+            'max_stock_level'
+        ];
+
+        foreach ($numericFields as $field) {
+            if ($this->has($field)) {
+                $value = $this->input($field);
+                if (is_string($value)) {
+                    // Remove any non-numeric characters except decimal point
+                    $value = preg_replace('/[^0-9.]/', '', $value);
+                    if ($value !== '') {
+                        $this->merge([$field => (float) $value]);
+                    } else {
+                        $this->merge([$field => null]);
+                    }
+                }
+            }
+        }
+
+        // Trim string fields
+        $stringFields = [
+            'item_code',
+            'item_name',
+            'item_description',
+            'item_subcategory',
+            'generic_name',
+            'brand_name',
+            'ndc_code',
+            'drug_class',
+            'dosage_form',
+            'strength',
+            'route_of_administration',
+            'manufacturer',
+            'manufacturer_item_number',
+            'supplier',
+            'unit_of_measure',
+            'packaging_type',
+            'currency_code',
+            'storage_location_type',
+            'fda_approval_number',
+            'special_handling_instructions'
+        ];
+
+        foreach ($stringFields as $field) {
+            if ($this->has($field) && is_string($this->input($field))) {
+                $this->merge([$field => trim($this->input($field))]);
+            }
+        }
+
+        // Convert to uppercase for currency code
+        if ($this->has('currency_code')) {
+            $this->merge(['currency_code' => strtoupper(trim($this->input('currency_code')))]);
+        }
+    }
+
+    /**
+     * Get the validated data from the request.
+     * Override to add facility context.
+     *
+     * @param string|null $key
+     * @param mixed $default
+     * @return mixed
+     */
+    public function validated($key = null, $default = null)
+    {
+        $validated = parent::validated($key, $default);
+
+        // Always include facility context in logs
+        if ($this->facilityId) {
+            Log::info('Inventory item update validation passed', [
+                'facility_id' => $this->facilityId,
+                'item_uuid' => $this->route('inventory_item'),
+                'validated_fields' => array_keys($validated)
+            ]);
+        }
+
+        return $validated;
     }
 }

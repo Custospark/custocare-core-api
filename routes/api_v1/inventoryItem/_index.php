@@ -32,11 +32,16 @@ Route::middleware(['auth:sanctum', 'api'])->group(function () {
             ->name('api.inventory-items.by-category');
         
         Route::get('controlled-substances', [InventoryItemController::class, 'controlledSubstances'])
-            ->name('api.inventory-items.controlled-substances')
-            ->middleware('can:viewControlledSubstances,App\Models\InventoryItem');
+            ->name('api.inventory-items.controlled-substances');
+        
+        Route::get('special-handling', [InventoryItemController::class, 'specialHandling'])
+            ->name('api.inventory-items.special-handling');
         
         Route::get('search', [InventoryItemController::class, 'search'])
             ->name('api.inventory-items.search');
+        
+        Route::get('code/{item_code}', [InventoryItemController::class, 'showByCode'])
+            ->name('api.inventory-items.by-code');
     });
     
 });

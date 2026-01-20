@@ -15,8 +15,6 @@ return new class extends Migration
             $table->id();
             $table->uuid('item_uuid')->unique()->index();
             $table->unsignedBigInteger('facility_id')->unique()->index();
-
-            
             // Item identification
             $table->string('item_code', 100)->unique()->index();
             $table->string('item_name', 300);

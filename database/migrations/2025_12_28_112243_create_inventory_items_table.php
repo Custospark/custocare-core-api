@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('inventory_items', function (Blueprint $table) {
             $table->id();
             $table->uuid('item_uuid')->unique()->index();
-            $table->unsignedBigInteger('facility_id')->unique()->index();
+            $table->unsignedBigInteger('facility_id')->index();
             // Item identification
             $table->string('item_code', 100)->unique()->index();
             $table->string('item_name', 300);
@@ -60,7 +60,7 @@ return new class extends Migration
             // Pricing
             $table->decimal('unit_cost', 10, 2)->nullable();
             $table->decimal('average_wholesale_price', 10, 2)->nullable();
-            $table->string('currency_code', 3)->default('USD');
+            $table->string('currency_code', 3)->default('UGX');
             
             // Storage & handling
             $table->json('storage_requirements')->nullable()->comment('Temperature, humidity, light');

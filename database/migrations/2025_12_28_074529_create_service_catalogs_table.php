@@ -79,9 +79,8 @@ return new class extends Migration
             
             // Status
             $table->enum('status', ['active', 'inactive', 'deprecated', 'under_review'])->default('active')->index();
-            $table->date('effective_from')
-                ->default(DB::raw('CURRENT_DATE'))
-                ->index();
+            $table->dateTime('effective_from')->useCurrent();
+
             $table->date('effective_to')->nullable()->index();
             
             // Audit

@@ -11,12 +11,14 @@ use Illuminate\Support\Facades\Route;
         // General patient operations
         Route::get('/', [PatientController::class, 'index'])->name('index');
         Route::post('/', [PatientController::class, 'store'])->name('store');
+        Route::post('/create-by-staff', [PatientController::class, 'createPatientByStaff']);
         Route::get('/search/lean', [PatientController::class, 'patientSearch']);
+        Route::post('onboarding/consume-token', [PatientController::class, 'consumeOnboardingToken']);
+
         Route::get('/search', [PatientController::class, 'search'])->name('search');
         Route::get('/statistics', [PatientController::class, 'statistics'])->name('statistics');
         Route::get('/blood-type/{bloodType}', [PatientController::class, 'byBloodType'])->name('by-blood-type');
         Route::get('/requiring-isolation', [PatientController::class, 'requiringIsolation'])->name('requiring-isolation');
-
         // Individual patient operations
         Route::prefix('{patient}')->group(function () {
             Route::get('/', [PatientController::class, 'show'])->name('show');

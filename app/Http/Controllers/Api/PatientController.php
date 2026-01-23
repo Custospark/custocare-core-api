@@ -8,12 +8,18 @@ use App\Http\Requests\Patient\StorePatientRequest;
 use App\Http\Requests\Patient\UpdatePatientRequest;
 use App\Http\Resources\PatientResource;
 use App\Http\Resources\PatientSearchResource;
+use App\Models\OnboardingToken;
 use App\Services\Contracts\PatientServiceInterface;
 use App\Models\Patient;
+use App\Models\User;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-
+use Illuminate\Support\Str;
 
 class PatientController extends Controller
 {
@@ -149,6 +155,323 @@ class PatientController extends Controller
             }
         }
 
+      protected function getCurrentFacilityId(): ?int
+    {
+        return request()->header('X-Facility-Id') 
+            ? (int) request()->header('X-Facility-Id')
+            : null;
+    }
+   
+    /**
+     * Staff creates a patient + user account in one go (atomic).
+     * Returns lean PatientSearchResource for immediate UI use.
+     */
+     public function createPatientByStaff(Request $request): JsonResponse
+    {
+        try {
+            // $this->authorize('create', Patient::class);
+            
+            $data = $request->validate([
+                // USER minimal
+                'first_name' => 'required|string|max:100',
+                'last_name'  => 'required|string|max:100',
+                'email'      => 'nullable|email|max:255',
+                'phone'      => 'nullable|string|max:30',
+
+                // PATIENT minimal
+                'date_of_birth'  => 'required|date',
+                'biological_sex' => 'required|in:male,female,intersex,unknown',
+
+                // Optional context
+                'created_from_facility_id' => 'nullable|integer|exists:facilities,id',
+
+                // Duplicate-handling controls (driven by UI)
+                'action_on_possible_duplicate' => 'nullable|in:block,allow',
+                'existing_user_action' => 'nullable|in:use_existing,block',
+            ]);
+
+            
+            if (empty($data['email']) && empty($data['phone'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Provide at least email or phone.',
+                    'errors'  => ['contact' => ['Email or phone is required.']],
+                    'data'    => [],
+                    ], 422);
+                    }
+                    
+            $result = DB::transaction(function () use ($data, $request) {
+
+                // Normalize
+                $email = isset($data['email']) ? strtolower(trim($data['email'])) : null;
+                $phone = isset($data['phone']) ? preg_replace('/\s+/', '', $data['phone']) : null;
+
+                // Deterministic hashes for matching
+                $emailHash = $email ? hash('sha256', $email) : null;
+                $phoneHash = $phone ? hash('sha256', $phone) : null;
+
+                // Encrypt for storage (Laravel built-in)
+                $emailEncrypted = $email ? Crypt::encryptString($email) : null;
+                $phoneEncrypted = $phone ? Crypt::encryptString($phone) : null;
+
+                // 1) Exact-match user search by email_hash / phone_hash
+                $user = User::query()
+                    ->where(function ($q) use ($emailHash, $phoneHash) {
+                        if ($emailHash) $q->where('email_hash', $emailHash);
+                        if ($phoneHash) $q->orWhere('phone_hash', $phoneHash);
+                    })
+                    ->lockForUpdate()
+                    ->first();
+
+
+                // Existing user found, allow staff to decide
+                if ($user && ($data['existing_user_action'] ?? 'use_existing') === 'block') {
+                    $existingPatient = Patient::query()
+                        ->where('user_id', $user->id)
+                        ->with('user')
+                        ->first();
+
+                    return [
+                        'status' => $existingPatient ? 'already_has_patient' : 'existing_user_found',
+                        'patient' => $existingPatient,
+                        'existing_user' => $user,
+                        'possible_duplicate' => null,
+                        'created_new_user' => false,
+                        'onboarding_link_required' => false,
+                        'raw_token' => null,
+                    ];
+                }
+
+                // 2) Possible duplicate check (only if no contact-match user)
+                $possibleDuplicatePatient = null;
+
+                if (!$user) {
+                    $possibleDuplicatePatient = Patient::query()
+                        ->whereDate('date_of_birth', $data['date_of_birth'])
+                        ->where('biological_sex', $data['biological_sex'])
+                        ->whereHas('user', function ($u) use ($data) {
+                            $u->where('first_name', $data['first_name'])
+                            ->where('last_name', $data['last_name']);
+                        })
+                        ->with('user')
+                        ->first();
+
+                    if ($possibleDuplicatePatient && ($data['action_on_possible_duplicate'] ?? 'block') === 'block') {
+                        return [
+                            'status' => 'possible_duplicate',
+                            'patient' => null,
+                            'existing_user' => null,
+                            'possible_duplicate' => $possibleDuplicatePatient,
+                            'created_new_user' => false,
+                            'onboarding_link_required' => false,
+                            'raw_token' => null,
+                        ];
+                    }
+                }
+
+                // 3) Create or update user
+                $createdNewUser = false;
+
+                if (!$user) {
+                    $user = User::create([
+                        'global_user_uuid' => (string) Str::uuid(),
+
+                        'first_name' => $data['first_name'],
+                        'last_name'  => $data['last_name'],
+                        'display_name' => trim($data['first_name'].' '.$data['last_name']),
+
+                        'email_encrypted' => $emailEncrypted,
+                        'email_hash'      => $emailHash,
+                        'phone_encrypted' => $phoneEncrypted,
+                        'phone_hash'      => $phoneHash,
+
+                        // Best practice: patient sets password via onboarding token
+                        'password_hash' => null,
+                        'requires_password_change' => true,
+
+                        'created_from_facility_id' => $data['created_from_facility_id'] ?? null,
+                        'created_by_staff_id' => optional($request->user())->id,
+                        'created_ip' => $request->ip(),
+                    ]);
+
+                    $createdNewUser = true;
+                } else {
+                    $dirty = false;
+
+                    if ($emailHash && empty($user->email_hash)) {
+                        $user->email_hash = $emailHash;
+                        $user->email_encrypted = $emailEncrypted;
+                        $dirty = true;
+                    }
+
+                    if ($phoneHash && empty($user->phone_hash)) {
+                        $user->phone_hash = $phoneHash;
+                        $user->phone_encrypted = $phoneEncrypted;
+                        $dirty = true;
+                    }
+
+                    if ($dirty) {
+                        $user->updated_by_staff_id = optional($request->user())->id;
+                        $user->save();
+                    }
+                }
+
+                // 4) If user already has patient record -> return it (no new patient)
+                $existingPatient = Patient::query()
+                    ->where('user_id', $user->id)
+                    ->with('user')
+                    ->first();
+
+                if ($existingPatient) {
+                    return [
+                        'status' => 'already_has_patient',
+                        'patient' => $existingPatient,
+                        'existing_user' => $user,
+                        'possible_duplicate' => $possibleDuplicatePatient,
+                        'created_new_user' => $createdNewUser,
+                        'onboarding_link_required' => false,
+                        'raw_token' => null,
+                    ];
+                }
+
+                // 5) Create patient
+                $patientUuid = HealthcareIdGenerator::generate('patient');
+
+                $mrnPlain = 'MRN-' . strtoupper(Str::random(10));
+                $mrnHash  = hash('sha256', $mrnPlain);
+                $mrnEncrypted = Crypt::encryptString($mrnPlain);
+
+                $patient = Patient::create([
+                    'patient_uuid' => $patientUuid,
+                    'user_id' => $user->id,
+
+                    'medical_record_number_hash' => $mrnHash,
+                    'medical_record_number_encrypted' => $mrnEncrypted,
+
+                    'date_of_birth' => $data['date_of_birth'],
+                    'biological_sex' => $data['biological_sex'],
+
+                    'status' => 'active',
+                    'portal_access_enabled' => true,
+
+                    'created_by_staff_id' => optional($request->user())->id,
+                ])->load('user');
+
+                // 6) Create onboarding token record (secure + expiring)
+                // Store ONLY token_hash, never raw token.
+                $rawToken = Str::random(64);
+
+                OnboardingToken::create([
+                    'user_id' => $user->id,
+                    'token_hash' => hash('sha256', $rawToken),
+                    'expires_at' => now()->addMinutes(30),
+                    'channel' => $email ? 'email' : 'sms',
+                    'created_by_staff_id' => optional($request->user())->id,
+                    'created_ip' => $request->ip(),
+                ]);
+
+                // TODO (IMPORTANT):
+                // Build the onboarding link and send it via Email/SMS.
+                // Example URL (front-end):
+                //   $link = config('app.frontend_url') . "/onboarding?token={$rawToken}";
+                //
+                // dispatch(new SendPatientOnboardingLinkJob(
+                //     userId: $user->id,
+                //     onboardingLink: $link,
+                //     email: $email,
+                //     phone: $phone
+                // ));
+
+                return [
+                    'status' => 'created',
+                    'patient' => $patient,
+                    'existing_user' => $user,
+                    'possible_duplicate' => $possibleDuplicatePatient,
+                    'created_new_user' => $createdNewUser,
+                    'onboarding_link_required' => true,
+                    //'raw_token' => $rawToken, // do NOT return in production
+                ];
+            });
+
+            // ---------- RESPONSE SHAPING ----------
+            if ($result['status'] === 'possible_duplicate') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Possible duplicate patient found. Confirm action to proceed.',
+                    'data' => [],
+                    'meta' => [
+                        'status' => 'possible_duplicate',
+                        'possible_duplicate' => new PatientSearchResource($result['possible_duplicate']),
+                    ],
+                ], 409);
+            }
+
+            if ($result['status'] === 'existing_user_found') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'A user with the same email/phone already exists. Confirm action to proceed.',
+                    'data' => [],
+                    'meta' => [
+                        'status' => 'existing_user_found',
+                        'existing_user_global_user_uuid' => $result['existing_user']->global_user_uuid,
+                    ],
+                ], 409);
+            }
+
+            if ($result['status'] === 'already_has_patient') {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'User already has a patient record.',
+                    'data' => new PatientSearchResource($result['patient']),
+                    'meta' => [
+                        'status' => 'already_has_patient',
+                        'possible_duplicate' => $result['possible_duplicate']
+                            ? new PatientSearchResource($result['possible_duplicate'])
+                            : null,
+                    ],
+                ], 200);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Patient created successfully by staff.',
+                'data' => new PatientSearchResource($result['patient']),
+                'meta' => [
+                    'status' => 'created',
+                    'created_new_user' => $result['created_new_user'],
+                    'possible_duplicate' => $result['possible_duplicate']
+                        ? new PatientSearchResource($result['possible_duplicate'])
+                        : null,
+                    'onboarding_link_required' => $result['onboarding_link_required'],
+                ],
+            ], 201);
+
+        } catch (\Illuminate\Database\QueryException $e) {
+            Log::warning('createPatientByStaff DB constraint error', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'A conflicting patient/user record already exists.',
+                'data' => [],
+            ], 409);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to createPatientByStaff', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create patient.',
+                'data' => [],
+            ], 500);
+        }
+    }
+
+
+
+
     /**
      * Store a newly created patient in storage.
      */
@@ -190,6 +513,105 @@ class PatientController extends Controller
             ], 500);
         }
     }
+
+    public function consumeOnboardingToken(Request $request): JsonResponse
+{
+    try {
+        $data = $request->validate([
+            'token' => 'required|string|min:40|max:200',
+            'password' => 'required|string|min:8|max:255|confirmed',
+            // expects password_confirmation in request
+        ]);
+
+        $tokenHash = hash('sha256', $data['token']);
+
+        $result = DB::transaction(function () use ($tokenHash, $data, $request) {
+
+            // Lock token row to avoid double-consume
+            $onboarding = OnboardingToken::query()
+                ->where('token_hash', $tokenHash)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$onboarding) {
+                return [
+                    'ok' => false,
+                    'status' => 404,
+                    'message' => 'Invalid onboarding token.',
+                ];
+            }
+
+            if ($onboarding->consumed_at !== null) {
+                return [
+                    'ok' => false,
+                    'status' => 409,
+                    'message' => 'This onboarding token has already been used.',
+                ];
+            }
+
+            if ($onboarding->expires_at->isPast()) {
+                return [
+                    'ok' => false,
+                    'status' => 410,
+                    'message' => 'This onboarding token has expired.',
+                ];
+            }
+
+            $user = User::query()->lockForUpdate()->find($onboarding->user_id);
+
+            if (!$user) {
+                return [
+                    'ok' => false,
+                    'status' => 404,
+                    'message' => 'User not found for token.',
+                ];
+            }
+
+            // Set password safely
+            $user->password_hash = Hash::make($data['password']);
+            $user->requires_password_change = false;
+            $user->password_changed_at = now();
+            $user->save();
+
+            // Consume token
+            $onboarding->consumed_at = now();
+            $onboarding->save();
+
+            return [
+                'ok' => true,
+                'status' => 200,
+                'user_global_uuid' => $user->global_user_uuid,
+            ];
+        });
+
+        if (!$result['ok']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'],
+                'data' => [],
+            ], $result['status']);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Password set successfully. You can now log in.',
+            'data' => [
+                'global_user_uuid' => $result['user_global_uuid'],
+            ],
+        ], 200);
+
+    } catch (\Exception $e) {
+        Log::error('Failed to consume onboarding token', [
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to set password.',
+            'data' => [],
+        ], 500);
+    }
+}
 
     /**
      * Display the specified patient.

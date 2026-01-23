@@ -1,122 +1,34 @@
 <?php
 
-namespace App\Services\walkInCustomer;
+namespace App\Services\WalkInCustomer;
 
 use App\Models\Facility;
 use App\Models\FacilityWalkinCustomer;
 use App\Models\Patient;
 use App\Models\User;
+use App\Services\Contracts\WalkInCustomerServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Log;
 
-class WalkInCustomerService
+class WalkInCustomerService 
 {
-        /**
-         * A single global system identity for walk-in flows.
-         * NOTE: Use config() in production to avoid hardcoding.
-         */
-        private const GLOBAL_WALKIN_KEY = 'SYSTEM-WALKIN-USER';
-        private const SYSTEM_USER_COUNTRY_CODE = 'SYS';
-
-        /**
-         * Alternative method using DB transaction for extra safety
-         */
-        public function getOrCreateGlobalSystemUserWithTransaction(): User
-        {
-            return DB::transaction(function () {
-                $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
-                
-                // Use firstOrCreate for atomic operation
-                $user = User::firstOrCreate(
-                    ['national_id_hash' => $hash],
-                    [
-                        'global_user_uuid' => Str::uuid()->toString(),
-                        'national_id_encrypted' => base64_encode(self::GLOBAL_WALKIN_KEY),
-                        'national_id_country_code' => self::SYSTEM_USER_COUNTRY_CODE,
-                        
-                        'identity_state' => 'verified',
-                        'identity_verified_at' => now(),
-                        'identity_verification_method' => 'system',
-                        
-                        'data_residency_region' => 'US',
-                        'allowed_processing_regions' => ['US'],
-                        'created_from_facility_id' => null,
-                        
-                        'first_name' => 'System',
-                        'last_name' => 'WalkIn',
-                        'display_name' => 'System Walk-In Identity',
-                        
-                        'dob' => '1900-01-01',
-                        'gender' => 'other',
-                        
-                        'requires_password_change' => false,
-                        'mfa_enabled' => false,
-                        'failed_login_attempts' => 0,
-                        
-                        'metadata' => [
-                            'is_system_user' => true,
-                            'system_user_type' => 'walk_in_customer',
-                            'immutable' => true,
-                            'purpose' => 'Anchor identity for facility-scoped walk-in patients',
-                            'created_via' => 'SystemUserService::getOrCreateGlobalSystemUserWithTransaction',
-                            'created_at' => now()->toISOString(),
-                        ],
-                    ]
-                );
-                
-                if ($user->wasRecentlyCreated) {
-                    Log::info('Created new system user via firstOrCreate', [
-                        'user_id' => $user->id,
-                        'global_user_uuid' => $user->global_user_uuid,
-                    ]);
-                }
-                else {
-                    Log::info('System user already existed.', [
-                        'user_id' => $user->id,
-                        'global_user_uuid' => $user->global_user_uuid,
-                    ]);
-                }
-                
-                return $user;
-            });
-        }
-    
     /**
-     * Check if a user is the system walk-in user
+     * A single global system identity for walk-in flows.
      */
-    public function isSystemWalkInUser(User $user): bool
-    {
-        $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
-        return $user->national_id_hash === $hash;
-    }
-    
-    /**
-     * Get the system user by UUID (if you need to fetch it differently)
-     */
-    public function getSystemUserByUuid(string $uuid): ?User
-    {
-        $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
-        
-        return User::where('global_user_uuid', $uuid)
-            ->where('national_id_hash', $hash)
-            ->first();
-    }
-
-
+    private const GLOBAL_WALKIN_KEY = 'SYSTEM-WALKIN-USER';
+    private const SYSTEM_USER_COUNTRY_CODE = 'SYS';
 
     /**
-     * Create or fetch the ONE global system user used as the anchor identity.
-     * This user is never used directly for clinical accuracy; it is used to create facility-scoped walk-in patients.
+     * Get or create the global system user.
      */
     public function getOrCreateGlobalSystemUser(): User
     {
         $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
         
         try {
-            // updateOrCreate ensures atomic operation without explicit transaction
             $user = User::updateOrCreate(
                 ['national_id_hash' => $hash],
                 [
@@ -171,18 +83,100 @@ class WalkInCustomerService
     }
 
     /**
-     * Ensure the facility has exactly one walk-in patient.
-     * Concurrency-safe: locks the mapping row to prevent duplicates under simultaneous clicks.
+     * Get or create the global system user with transaction.
+     */
+    public function getOrCreateGlobalSystemUserWithTransaction(): User
+    {
+        return DB::transaction(function () {
+            $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
+            
+            $user = User::firstOrCreate(
+                ['national_id_hash' => $hash],
+                [
+                    'global_user_uuid' => Str::uuid()->toString(),
+                    'national_id_encrypted' => base64_encode(self::GLOBAL_WALKIN_KEY),
+                    'national_id_country_code' => self::SYSTEM_USER_COUNTRY_CODE,
+                    
+                    'identity_state' => 'verified',
+                    'identity_verified_at' => now(),
+                    'identity_verification_method' => 'system',
+                    
+                    'data_residency_region' => 'US',
+                    'allowed_processing_regions' => ['US'],
+                    'created_from_facility_id' => null,
+                    
+                    'first_name' => 'System',
+                    'last_name' => 'WalkIn',
+                    'display_name' => 'System Walk-In Identity',
+                    
+                    'dob' => '1900-01-01',
+                    'gender' => 'other',
+                    
+                    'requires_password_change' => false,
+                    'mfa_enabled' => false,
+                    'failed_login_attempts' => 0,
+                    
+                    'metadata' => [
+                        'is_system_user' => true,
+                        'system_user_type' => 'walk_in_customer',
+                        'immutable' => true,
+                        'purpose' => 'Anchor identity for facility-scoped walk-in patients',
+                        'created_via' => 'SystemUserService::getOrCreateGlobalSystemUserWithTransaction',
+                        'created_at' => now()->toISOString(),
+                    ],
+                ]
+            );
+            
+            if ($user->wasRecentlyCreated) {
+                Log::info('Created new system user via firstOrCreate', [
+                    'user_id' => $user->id,
+                    'global_user_uuid' => $user->global_user_uuid,
+                ]);
+            } else {
+                Log::info('System user already existed.', [
+                    'user_id' => $user->id,
+                    'global_user_uuid' => $user->global_user_uuid,
+                ]);
+            }
+            
+            return $user;
+        });
+    }
+    
+    /**
+     * Check if a user is the system walk-in user.
+     */
+    public function isSystemWalkInUser(User $user): bool
+    {
+        $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
+        return $user->national_id_hash === $hash;
+    }
+    
+    /**
+     * Get the system user by UUID.
+     */
+    public function getSystemUserByUuid(string $uuid): ?User
+    {
+        $hash = hash('sha256', self::GLOBAL_WALKIN_KEY);
+        
+        return User::where('global_user_uuid', $uuid)
+            ->where('national_id_hash', $hash)
+            ->first();
+    }
+
+    /**
+     * Get or create facility walk-in patient.
      */
     public function getOrCreateFacilityWalkInPatient(int $facilityId, ?int $staffId = null): array
     {
         return DB::transaction(function () use ($facilityId, $staffId) {
             $facility = Facility::find($facilityId);
-            if (!$facility) throw new ModelNotFoundException("Facility not found");
+            if (!$facility) {
+                throw new ModelNotFoundException("Facility not found");
+            }
 
             $systemUser = $this->getOrCreateGlobalSystemUser();
 
-            // Lock mapping row to avoid double creation on concurrent calls
             $mapping = FacilityWalkinCustomer::where('facility_id', $facilityId)
                 ->lockForUpdate()
                 ->first();
@@ -200,30 +194,24 @@ class WalkInCustomerService
                 ];
             }
 
-            // Facility-specific MRN for traceability (not a real MRN)
             $mrn = 'WALKIN-' . $facility->facility_code . '-' . $facilityId;
 
-
-            // Create facility-scoped patient linked to global system user
             $patient = Patient::create([
                 'patient_uuid' => HealthcareIdGenerator::generateRandomCode('WKN'),
                 'user_id' => $systemUser->id,
 
                 'medical_record_number_hash' => hash('sha256', $mrn),
-                'medical_record_number_encrypted' => base64_encode($mrn), // replace with AES
+                'medical_record_number_encrypted' => base64_encode($mrn),
 
-                // Required by your schema
                 'date_of_birth' => '1900-01-01',
                 'biological_sex' => 'unknown',
                 'gender_identity' => 'prefer_not_to_say',
                 'privacy_flags' => json_encode([]),
 
-                // Operational defaults for anonymous usage
                 'default_consent_level' => 'minimal',
                 'portal_access_enabled' => false,
                 'payment_responsibility' => 'self_pay',
 
-                // Consider 'active' if you want included in production stats.
                 'status' => 'system_patient',
 
                 'created_by_staff_id' => $staffId,
@@ -236,12 +224,11 @@ class WalkInCustomerService
                 ]),
             ]);
 
-            
-          FacilityWalkinCustomer::create([
+            FacilityWalkinCustomer::create([
                 'facility_id' => $facilityId,
                 'system_user_id' => $systemUser->id,
                 'patient_id' => $patient->id,
-                ]);
+            ]);
 
             return [
                 'facility_id' => $facilityId,
@@ -253,13 +240,9 @@ class WalkInCustomerService
             ];
         });
     }
+
     /**
-     * Create a full walk-in checkout session:
-     * - facility walk-in patient (get/create)
-     * - visit (create)
-     * - billing cycle (create)
-     *
-     * This is what your UI button should call.
+     * Create a walk-in session.
      */
     public function createWalkInSession(int $facilityId, ?int $staffId = null): array
     {
@@ -267,14 +250,13 @@ class WalkInCustomerService
             $walkin = $this->getOrCreateFacilityWalkInPatient($facilityId, $staffId);
             Log::info("Walk In User", $walkin);
 
-            // Create VISIT (minimal fields; align with your visits schema)
             $visit = DB::table('visits')->insertGetId([
                 'visit_uuid' => HealthcareIdGenerator::generate('visit'),
                 'facility_id' => $facilityId,
                 'patient_id' => $walkin['patient_id'],
-                'visit_type' => 'outpatient', // or another valid type
-                'acuity_score' => 3, // default score
-                'chief_complaints' => json_encode([]), // empty JSON object
+                'visit_type' => 'outpatient',
+                'acuity_score' => 3,
+                'chief_complaints' => json_encode([]),
                 'arrived_at' => now(),
                 'current_phase' => 'registration',
                 'is_walk_in' => true,
@@ -283,10 +265,8 @@ class WalkInCustomerService
                 'updated_at' => now(),
             ]);
 
-            // Fetch the newly created visit
             $visitData = DB::table('visits')->find($visit);
 
-            // Create BILLING CYCLE (draft cart header)
             $billingCycle = DB::table('billing_cycles')->insertGetId([
                 'billing_cycle_uuid' => HealthcareIdGenerator::generate('billing'),
                 'facility_id' => $facilityId,
@@ -311,7 +291,6 @@ class WalkInCustomerService
                 'updated_at' => now(),
             ]);
 
-            // Fetch the newly created billing cycle
             $billingCycleData = DB::table('billing_cycles')->find($billingCycle);
 
             return [
@@ -332,12 +311,7 @@ class WalkInCustomerService
     }
 
     /**
-     * Upgrade a walk-in session to a real patient at checkout.
-     *
-     * What it does:
-     * - Creates a REAL user + patient
-     * - Migrates VISIT + BILLING CYCLE (and related patient_id fields) to the new patient
-     * - Keeps full auditability and operational continuity
+     * Upgrade walk-in session to real patient.
      */
     public function upgradeWalkInToRealPatient(
         int $billingCycleId,
@@ -346,8 +320,6 @@ class WalkInCustomerService
         ?int $staffId = null
     ): array {
         return DB::transaction(function () use ($billingCycleId, $facilityId, $patientInput, $staffId) {
-
-            // 1) Load billing cycle + visit (lock to prevent concurrent upgrades)
             $cycle = DB::table('billing_cycles')
                 ->where('id', $billingCycleId)
                 ->where('facility_id', $facilityId)
@@ -363,27 +335,21 @@ class WalkInCustomerService
                 throw new ModelNotFoundException("Visit not found");
             }
 
-            // 2) Verify this is currently tied to facility walk-in patient
             $mapping = DB::table('facility_walkin_customers')
                 ->where('facility_id', $facilityId)
                 ->first();
 
             if (!$mapping || (int)$mapping->patient_id !== (int)$cycle->patient_id) {
-                // Prevent accidentally upgrading a real patient session
-                abort(422, 'This checkout session is not using the facility walk-in customer.');
+                throw new \RuntimeException('This checkout session is not using the facility walk-in customer.');
             }
 
-            // 3) Create REAL USER
-            // NOTE: Your users schema requires national_id_hash/encrypted not null.
-            // If your real world flow allows “phone-only registration”, you should relax those constraints.
-            // For now, we generate a pseudo key from phone/email (still hashed+encrypted).
             $phone = $patientInput['phone'] ?? null;
             $email = $patientInput['email'] ?? null;
             $firstName = $patientInput['first_name'] ?? 'Unknown';
             $lastName = $patientInput['last_name'] ?? 'Unknown';
 
             if (!$phone && !$email) {
-                abort(422, 'Provide at least phone or email to upgrade walk-in customer.');
+                throw new \RuntimeException('Provide at least phone or email to upgrade walk-in customer.');
             }
 
             $pseudoNationalId = 'REG-' . ($phone ?: $email) . '-' . Str::uuid();
@@ -399,7 +365,6 @@ class WalkInCustomerService
                 'data_residency_region' => $patientInput['data_residency_region'] ?? 'US',
                 'created_from_facility_id' => $facilityId,
 
-                // Contact hashes (optional but recommended)
                 'phone_encrypted' => $phone ? base64_encode($phone) : null,
                 'phone_hash' => $phone ? hash('sha256', $phone) : null,
                 'email_encrypted' => $email ? base64_encode($email) : null,
@@ -425,7 +390,6 @@ class WalkInCustomerService
                 'updated_at' => now(),
             ]);
 
-            // 4) Create REAL PATIENT
             $mrn = 'MRN-' . $facilityId . '-' . strtoupper(Str::random(10));
 
             $patientId = DB::table('patients')->insertGetId([
@@ -459,7 +423,6 @@ class WalkInCustomerService
                 'updated_at' => now(),
             ]);
 
-            // 5) MIGRATE VISIT + BILLING CYCLE to new patient
             DB::table('visits')->where('id', $visit->id)->update([
                 'patient_id' => $patientId,
                 'updated_at' => now(),
@@ -471,12 +434,6 @@ class WalkInCustomerService
                 'updated_at' => now(),
             ]);
 
-            /**
-             * 6) MIGRATE dependent records that also store patient_id.
-             * Add more updates here as your domain grows.
-             *
-             * IMPORTANT: keep it facility/visit scoped to avoid corrupting other sessions.
-             */
             DB::table('prescriptions')->where('visit_id', $visit->id)->update([
                 'patient_id' => $patientId,
                 'updated_at' => now(),
@@ -486,9 +443,6 @@ class WalkInCustomerService
                 'patient_id' => $patientId,
                 'updated_at' => now(),
             ]);
-
-            // invoice_line_items does not store patient_id in your schema; it links to billing_cycle_id.
-            // So it stays consistent automatically.
 
             return [
                 'facility_id' => $facilityId,

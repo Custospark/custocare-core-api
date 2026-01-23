@@ -3,67 +3,234 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\walkInCustomer\WalkInCustomerService;
+use App\Http\Requests\WalkInSession\CreateSessionRequest;
+use App\Http\Requests\WalkInSession\UpgradeSessionRequest;
+use App\Http\Resources\WalkInSessionResource;
+use App\Services\Contracts\WalkInCustomerServiceInterface;
+use App\Services\WalkInCustomer\WalkInCustomerService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class WalkInSessionController extends Controller
 {
-    public function __construct(private readonly WalkInCustomerService $service)
+    /**
+     * Walk-in customer service instance.
+     */
+    protected WalkInCustomerService $walkInCustomerService;
+
+    /**
+     * Create a new controller instance.
+     */
+    public function __construct(WalkInCustomerService $walkInCustomerService)
     {
+        $this->walkInCustomerService = $walkInCustomerService;
+        
+        // Apply middleware
+        // TODO: Define these middlewares
+        // $this->middleware('auth:api');
+        // $this->middleware('can:create,App\Models\Visit')->only(['createSession']);
+        // $this->middleware('can:update,App\Models\BillingCycle')->only(['upgrade']);
     }
 
     /**
-     * Staff clicks "Walk-In Customer" → system returns an active checkout session:
-     * - facility walk-in patient
-     * - visit_id created
-     * - billing_cycle_id created (draft)
+     * Create a walk-in session.
      */
-    public function createSession(Request $request, int $facilityId)
+    public function createSession(CreateSessionRequest $request, int $facilityId): JsonResponse
     {
-        // Adjust based on your auth: staff id may not be request->user()->id
-        $staffId = $request->user()?->id;
+        try {
+            $staffId = $request->user()?->id;
+            
+            $session = $this->walkInCustomerService->createWalkInSession(
+                $facilityId,
+                $staffId
+            );
 
-        $payload = $this->service->createWalkInSession($facilityId, $staffId);
+            return response()->json([
+                'success' => true,
+                'message' => 'Walk-in session created successfully.',
+                'data' => new WalkInSessionResource($session),
+            ], JsonResponse::HTTP_CREATED);
 
-        return response()->json($payload, 201);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::warning('Facility not found for walk-in session', [
+                'facility_id' => $facilityId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Facility not found.',
+                'data' => null,
+            ], JsonResponse::HTTP_NOT_FOUND);
+
+        } catch (\RuntimeException $e) {
+            Log::warning('Walk-in session creation failed', [
+                'reason' => $e->getMessage(),
+                'facility_id' => $facilityId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to create walk-in session.',
+                'data' => null,
+            ], JsonResponse::HTTP_BAD_REQUEST);
+
+        } catch (\Throwable $e) {
+            Log::error('Unexpected walk-in session creation error', [
+                'exception' => $e,
+                'facility_id' => $facilityId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error.',
+                'data' => null,
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
-     * Upgrade Walk-In to Real Patient at checkout:
-     * - Create real user/patient from provided info
-     * - Migrate visit + billing cycle to the new patient
+     * Upgrade walk-in session to real patient.
      */
-    public function upgrade(Request $request, int $billingCycleId)
+    public function upgrade(UpgradeSessionRequest $request, int $billingCycleId): JsonResponse
     {
-        $staffId = $request->user()?->id;
+        try {
+            $staffId = $request->user()?->id;
+            $validated = $request->validated();
+            $facilityId = (int) $validated['facility_id'];
 
-        $validated = $request->validate([
-            'facility_id' => ['required', 'integer'],
+            $result = $this->walkInCustomerService->upgradeWalkInToRealPatient(
+                $billingCycleId,
+                $facilityId,
+                $validated,
+                $staffId
+            );
 
-            // minimum identity capture
-            'first_name' => ['nullable', 'string', 'max:100'],
-            'last_name' => ['nullable', 'string', 'max:100'],
-            'phone' => ['nullable', 'string', 'max:50'],
-            'email' => ['nullable', 'email', 'max:200'],
+            return response()->json([
+                'success' => true,
+                'message' => 'Walk-in session upgraded successfully.',
+                'data' => $result,
+            ]);
 
-            // patient clinical basics (optional but recommended)
-            'date_of_birth' => ['nullable', 'date'],
-            'biological_sex' => ['nullable', 'in:male,female,intersex,unknown'],
-            'gender_identity' => ['nullable', 'string', 'max:50'],
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::warning('Billing cycle not found for upgrade', [
+                'billing_cycle_id' => $billingCycleId,
+                'error' => $e->getMessage(),
+            ]);
 
-            'country_code' => ['nullable', 'string', 'max:3'],
-            'data_residency_region' => ['nullable', 'string', 'max:10'],
-        ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Billing cycle not found.',
+                'data' => null,
+            ], JsonResponse::HTTP_NOT_FOUND);
 
-        $facilityId = (int)$validated['facility_id'];
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY);
 
-        $payload = $this->service->upgradeWalkInToRealPatient(
-            billingCycleId: $billingCycleId,
-            facilityId: $facilityId,
-            patientInput: $validated,
-            staffId: $staffId
-        );
+        } catch (\RuntimeException $e) {
+            Log::warning('Walk-in session upgrade failed', [
+                'reason' => $e->getMessage(),
+                'billing_cycle_id' => $billingCycleId,
+            ]);
 
-        return response()->json($payload, 200);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data' => null,
+            ], JsonResponse::HTTP_BAD_REQUEST);
+
+        } catch (\Throwable $e) {
+            Log::error('Unexpected walk-in session upgrade error', [
+                'exception' => $e,
+                'billing_cycle_id' => $billingCycleId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error.',
+                'data' => null,
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Get or create facility walk-in patient.
+     */
+    public function getFacilityWalkInPatient(Request $request, int $facilityId): JsonResponse
+    {
+        try {
+            $staffId = $request->user()?->id;
+            
+            $walkInPatient = $this->walkInCustomerService->getOrCreateFacilityWalkInPatient(
+                $facilityId,
+                $staffId
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Facility walk-in patient retrieved successfully.',
+                'data' => $walkInPatient,
+            ]);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::warning('Facility not found for walk-in patient', [
+                'facility_id' => $facilityId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Facility not found.',
+                'data' => null,
+            ], JsonResponse::HTTP_NOT_FOUND);
+
+        } catch (\Throwable $e) {
+            Log::error('Error getting facility walk-in patient', [
+                'exception' => $e,
+                'facility_id' => $facilityId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve facility walk-in patient.',
+                'data' => null,
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Validate if a user is the system walk-in user.
+     */
+    public function validateSystemWalkInUser(Request $request, int $userId): JsonResponse
+    {
+        try {
+            // This would require fetching the user first
+            // For now, returning a placeholder response
+            return response()->json([
+                'success' => true,
+                'message' => 'System walk-in user validation endpoint.',
+                'data' => [
+                    'user_id' => $userId,
+                    'is_system_walkin' => false,
+                ],
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('Error validating system walk-in user', [
+                'exception' => $e,
+                'user_id' => $userId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to validate system walk-in user.',
+                'data' => null,
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 }

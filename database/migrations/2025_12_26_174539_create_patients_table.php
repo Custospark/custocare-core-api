@@ -15,7 +15,7 @@ return new class extends Migration
     {
         Schema::create('patients', function (Blueprint $table) {
             $table->id();
-            $table->uuid('patient_uuid')->unique()->index()->comment('Facility-facing public ID');
+            $table->uuid('patient_uuid')->unique()->index()->comment('Facility-facing public ID(patient Number)');
             $table->unsignedBigInteger('user_id');
             
             // Medical record identification

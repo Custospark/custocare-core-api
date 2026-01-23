@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Route;
         // General patient operations
         Route::get('/', [PatientController::class, 'index'])->name('index');
         Route::post('/', [PatientController::class, 'store'])->name('store');
+        Route::get('/search/lean', [PatientController::class, 'patientSearch']);
         Route::get('/search', [PatientController::class, 'search'])->name('search');
         Route::get('/statistics', [PatientController::class, 'statistics'])->name('statistics');
         Route::get('/blood-type/{bloodType}', [PatientController::class, 'byBloodType'])->name('by-blood-type');

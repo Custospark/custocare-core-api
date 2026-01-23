@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\StorePatientRequest;
 use App\Http\Requests\Patient\UpdatePatientRequest;
 use App\Http\Resources\PatientResource;
+use App\Http\Resources\PatientSearchResource;
 use App\Services\Contracts\PatientServiceInterface;
 use App\Models\Patient;
 use Illuminate\Http\JsonResponse;
@@ -64,6 +65,89 @@ class PatientController extends Controller
             ], 500);
         }
     }
+
+
+    /**
+         * Search patients (essential info only).
+         * Search can be by patient_uuid (patient number), name, status, sex, DOB range, etc.
+         * Returns a lean payload for UI search/autocomplete.
+         */
+        public function patientSearch(Request $request): JsonResponse
+        {
+            try {
+                // $this->authorize('viewAny', Patient::class);
+
+                $criteria = $request->validate([
+                    'q' => 'nullable|string|max:120', // general search term: patient_uuid OR name
+                    'patient_uuid' => 'nullable|string',
+                    'status' => 'nullable|in:active,inactive,deceased,merged,test_patient,system_patient',
+                    'biological_sex' => 'nullable|in:male,female,intersex,unknown',
+                    'date_of_birth_from' => 'nullable|date',
+                    'date_of_birth_to' => 'nullable|date|after_or_equal:date_of_birth_from',
+                    'facility_id' => 'nullable|integer|exists:facilities,id', // optional, if you track by facility elsewhere
+                    'limit' => 'nullable|integer|min:1|max:50',
+                ]);
+
+                $limit = (int) ($criteria['limit'] ?? 15);
+                $q = $criteria['q'] ?? null;
+
+                $patients = Patient::query()
+                    ->with(['user:id,global_user_uuid,first_name,last_name,display_name,phone_hash,email_hash'])
+                    ->select([
+                        'id',
+                        'patient_uuid',
+                        'user_id',
+                        'date_of_birth',
+                        'biological_sex',
+                        'blood_type',
+                        'status',
+                        'requires_isolation',
+                        'created_at',
+                    ])
+                    ->when(!empty($criteria['patient_uuid']), function ($query) use ($criteria) {
+                        $query->where('patient_uuid', $criteria['patient_uuid']);
+                    })
+                    ->when(!empty($criteria['status']), fn ($query) => $query->where('status', $criteria['status']))
+                    ->when(!empty($criteria['biological_sex']), fn ($query) => $query->where('biological_sex', $criteria['biological_sex']))
+                    ->when(!empty($criteria['date_of_birth_from']), fn ($query) => $query->whereDate('date_of_birth', '>=', $criteria['date_of_birth_from']))
+                    ->when(!empty($criteria['date_of_birth_to']), fn ($query) => $query->whereDate('date_of_birth', '<=', $criteria['date_of_birth_to']))
+                    ->when($q, function ($query) use ($q) {
+                        $query->where(function ($inner) use ($q) {
+                            // Patient Number (patient_uuid) partial match
+                            $inner->where('patient_uuid', 'like', "%{$q}%")
+                                // User name search (safe basic fields)
+                                ->orWhereHas('user', function ($u) use ($q) {
+                                    $u->where('first_name', 'like', "%{$q}%")
+                                    ->orWhere('last_name', 'like', "%{$q}%")
+                                    ->orWhere('display_name', 'like', "%{$q}%");
+                                });
+                        });
+                    })
+                    ->orderByDesc('created_at')
+                    ->limit($limit)
+                    ->get();
+
+                return response()->json([
+                    'success' => true,
+                    'data' => PatientSearchResource::collection($patients),
+                    'meta' => [
+                        'total' => $patients->count(),
+                        'criteria' => $criteria,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Failed to patientSearch', [
+                    'criteria' => $request->all(),
+                    'error' => $e->getMessage(),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to search patients.',
+                    'data' => [],
+                ], 500);
+            }
+        }
 
     /**
      * Store a newly created patient in storage.

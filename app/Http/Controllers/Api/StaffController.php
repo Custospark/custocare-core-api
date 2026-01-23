@@ -7,6 +7,7 @@ use App\Http\Requests\Staff\StoreStaffByAdminRequest;
 use App\Http\Requests\Staff\StoreStaffRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\StaffResource;
+use App\Http\Resources\StaffSearchResource;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
 use App\Models\User;
@@ -99,6 +100,93 @@ class StaffController extends Controller
             ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
+
+ 
+
+public function staffSearch(Request $request): JsonResponse
+{
+    try {
+        // $this->authorize('viewAny', Staff::class);
+
+        $criteria = $request->validate([
+            'q' => 'nullable|string|max:120', // general search: staff_uuid OR name OR employee_id
+            'staff_uuid' => 'nullable|string',
+            'employment_status' => 'nullable|in:employed,suspended,unemployed,terminated,retired,credentialing_pending',
+            'global_role_level' => 'nullable|in:super_admin,facility_admin,department_head,attending_physician,fellow,resident,nurse_practitioner,physician_assistant,registered_nurse,licensed_practical_nurse,pharmacist,therapist,technician,support_staff',
+            'accepts_new_patients' => 'nullable|boolean',
+            'facility_id' => 'nullable|integer|exists:facilities,id', // optional, if scoping via access table
+            'limit' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        $limit = (int) ($criteria['limit'] ?? 15);
+        $q = $criteria['q'] ?? null;
+
+        $staff = Staff::query()
+            ->with(['user:id,global_user_uuid,first_name,last_name,display_name'])
+            ->select([
+                'id',
+                'staff_uuid',
+                'user_id',
+                'employee_id',
+                'professional_title',
+                'global_role_level',
+                'employment_status',
+                'accepts_new_patients',
+                'max_concurrent_patients',
+                'license_expiry_date',
+                'created_at',
+            ])
+            ->when(!empty($criteria['staff_uuid']), fn ($query) =>
+                $query->where('staff_uuid', $criteria['staff_uuid'])
+            )
+            ->when(!empty($criteria['employment_status']), fn ($query) =>
+                $query->where('employment_status', $criteria['employment_status'])
+            )
+            ->when(!empty($criteria['global_role_level']), fn ($query) =>
+                $query->where('global_role_level', $criteria['global_role_level'])
+            )
+            ->when(isset($criteria['accepts_new_patients']), fn ($query) =>
+                $query->where('accepts_new_patients', (bool)$criteria['accepts_new_patients'])
+            )
+            ->when($q, function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    // Staff Number / Employee ID partial match
+                    $inner->where('staff_uuid', 'like', "%{$q}%")
+                          ->orWhere('employee_id', 'like', "%{$q}%")
+                          // User name search
+                          ->orWhereHas('user', function ($u) use ($q) {
+                              $u->where('first_name', 'like', "%{$q}%")
+                                ->orWhere('last_name', 'like', "%{$q}%")
+                                ->orWhere('display_name', 'like', "%{$q}%");
+                          });
+                });
+            })
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => StaffSearchResource::collection($staff),
+            'meta' => [
+                'total' => $staff->count(),
+                'criteria' => $criteria,
+            ],
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Failed to staffSearch', [
+            'criteria' => $request->all(),
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to search staff.',
+            'data' => [],
+        ], 500);
+    }
+}
+
 
    /**
     * Record of all medical Professionals.

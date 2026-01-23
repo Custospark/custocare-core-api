@@ -155,12 +155,7 @@ class PatientController extends Controller
             }
         }
 
-      protected function getCurrentFacilityId(): ?int
-    {
-        return request()->header('X-Facility-Id') 
-            ? (int) request()->header('X-Facility-Id')
-            : null;
-    }
+   
    
     /**
      * Staff creates a patient + user account in one go (atomic).

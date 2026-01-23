@@ -8,9 +8,9 @@ return new class extends Migration
 {
     /**
      * Run the migrations.
-     *
-     * @return void
-     */
+    *
+    * @return void
+    */
     public function up()
     {
         Schema::create('visits', function (Blueprint $table) {
@@ -18,6 +18,7 @@ return new class extends Migration
             $table->uuid('visit_uuid')->unique()->index()->comment('Public-facing identifier');
             $table->unsignedBigInteger('facility_id')->index();
             $table->unsignedBigInteger('patient_id')->index();
+            $table->unsignedBigInteger('assigned_staff_id')->nullable()->index();
             
             // Visit classification
             $table->enum('visit_type', [
@@ -97,6 +98,7 @@ return new class extends Migration
             
             $table->timestamp('waiting_since')->nullable()->index()->comment('For queue management');
             $table->timestamp('clinical_care_started_at')->nullable();
+            $table->timestamp('assigned_at')->nullable();
             $table->timestamp('clinical_care_ended_at')->nullable();
             
             // Expected vs actual duration
@@ -189,6 +191,7 @@ return new class extends Migration
             
             // Foreign keys
             $table->foreign('facility_id')->references('id')->on('facilities')->onDelete('restrict');
+            $table->foreign('assigned_staff_id')->references('id')->on('staff')->onDelete('restrict');
             $table->foreign('patient_id')->references('id')->on('patients')->onDelete('restrict');
             $table->foreign('current_department_id')->references('id')->on('departments')->onDelete('set null');
             $table->foreign('referring_facility_id')->references('id')->on('facilities')->onDelete('set null');

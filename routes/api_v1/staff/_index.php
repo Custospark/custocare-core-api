@@ -10,6 +10,7 @@ Route::prefix('staff')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/specific-facility', [StaffController::class, 'index']);
     Route::post('/', [StaffController::class, 'store']);
     Route::post('/admin-create', [StaffController::class, 'createStaffByAdmin']);
+    Route::get('/staff/search', [StaffController::class, 'staffSearch']);
     Route::get('/{staff}', [StaffController::class, 'show']);
     Route::put('/{staff}', [StaffController::class, 'update']);
     Route::delete('/{staff}', [StaffController::class, 'destroy']);

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('facility-staff-roles')->middleware(['auth:sanctum'])->group(function () {
     // Standard RESTful routes
     Route::get('/', [FacilityStaffRoleController::class, 'index']);
+    Route::get('/facility-staff-roles/search', [FacilityStaffRoleController::class, 'facilityStaffRoleSearch']);
     Route::post('/', [FacilityStaffRoleController::class, 'store']);
     Route::get('/{id}', [FacilityStaffRoleController::class, 'show']);
     Route::put('/{id}', [FacilityStaffRoleController::class, 'update']);

@@ -5,11 +5,15 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Visit\StoreVisitRequest;
 use App\Http\Requests\Visit\UpdateVisitRequest;
+use App\Http\Resources\PatientSearchResource;
 use App\Http\Resources\VisitResource;
 use App\Http\Resources\VisitCollection;
+use App\Models\Staff;
+use App\Models\Visit;
 use App\Services\Contracts\VisitServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -87,6 +91,127 @@ class VisitController extends Controller
             ], 500);
         }
     }
+
+    public function myQueue(Request $request): JsonResponse
+{
+    try {
+        // 1) Extract facility_id directly from header
+        $facilityId = (int) $request->header('X-Facility-Id');
+
+        if (!$facilityId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Missing X-Facility-Id header.',
+                'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                'data' => [],
+            ], 422);
+        }
+
+        // 2) Determine current staff id (adapt to your auth model)
+        // If your auth user is Staff, this is simply $request->user()->id
+        $userId = Auth::id();
+        $staffId = Staff::where('user_id', $userId)->value('id');
+
+
+        // 3) Optional filters for queue
+        $filters = $request->validate([
+            'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
+            'department_id' => 'nullable|integer',
+            'include_unassigned' => 'nullable|boolean', // if true, show department queue too
+            'limit' => 'nullable|integer|min:1|max:100',
+        ]);
+
+        $phase = $filters['current_phase'] ?? null;
+        $departmentId = $filters['department_id'] ?? ($request->user()->department_id ?? null);
+        $includeUnassigned = (bool) ($filters['include_unassigned'] ?? false);
+        $limit = (int) ($filters['limit'] ?? 50);
+
+        // 4) Build query
+        $visitsQuery = Visit::query()
+            ->where('facility_id', $facilityId)
+            ->whereIn('status', ['active', 'in_progress'])
+            ->when($phase, fn ($q) => $q->where('current_phase', $phase))
+            ->when($departmentId, fn ($q) => $q->where('current_department_id', $departmentId))
+            ->with([
+                'patient.user',
+            ])
+            // Queue ordering: urgent first, then longest waiting
+            ->orderBy('acuity_score', 'asc')
+            ->orderBy('waiting_since', 'asc')
+            ->limit($limit);
+
+        // 5) Assignment logic
+        if ($includeUnassigned) {
+            // My assigned visits OR unassigned visits in my department
+            $visitsQuery->where(function ($q) use ($staffId) {
+                $q->where('assigned_staff_id', $staffId)
+                  ->orWhereNull('assigned_staff_id');
+            });
+        } else {
+            // Strict: only my assigned visits
+            $visitsQuery->where('assigned_staff_id', $staffId);
+        }
+
+        $visits = $visitsQuery->get();
+
+        // 6) Patients list (lean resource)
+        $patients = $visits
+            ->map(fn ($v) => $v->patient)
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        // 7) Queue context for UI rendering (visit-level info)
+        $queue = $visits->map(function ($v) {
+            return [
+                'visit_uuid' => $v->visit_uuid,
+                'patient_id' => $v->patient_id,
+
+                'current_phase' => $v->current_phase,
+                'current_department_id' => $v->current_department_id,
+
+                'assigned_staff_id' => $v->assigned_staff_id,
+                'assigned_at' => optional($v->assigned_at)->toISOString(),
+
+                'waiting_since' => optional($v->waiting_since)->toISOString(),
+                'acuity_score' => $v->acuity_score,
+                'arrived_at' => optional($v->arrived_at)->toISOString(),
+
+                'visit_type' => $v->visit_type,
+                'status' => $v->status,
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => PatientSearchResource::collection($patients),
+            'meta' => [
+                'facility_id' => $facilityId,
+                'filters' => [
+                    'current_phase' => $phase,
+                    'department_id' => $departmentId,
+                    'include_unassigned' => $includeUnassigned,
+                ],
+                'queue' => $queue,
+                'total_visits' => $visits->count(),
+                'total_patients' => $patients->count(),
+            ],
+        ], 200);
+
+    } catch (\Exception $e) {
+        Log::error('Failed to load my queue', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to load queue.',
+            'data' => [],
+        ], 500);
+    }
+}
+
 
     /**
      * Store a newly created visit.

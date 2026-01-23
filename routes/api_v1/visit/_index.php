@@ -13,6 +13,8 @@ Route::prefix('visits')->middleware(['auth:api','auth:sanctum'])->group(function
     
     // Restore soft-deleted visit
     Route::post('/{visit}/restore', [VisitController::class, 'restore'])->where('visit', '[a-f0-9-]{36}');
+    Route::get('/my-queue', [VisitController::class, 'myQueue']);
+
     
     // Specialized operations
     Route::post('/{visit}/phase', [VisitController::class, 'updatePhase'])->where('visit', '[a-f0-9-]{36}');

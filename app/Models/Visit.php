@@ -83,6 +83,7 @@ class Visit extends Model
     protected $fillable = [
         'visit_uuid',
         'facility_id',
+        'assigned_staff_id',
         'patient_id',
         'visit_type',
         'visit_subtype',

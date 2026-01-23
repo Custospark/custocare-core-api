@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\FacilityStaffRole\StoreFacilityStaffRoleRequest;
 use App\Http\Requests\FacilityStaffRole\UpdateFacilityStaffRoleRequest;
 use App\Http\Resources\FacilityStaffRoleResource;
+use App\Http\Resources\FacilityStaffRoleSummaryResource;
+use App\Models\Department;
+use App\Models\FacilityStaffRole;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -86,6 +89,160 @@ class FacilityStaffRoleController extends Controller
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
+
+
+
+    public function facilityStaffRoleSearch(Request $request): JsonResponse
+    {
+        try {
+            $criteria = $request->validate([
+                'q' => 'nullable|string|max:120', // search by staff name OR employee_id OR staff_uuid OR facility name/code
+                'facility_id' => 'nullable|integer|exists:facilities,id',
+                'staff_id' => 'nullable|integer|exists:staff,id',
+                'assignment_status' => 'nullable|in:active,on_leave,suspended,terminated',
+                'role_code' => 'nullable|string|max:80',
+                'is_primary_facility' => 'nullable|boolean',
+                'effective_on' => 'nullable|date', // point-in-time filter
+                'limit' => 'nullable|integer|min:1|max:50',
+            ]);
+
+            $limit = (int) ($criteria['limit'] ?? 20);
+            $q = $criteria['q'] ?? null;
+
+            $assignments = FacilityStaffRole::query()
+                ->with([
+                    'facility:id,facility_uuid,facility_code,facility_name,facility_type,operational_status',
+                    'staff:id,staff_uuid,user_id,employee_id,professional_title,global_role_level,employment_status',
+                    'staff.user:id,global_user_uuid,first_name,last_name,display_name',
+                ])
+                ->select([
+                    'id',
+                    'assignment_uuid',
+                    'facility_id',
+                    'staff_id',
+                    'role_code',
+                    'department_ids',
+                    'module_code',
+                    'shift_type',
+                    'hours_per_week',
+                    'effective_from',
+                    'effective_to',
+                    'assignment_status',
+                    'is_primary_facility',
+                    'created_at',
+                ])
+                ->when(!empty($criteria['facility_id']), fn ($query) =>
+                    $query->where('facility_id', $criteria['facility_id'])
+                )
+                ->when(!empty($criteria['staff_id']), fn ($query) =>
+                    $query->where('staff_id', $criteria['staff_id'])
+                )
+                ->when(!empty($criteria['assignment_status']), fn ($query) =>
+                    $query->where('assignment_status', $criteria['assignment_status'])
+                )
+                ->when(!empty($criteria['role_code']), fn ($query) =>
+                    $query->where('role_code', $criteria['role_code'])
+                )
+                ->when(isset($criteria['is_primary_facility']), fn ($query) =>
+                    $query->where('is_primary_facility', (bool) $criteria['is_primary_facility'])
+                )
+                ->when(!empty($criteria['effective_on']), function ($query) use ($criteria) {
+                    $date = $criteria['effective_on'];
+                    $query->whereDate('effective_from', '<=', $date)
+                        ->where(function ($q) use ($date) {
+                            $q->whereNull('effective_to')
+                                ->orWhereDate('effective_to', '>=', $date);
+                        });
+                })
+                ->when($q, function ($query) use ($q) {
+                    $query->where(function ($inner) use ($q) {
+                        // Facility search
+                        $inner->orWhereHas('facility', function ($f) use ($q) {
+                            $f->where('facility_name', 'like', "%{$q}%")
+                            ->orWhere('facility_code', 'like', "%{$q}%");
+                        });
+
+                        // Staff search
+                        $inner->orWhereHas('staff', function ($s) use ($q) {
+                            $s->where('staff_uuid', 'like', "%{$q}%")
+                            ->orWhere('employee_id', 'like', "%{$q}%")
+                            ->orWhereHas('user', function ($u) use ($q) {
+                                $u->where('first_name', 'like', "%{$q}%")
+                                    ->orWhere('last_name', 'like', "%{$q}%")
+                                    ->orWhere('display_name', 'like', "%{$q}%");
+                            });
+                        });
+
+                        // Role code search
+                        $inner->orWhere('role_code', 'like', "%{$q}%");
+                    });
+                })
+                ->orderByDesc('created_at')
+                ->limit($limit)
+                ->get();
+
+            /**
+             * Load departments referenced by JSON department_ids for each assignment,
+             * and attach them as a dynamic relation "departments" for the resource.
+             */
+            $allDepartmentIds = $assignments
+                ->pluck('department_ids')
+                ->filter()
+                ->flatMap(function ($ids) {
+                    if (is_string($ids)) {
+                        $decoded = json_decode($ids, true);
+                        return is_array($decoded) ? $decoded : [];
+                    }
+                    return is_array($ids) ? $ids : [];
+                })
+                ->unique()
+                ->values();
+
+            $departmentsById = $allDepartmentIds->isNotEmpty()
+                ? Department::query()
+                    ->select(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
+                    ->whereIn('id', $allDepartmentIds)
+                    ->get()
+                    ->keyBy('id')
+                : collect();
+
+            $assignments->each(function ($a) use ($departmentsById) {
+                $ids = $a->department_ids;
+
+                if (is_string($ids)) {
+                    $ids = json_decode($ids, true);
+                }
+
+                $ids = is_array($ids) ? $ids : [];
+
+                $a->setRelation(
+                    'departments',
+                    collect($ids)->map(fn ($id) => $departmentsById->get($id))->filter()->values()
+                );
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => FacilityStaffRoleSummaryResource::collection($assignments),
+                'meta' => [
+                    'total' => $assignments->count(),
+                    'criteria' => $criteria,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to facilityStaffRoleSearch', [
+                'criteria' => $request->all(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to search facility staff role assignments.',
+                'data' => [],
+            ], 500);
+        }
+    }
+
 
     /**
      * Store a newly created resource in storage.

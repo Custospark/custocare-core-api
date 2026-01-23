@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\WalkInCustomerService;
+use App\Services\walkInCustomer\WalkInCustomerService;
 use Illuminate\Http\Request;
 
 class WalkInSessionController extends Controller

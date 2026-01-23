@@ -109,6 +109,8 @@ class HealthcareIdGenerator
         'appointment'  => ['AP', 14, 'Appointment', 'document', '64-bit random, high daily capacity'],
         'medical_record'=> ['MR', 18, 'Medical Record', 'document', '64-bit random, high daily capacity'],
         'insurance'     => ['IN', 14, 'Insurance Record', 'document', '64-bit random, high daily capacity'],
+        'billing'     => ['BL', 14, 'Billing Record', 'document', '64-bit random, high billing volume'],
+        'visit'     => ['VS', 14, 'Visiit Record', 'document', '64-bit random, high visit volume'],
     ];
     
     /**

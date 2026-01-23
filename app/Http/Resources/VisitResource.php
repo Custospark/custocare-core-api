@@ -80,7 +80,7 @@ class VisitResource extends JsonResource
             'updated_at' => $this->updated_at,
             'metadata' => $this->metadata,
             'links' => [
-                'self' => route('visits.show', $this->visit_uuid),
+                // 'self' => route('visits.show', $this->visit_uuid),
                 'patient' => $this->patient_id ? route('patients.show', $this->patient_id) : null,
                 'facility' => $this->facility_id ? route('facilities.show', $this->facility_id) : null,
             ],

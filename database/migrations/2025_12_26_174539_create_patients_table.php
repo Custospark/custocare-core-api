@@ -73,7 +73,7 @@ return new class extends Migration
             $table->string('preferred_communication_method', 20)->default('email')->comment('email, sms, phone, postal');
             
             // Status tracking
-            $table->enum('status', ['active', 'inactive', 'deceased', 'merged', 'test_patient'])->default('active')->index();
+            $table->enum('status', ['active', 'inactive', 'deceased', 'merged', 'test_patient','system_patient'])->default('active')->index();
             $table->timestamp('deceased_at')->nullable();
             $table->unsignedBigInteger('merged_into_patient_id')->nullable()->comment('If duplicate record');
             

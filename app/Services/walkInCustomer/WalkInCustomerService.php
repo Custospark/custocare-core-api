@@ -6,7 +6,6 @@ use App\Models\Facility;
 use App\Models\FacilityWalkinCustomer;
 use App\Models\Patient;
 use App\Models\User;
-use App\Services\Contracts\WalkInCustomerServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;

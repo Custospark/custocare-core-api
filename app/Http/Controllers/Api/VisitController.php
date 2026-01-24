@@ -8,6 +8,7 @@ use App\Http\Requests\Visit\UpdateVisitRequest;
 use App\Http\Resources\PatientSearchResource;
 use App\Http\Resources\VisitResource;
 use App\Http\Resources\VisitCollection;
+use App\Models\FacilityStaffRole;
 use App\Models\Staff;
 use App\Models\Visit;
 use App\Services\Contracts\VisitServiceInterface;
@@ -92,10 +93,10 @@ class VisitController extends Controller
         }
     }
 
-    public function myQueue(Request $request): JsonResponse
+  public function myQueue(Request $request): JsonResponse
 {
     try {
-        // 1) Extract facility_id directly from header
+        // 1) Facility from header
         $facilityId = (int) $request->header('X-Facility-Id');
 
         if (!$facilityId) {
@@ -107,76 +108,79 @@ class VisitController extends Controller
             ], 422);
         }
 
-        // 2) Determine current staff id (adapt to your auth model)
-        // If your auth user is Staff, this is simply $request->user()->id
+        // 2) Resolve staff_id from authenticated user
         $userId = Auth::id();
-        $staffId = Staff::where('user_id', $userId)->value('id');
+        $staffId = Staff::query()->where('user_id', $userId)->value('id');
 
+        if (!$staffId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Staff profile not found for this user.',
+                'errors' => ['staff' => ['No staff record is linked to this account.']],
+                'data' => [],
+            ], 403);
+        }
 
-        // 3) Optional filters for queue
+        // 3) Confirm active assignment at this facility (security)
+        $assignment = FacilityStaffRole::query()
+            ->where('facility_id', $facilityId)
+            ->where('staff_id', $staffId)
+            ->where('assignment_status', 'active')
+            ->whereDate('effective_from', '<=', now()->toDateString())
+            ->where(function ($q) {
+                $q->whereNull('effective_to')
+                  ->orWhereDate('effective_to', '>=', now()->toDateString());
+            })
+            ->first(['id', 'role_code']);
+
+        if (!$assignment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You are not assigned to this facility.',
+                'errors' => ['facility' => ['No active facility assignment found.']],
+                'data' => [],
+            ], 403);
+        }
+
+        // 4) Optional filters
         $filters = $request->validate([
             'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
-            'department_id' => 'nullable|integer',
-            'include_unassigned' => 'nullable|boolean', // if true, show department queue too
             'limit' => 'nullable|integer|min:1|max:100',
         ]);
 
         $phase = $filters['current_phase'] ?? null;
-        $departmentId = $filters['department_id'] ?? ($request->user()->department_id ?? null);
-        $includeUnassigned = (bool) ($filters['include_unassigned'] ?? false);
         $limit = (int) ($filters['limit'] ?? 50);
 
-        // 4) Build query
-        $visitsQuery = Visit::query()
+        // 5) My queue = assigned to me
+        $visits = Visit::query()
             ->where('facility_id', $facilityId)
+            ->where('assigned_staff_id', $staffId)
             ->whereIn('status', ['active', 'in_progress'])
             ->when($phase, fn ($q) => $q->where('current_phase', $phase))
-            ->when($departmentId, fn ($q) => $q->where('current_department_id', $departmentId))
-            ->with([
-                'patient.user',
-            ])
-            // Queue ordering: urgent first, then longest waiting
+            ->with(['patient.user'])
             ->orderBy('acuity_score', 'asc')
             ->orderBy('waiting_since', 'asc')
-            ->limit($limit);
+            ->limit($limit)
+            ->get();
 
-        // 5) Assignment logic
-        if ($includeUnassigned) {
-            // My assigned visits OR unassigned visits in my department
-            $visitsQuery->where(function ($q) use ($staffId) {
-                $q->where('assigned_staff_id', $staffId)
-                  ->orWhereNull('assigned_staff_id');
-            });
-        } else {
-            // Strict: only my assigned visits
-            $visitsQuery->where('assigned_staff_id', $staffId);
-        }
-
-        $visits = $visitsQuery->get();
-
-        // 6) Patients list (lean resource)
-        $patients = $visits
+            
+            $patients = $visits
             ->map(fn ($v) => $v->patient)
             ->filter()
             ->unique('id')
             ->values();
 
-        // 7) Queue context for UI rendering (visit-level info)
         $queue = $visits->map(function ($v) {
             return [
                 'visit_uuid' => $v->visit_uuid,
                 'patient_id' => $v->patient_id,
-
                 'current_phase' => $v->current_phase,
                 'current_department_id' => $v->current_department_id,
-
                 'assigned_staff_id' => $v->assigned_staff_id,
                 'assigned_at' => optional($v->assigned_at)->toISOString(),
-
                 'waiting_since' => optional($v->waiting_since)->toISOString(),
                 'acuity_score' => $v->acuity_score,
                 'arrived_at' => optional($v->arrived_at)->toISOString(),
-
                 'visit_type' => $v->visit_type,
                 'status' => $v->status,
             ];
@@ -187,10 +191,10 @@ class VisitController extends Controller
             'data' => PatientSearchResource::collection($patients),
             'meta' => [
                 'facility_id' => $facilityId,
+                'staff_id' => $staffId,
+                'role_code' => $assignment->role_code,
                 'filters' => [
                     'current_phase' => $phase,
-                    'department_id' => $departmentId,
-                    'include_unassigned' => $includeUnassigned,
                 ],
                 'queue' => $queue,
                 'total_visits' => $visits->count(),
@@ -211,6 +215,8 @@ class VisitController extends Controller
         ], 500);
     }
 }
+
+
 
 
     /**

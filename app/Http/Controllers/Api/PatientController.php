@@ -365,7 +365,7 @@ class PatientController extends Controller
                 $facilityId = $data['created_from_facility_id'] ?? null;
                 if ($facilityId) {
                     $visit = Visit::create([
-                        'visit_uuid' => (string) Str::uuid(),
+                        'visit_uuid' => HealthcareIdGenerator::generate('visit'),
                         'facility_id' => $facilityId,
                         'patient_id' => $patient->id,
 

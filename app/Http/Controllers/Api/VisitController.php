@@ -93,128 +93,171 @@ class VisitController extends Controller
         }
     }
 
-  public function myQueue(Request $request): JsonResponse
-{
-    try {
-        // 1) Facility from header
-        $facilityId = (int) $request->header('X-Facility-Id');
+    public function myQueue(Request $request): JsonResponse
+    {
+        try {
+            // 1) Facility from header
+            $facilityId = (int) $request->header('X-Facility-Id');
 
-        if (!$facilityId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Missing X-Facility-Id header.',
-                'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
-                'data' => [],
-            ], 422);
-        }
+            if (!$facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing X-Facility-Id header.',
+                    'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                    'data' => [],
+                ], 422);
+            }
 
-        // 2) Resolve staff_id from authenticated user
-        $userId = Auth::id();
-        $staffId = Staff::query()->where('user_id', $userId)->value('id');
+            // 2) Resolve staff_id from authenticated user
+            $userId = Auth::id();
+            $staffId = Staff::query()->where('user_id', $userId)->value('id');
 
-        if (!$staffId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Staff profile not found for this user.',
-                'errors' => ['staff' => ['No staff record is linked to this account.']],
-                'data' => [],
-            ], 403);
-        }
+            if (!$staffId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff profile not found for this user.',
+                    'errors' => ['staff' => ['No staff record is linked to this account.']],
+                    'data' => [],
+                ], 403);
+            }
 
-        // 3) Confirm active assignment at this facility (security)
-        $assignment = FacilityStaffRole::query()
-            ->where('facility_id', $facilityId)
-            ->where('staff_id', $staffId)
-            ->where('assignment_status', 'active')
-            ->whereDate('effective_from', '<=', now()->toDateString())
-            ->where(function ($q) {
-                $q->whereNull('effective_to')
-                  ->orWhereDate('effective_to', '>=', now()->toDateString());
-            })
-            ->first(['id', 'role_code']);
+            // 3) Confirm active assignment at this facility (security)
+            $assignment = FacilityStaffRole::query()
+                ->where('facility_id', $facilityId)
+                ->where('staff_id', $staffId)
+                ->where('assignment_status', 'active')
+                ->whereDate('effective_from', '<=', now()->toDateString())
+                ->where(function ($q) {
+                    $q->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', now()->toDateString());
+                })
+                ->first(['id', 'role_code']);
 
-        if (!$assignment) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not assigned to this facility.',
-                'errors' => ['facility' => ['No active facility assignment found.']],
-                'data' => [],
-            ], 403);
-        }
+            if (!$assignment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not assigned to this facility.',
+                    'errors' => ['facility' => ['No active facility assignment found.']],
+                    'data' => [],
+                ], 403);
+            }
 
-        // 4) Optional filters
-        $filters = $request->validate([
-            'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
-            'limit' => 'nullable|integer|min:1|max:100',
-        ]);
+            // 4) Optional filters
+            $filters = $request->validate([
+                'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
+                'limit' => 'nullable|integer|min:1|max:100',
+            ]);
 
-        $phase = $filters['current_phase'] ?? null;
-        $limit = (int) ($filters['limit'] ?? 50);
+            $phase = $filters['current_phase'] ?? null;
+            $limit = (int) ($filters['limit'] ?? 50);
 
-        // 5) My queue = assigned to me
-        $visits = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->where('assigned_staff_id', $staffId)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->when($phase, fn ($q) => $q->where('current_phase', $phase))
-            ->with(['patient.user'])
-            ->orderBy('acuity_score', 'asc')
-            ->orderBy('waiting_since', 'asc')
-            ->limit($limit)
-            ->get();
+            // 5) My queue = visits assigned to me (VISIT-centric)
+            $visits = Visit::query()
+                ->where('facility_id', $facilityId)
+                ->where('assigned_staff_id', $staffId)
+                ->whereIn('status', ['active', 'in_progress'])
+                ->when($phase, fn ($q) => $q->where('current_phase', $phase))
+                ->with(['patient.user'])
+                ->orderBy('acuity_score', 'asc')
+                ->orderBy('waiting_since', 'asc')
+                ->limit($limit)
+                ->get();
 
-            
+            /**
+             * Legacy behavior: still return unique patients in `data`
+             * (do NOT remove this to avoid breaking existing clients)
+             */
             $patients = $visits
-            ->map(fn ($v) => $v->patient)
-            ->filter()
-            ->unique('id')
-            ->values();
+                ->map(fn ($v) => $v->patient)
+                ->filter()
+                ->unique('id')
+                ->values();
 
-        $queue = $visits->map(function ($v) {
-            return [
-                'visit_uuid' => $v->visit_uuid,
-                'patient_id' => $v->patient_id,
-                'current_phase' => $v->current_phase,
-                'current_department_id' => $v->current_department_id,
-                'assigned_staff_id' => $v->assigned_staff_id,
-                'assigned_at' => optional($v->assigned_at)->toISOString(),
-                'waiting_since' => optional($v->waiting_since)->toISOString(),
-                'acuity_score' => $v->acuity_score,
-                'arrived_at' => optional($v->arrived_at)->toISOString(),
-                'visit_type' => $v->visit_type,
-                'status' => $v->status,
-            ];
-        })->values();
+            /**
+             * ✅ New: Visit-centric queue that DOES NOT collapse walk-in visits.
+             * Frontend should render this list for the queue UI.
+             */
+            $queueVisits = $visits->map(function ($v) {
+                return [
+                    'visit_id' => $v->id,
+                    'visit_uuid' => $v->visit_uuid,
+                    'facility_id' => $v->facility_id,
 
-        return response()->json([
-            'success' => true,
-            'data' => PatientSearchResource::collection($patients),
-            'meta' => [
-                'facility_id' => $facilityId,
-                'staff_id' => $staffId,
-                'role_code' => $assignment->role_code,
-                'filters' => [
-                    'current_phase' => $phase,
+                    'patient_id' => $v->patient_id,
+                    'patient' => $v->patient ? new PatientSearchResource($v->patient) : null,
+
+                    'current_phase' => $v->current_phase,
+                    'current_department_id' => $v->current_department_id,
+
+                    'assigned_staff_id' => $v->assigned_staff_id,
+                    'assigned_at' => optional($v->assigned_at)->toISOString(),
+
+                    'waiting_since' => optional($v->waiting_since)->toISOString(),
+                    'acuity_score' => $v->acuity_score,
+                    'arrived_at' => optional($v->arrived_at)->toISOString(),
+
+                    'visit_type' => $v->visit_type,
+                    'status' => $v->status,
+                    'is_walk_in' => (bool) $v->is_walk_in,
+                ];
+            })->values();
+
+            // keep your existing meta.queue for legacy consumers if you already use it
+            $queue = $visits->map(function ($v) {
+                return [
+                    'visit_uuid' => $v->visit_uuid,
+                    'patient_id' => $v->patient_id,
+                    'current_phase' => $v->current_phase,
+                    'current_department_id' => $v->current_department_id,
+                    'assigned_staff_id' => $v->assigned_staff_id,
+                    'assigned_at' => optional($v->assigned_at)->toISOString(),
+                    'waiting_since' => optional($v->waiting_since)->toISOString(),
+                    'acuity_score' => $v->acuity_score,
+                    'arrived_at' => optional($v->arrived_at)->toISOString(),
+                    'visit_type' => $v->visit_type,
+                    'status' => $v->status,
+                ];
+            })->values();
+
+            return response()->json([
+                'success' => true,
+
+                // ✅ Keep legacy return (unique patients)
+                'data' => PatientSearchResource::collection($patients),
+
+                'meta' => [
+                    'facility_id' => $facilityId,
+                    'staff_id' => $staffId,
+                    'role_code' => $assignment->role_code,
+                    'filters' => [
+                        'current_phase' => $phase,
+                    ],
+
+                    // legacy
+                    'queue' => $queue,
+
+                    // ✅ NEW: visit-centric queue (use this for UI)
+                    'queue_visits' => $queueVisits,
+
+                    'total_visits' => $visits->count(),
+                    'total_patients' => $patients->count(),
                 ],
-                'queue' => $queue,
-                'total_visits' => $visits->count(),
-                'total_patients' => $patients->count(),
-            ],
-        ], 200);
+            ], 200);
 
-    } catch (\Exception $e) {
-        Log::error('Failed to load my queue', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
-        ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to load my queue', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to load queue.',
-            'data' => [],
-        ], 500);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load queue.',
+                'data' => [],
+            ], 500);
+        }
     }
-}
+
 
 
 

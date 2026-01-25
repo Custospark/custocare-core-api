@@ -11,10 +11,13 @@ use App\Http\Resources\PatientSearchResource;
 use App\Models\OnboardingToken;
 use App\Services\Contracts\PatientServiceInterface;
 use App\Models\Patient;
+use App\Models\Staff;
 use App\Models\User;
+use App\Models\Visit;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -161,11 +164,11 @@ class PatientController extends Controller
      * Staff creates a patient + user account in one go (atomic).
      * Returns lean PatientSearchResource for immediate UI use.
      */
-     public function createPatientByStaff(Request $request): JsonResponse
+    public function createPatientByStaff(Request $request): JsonResponse
     {
         try {
             // $this->authorize('create', Patient::class);
-            
+
             $data = $request->validate([
                 // USER minimal
                 'first_name' => 'required|string|max:100',
@@ -185,31 +188,34 @@ class PatientController extends Controller
                 'existing_user_action' => 'nullable|in:use_existing,block',
             ]);
 
-            
             if (empty($data['email']) && empty($data['phone'])) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Provide at least email or phone.',
                     'errors'  => ['contact' => ['Email or phone is required.']],
                     'data'    => [],
-                    ], 422);
-                    }
-                    
-            $result = DB::transaction(function () use ($data, $request) {
+                ], 422);
+            }
 
-                // Normalize
+            // Resolve current staff (required for visit assignment + auditing)
+            $staffId = Staff::where('user_id', Auth::id())->value('id');
+            if (!$staffId) {
+                abort(403, 'Authenticated user is not linked to a staff record.');
+            }
+
+            $result = DB::transaction(function () use ($data, $request, $staffId) {
+
+                // -------------------- NORMALIZE CONTACT --------------------
                 $email = isset($data['email']) ? strtolower(trim($data['email'])) : null;
                 $phone = isset($data['phone']) ? preg_replace('/\s+/', '', $data['phone']) : null;
 
-                // Deterministic hashes for matching
                 $emailHash = $email ? hash('sha256', $email) : null;
                 $phoneHash = $phone ? hash('sha256', $phone) : null;
 
-                // Encrypt for storage (Laravel built-in)
                 $emailEncrypted = $email ? Crypt::encryptString($email) : null;
                 $phoneEncrypted = $phone ? Crypt::encryptString($phone) : null;
 
-                // 1) Exact-match user search by email_hash / phone_hash
+                // -------------------- 1) FIND EXISTING USER (EXACT MATCH) --------------------
                 $user = User::query()
                     ->where(function ($q) use ($emailHash, $phoneHash) {
                         if ($emailHash) $q->where('email_hash', $emailHash);
@@ -218,8 +224,7 @@ class PatientController extends Controller
                     ->lockForUpdate()
                     ->first();
 
-
-                // Existing user found, allow staff to decide
+                // Existing user found; allow UI-driven action
                 if ($user && ($data['existing_user_action'] ?? 'use_existing') === 'block') {
                     $existingPatient = Patient::query()
                         ->where('user_id', $user->id)
@@ -233,11 +238,11 @@ class PatientController extends Controller
                         'possible_duplicate' => null,
                         'created_new_user' => false,
                         'onboarding_link_required' => false,
-                        'raw_token' => null,
+                        'visit' => null,
                     ];
                 }
 
-                // 2) Possible duplicate check (only if no contact-match user)
+                // -------------------- 2) POSSIBLE DUPLICATE CHECK --------------------
                 $possibleDuplicatePatient = null;
 
                 if (!$user) {
@@ -259,12 +264,12 @@ class PatientController extends Controller
                             'possible_duplicate' => $possibleDuplicatePatient,
                             'created_new_user' => false,
                             'onboarding_link_required' => false,
-                            'raw_token' => null,
+                            'visit' => null,
                         ];
                     }
                 }
 
-                // 3) Create or update user
+                // -------------------- 3) CREATE OR UPDATE USER --------------------
                 $createdNewUser = false;
 
                 if (!$user) {
@@ -273,19 +278,19 @@ class PatientController extends Controller
 
                         'first_name' => $data['first_name'],
                         'last_name'  => $data['last_name'],
-                        'display_name' => trim($data['first_name'].' '.$data['last_name']),
+                        'display_name' => trim($data['first_name'] . ' ' . $data['last_name']),
 
                         'email_encrypted' => $emailEncrypted,
                         'email_hash'      => $emailHash,
                         'phone_encrypted' => $phoneEncrypted,
                         'phone_hash'      => $phoneHash,
 
-                        // Best practice: patient sets password via onboarding token
                         'password_hash' => null,
                         'requires_password_change' => true,
 
                         'created_from_facility_id' => $data['created_from_facility_id'] ?? null,
-                        'created_by_staff_id' => optional($request->user())->id,
+                        // if your users.created_by_staff_id expects staff_id, keep $staffId
+                        'created_by_staff_id' => $staffId,
                         'created_ip' => $request->ip(),
                     ]);
 
@@ -306,12 +311,13 @@ class PatientController extends Controller
                     }
 
                     if ($dirty) {
-                        $user->updated_by_staff_id = optional($request->user())->id;
+                        // if users.updated_by_staff_id expects staff_id, use $staffId
+                        $user->updated_by_staff_id = $staffId;
                         $user->save();
                     }
                 }
 
-                // 4) If user already has patient record -> return it (no new patient)
+                // -------------------- 4) IF PATIENT ALREADY EXISTS, RETURN IT --------------------
                 $existingPatient = Patient::query()
                     ->where('user_id', $user->id)
                     ->with('user')
@@ -325,11 +331,11 @@ class PatientController extends Controller
                         'possible_duplicate' => $possibleDuplicatePatient,
                         'created_new_user' => $createdNewUser,
                         'onboarding_link_required' => false,
-                        'raw_token' => null,
+                        'visit' => null,
                     ];
                 }
 
-                // 5) Create patient
+                // -------------------- 5) CREATE PATIENT --------------------
                 $patientUuid = HealthcareIdGenerator::generate('patient');
 
                 $mrnPlain = 'MRN-' . strtoupper(Str::random(10));
@@ -349,11 +355,55 @@ class PatientController extends Controller
                     'status' => 'active',
                     'portal_access_enabled' => true,
 
-                    'created_by_staff_id' => optional($request->user())->id,
+                    // if patients.created_by_staff_id expects staff_id, use $staffId
+                    'created_by_staff_id' => $staffId,
                 ])->load('user');
 
-                // 6) Create onboarding token record (secure + expiring)
-                // Store ONLY token_hash, never raw token.
+                // -------------------- 6) CREATE VISIT (ASSIGN TO CURRENT STAFF) --------------------
+                $visitMeta = null;
+
+                $facilityId = $data['created_from_facility_id'] ?? null;
+                if ($facilityId) {
+                    $visit = Visit::create([
+                        'visit_uuid' => (string) Str::uuid(),
+                        'facility_id' => $facilityId,
+                        'patient_id' => $patient->id,
+
+                        // ✅ assign visit to current staff
+                        'assigned_staff_id' => $staffId,
+                        'assigned_at' => now(),
+
+                        // minimal required visit fields
+                        'visit_type' => 'outpatient',
+                        'acuity_score' => 3,
+                        'chief_complaints' => ['Registration / record creation'],
+                        'arrived_at' => now(),
+                        'waiting_since' => now(),
+
+                        // sane defaults aligned to your schema
+                        'is_walk_in' => true,
+                        'status' => 'active',
+                        'current_phase' => 'registration',
+
+                        // audit
+                        'created_by_staff_id' => $staffId,
+                        'updated_by_staff_id' => $staffId,
+                    ]);
+
+                    // Return only a few fields (safe for legacy)
+                    $visitMeta = [
+                        'id' => $visit->id,
+                        'visit_uuid' => $visit->visit_uuid,
+                        'facility_id' => $visit->facility_id,
+                        'patient_id' => $visit->patient_id,
+                        'assigned_staff_id' => $visit->assigned_staff_id,
+                        'current_phase' => $visit->current_phase,
+                        'status' => $visit->status,
+                        'arrived_at' => optional($visit->arrived_at)->toISOString(),
+                    ];
+                }
+
+                // -------------------- 7) CREATE ONBOARDING TOKEN (HASH ONLY) --------------------
                 $rawToken = Str::random(64);
 
                 OnboardingToken::create([
@@ -361,21 +411,9 @@ class PatientController extends Controller
                     'token_hash' => hash('sha256', $rawToken),
                     'expires_at' => now()->addMinutes(30),
                     'channel' => $email ? 'email' : 'sms',
-                    'created_by_staff_id' => optional($request->user())->id,
+                    'created_by_staff_id' => $staffId,
                     'created_ip' => $request->ip(),
                 ]);
-
-                // TODO (IMPORTANT):
-                // Build the onboarding link and send it via Email/SMS.
-                // Example URL (front-end):
-                //   $link = config('app.frontend_url') . "/onboarding?token={$rawToken}";
-                //
-                // dispatch(new SendPatientOnboardingLinkJob(
-                //     userId: $user->id,
-                //     onboardingLink: $link,
-                //     email: $email,
-                //     phone: $phone
-                // ));
 
                 return [
                     'status' => 'created',
@@ -384,11 +422,12 @@ class PatientController extends Controller
                     'possible_duplicate' => $possibleDuplicatePatient,
                     'created_new_user' => $createdNewUser,
                     'onboarding_link_required' => true,
-                    //'raw_token' => $rawToken, // do NOT return in production
+                    'visit' => $visitMeta,
+                    // 'raw_token' => $rawToken, // do NOT return in production
                 ];
             });
 
-            // ---------- RESPONSE SHAPING ----------
+            // -------------------- RESPONSE SHAPING (LEGACY SAFE) --------------------
             if ($result['status'] === 'possible_duplicate') {
                 return response()->json([
                     'success' => false,
@@ -423,10 +462,13 @@ class PatientController extends Controller
                         'possible_duplicate' => $result['possible_duplicate']
                             ? new PatientSearchResource($result['possible_duplicate'])
                             : null,
+                        // Keep legacy stable; visit is null here
+                        'visit' => null,
                     ],
                 ], 200);
             }
 
+            // ✅ Legacy "data" unchanged; only add visit info into meta
             return response()->json([
                 'success' => true,
                 'message' => 'Patient created successfully by staff.',
@@ -438,6 +480,7 @@ class PatientController extends Controller
                         ? new PatientSearchResource($result['possible_duplicate'])
                         : null,
                     'onboarding_link_required' => $result['onboarding_link_required'],
+                    'visit' => $result['visit'], // 👈 minimal visit payload
                 ],
             ], 201);
 
@@ -463,6 +506,7 @@ class PatientController extends Controller
             ], 500);
         }
     }
+
 
 
 

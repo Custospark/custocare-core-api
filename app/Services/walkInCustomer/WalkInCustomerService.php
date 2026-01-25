@@ -3,13 +3,16 @@
 namespace App\Services\WalkInCustomer;
 
 use App\Models\Facility;
+use App\Models\FacilityStaffRole;
 use App\Models\FacilityWalkinCustomer;
 use App\Models\Patient;
+use App\Models\Staff;
 use App\Models\User;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class WalkInCustomerService 
@@ -248,6 +251,11 @@ class WalkInCustomerService
         return DB::transaction(function () use ($facilityId, $staffId) {
             $walkin = $this->getOrCreateFacilityWalkInPatient($facilityId, $staffId);
             Log::info("Walk In User", $walkin);
+            $staffId = Staff::where('user_id', Auth::id())->value('id');
+
+            if (!$staffId) {
+                abort(403, 'Authenticated user is not linked to a staff record.');
+            }
 
             $visit = DB::table('visits')->insertGetId([
                 'visit_uuid' => HealthcareIdGenerator::generate('visit'),
@@ -258,6 +266,7 @@ class WalkInCustomerService
                 'chief_complaints' => json_encode([]),
                 'arrived_at' => now(),
                 'current_phase' => 'registration',
+                'assigned_staff_id'=>$staffId,
                 'is_walk_in' => true,
                 'status' => 'active',
                 'created_at' => now(),

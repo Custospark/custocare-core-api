@@ -365,7 +365,7 @@ class PatientController extends Controller
                 $facilityId = $data['created_from_facility_id'] ?? null;
                 if ($facilityId) {
                     $visit = Visit::create([
-                        'visit_uuid' => HealthcareIdGenerator::generate('visit'),
+                        'visit_uuid' => (string) Str::uuid(),
                         'facility_id' => $facilityId,
                         'patient_id' => $patient->id,
 
@@ -376,7 +376,7 @@ class PatientController extends Controller
                         // minimal required visit fields
                         'visit_type' => 'outpatient',
                         'acuity_score' => 3,
-                        'chief_complaints' => ['Registration / record creation'],
+                        'chief_complaints' => ['Reason for visit not yet specified'],
                         'arrived_at' => now(),
                         'waiting_since' => now(),
 

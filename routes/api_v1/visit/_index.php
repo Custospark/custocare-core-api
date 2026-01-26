@@ -7,7 +7,7 @@ Route::prefix('visits')->middleware(['auth:api','auth:sanctum'])->group(function
     // Basic CRUD operations
     Route::get('/', [VisitController::class, 'index']);
     Route::post('/', [VisitController::class, 'store']);
-    Route::get('/{visit}', [VisitController::class, 'show']);
+    Route::get('/{visit}', [VisitController::class, 'show'])->where('visit', '[a-f0-9-]{36}');
     Route::put('/{visit}', [VisitController::class, 'update'])->where('visit', '[a-f0-9-]{36}');
     Route::delete('/{visit}', [VisitController::class, 'destroy'])->where('visit', '[a-f0-9-]{36}');
     

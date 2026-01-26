@@ -155,13 +155,7 @@ class VisitService implements VisitServiceInterface
     }
 
     
-    public function findByIdentifier(string $identifier)
-    {
-        return Visit::query()
-            ->where('visit_uuid', $identifier)
-            ->orWhere('visit_code', $identifier) // adjust column name if different
-            ->first();
-    }
+   
 
     /**
      * {@inheritDoc}
@@ -304,6 +298,44 @@ class VisitService implements VisitServiceInterface
     {
         try {
             DB::beginTransaction();
+
+            if (array_key_exists('chief_complaints', $data)) {
+            $incoming = $data['chief_complaints'];
+
+            // Make it an array
+            $incoming = is_string($incoming) ? json_decode($incoming, true) : $incoming;
+            $incoming = is_array($incoming) ? $incoming : [];
+
+            // Flatten: split any string containing newlines into multiple items
+            $split = [];
+            foreach ($incoming as $item) {
+                $item = (string) $item;
+
+                // split on \r\n or \n
+                $parts = preg_split("/\r\n|\n/", $item);
+
+                foreach ($parts as $p) {
+                    $p = trim($p);
+                    if ($p !== '') $split[] = $p;
+                }
+            }
+
+            // Dedup (case-insensitive)
+            $normalize = fn($v) => mb_strtolower(trim((string)$v));
+            $splitNorm = [];
+            $unique = [];
+
+            foreach ($split as $v) {
+                $k = $normalize($v);
+                if (!isset($splitNorm[$k])) {
+                    $splitNorm[$k] = true;
+                    $unique[] = $v;
+                }
+            }
+
+            $data['chief_complaints'] = $unique;
+        }
+
 
             // Find the visit
             $visit = $this->visitRepository->findByUuid($uuid);

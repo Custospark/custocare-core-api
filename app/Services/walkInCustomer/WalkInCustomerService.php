@@ -258,7 +258,7 @@ class WalkInCustomerService
             }
 
             $visit = DB::table('visits')->insertGetId([
-                'visit_uuid' => HealthcareIdGenerator::generate('visit'),
+                'visit_uuid' => (string) Str::uuid(),
                 'facility_id' => $facilityId,
                 'patient_id' => $walkin['patient_id'],
                 'visit_type' => 'outpatient',

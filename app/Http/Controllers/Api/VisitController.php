@@ -12,10 +12,15 @@ use App\Models\FacilityStaffRole;
 use App\Models\Staff;
 use App\Models\Visit;
 use App\Services\Contracts\VisitServiceInterface;
+use Illuminate\Container\Attributes\Auth as AttributesAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Auth as FacadesAuth;
+use Illuminate\Support\Facades\Auth as SupportFacadesAuth;
 use Illuminate\Support\Facades\Log;
+
+use function Illuminate\Log\log;
 
 /**
  * Visit Controller
@@ -368,12 +373,14 @@ class VisitController extends Controller
      */
     public function update(UpdateVisitRequest $request, string $uuid): JsonResponse
     {
+        Log::info($request);
+        
         try {
             // Get validated data
             $validatedData = $request->validated();
 
             // Get current user ID for audit
-            $userId = $request->user()->id;
+            $userId = Auth::id();
 
             // Update visit via service
             $result = $this->visitService->updateVisit($uuid, $validatedData, $userId);
@@ -422,7 +429,7 @@ class VisitController extends Controller
             $this->authorize('delete', \App\Models\Visit::class);
 
             // Get current user ID
-            $userId = $request->user()->id;
+            $userId = Auth::id();
 
             // Delete visit via service
             $result = $this->visitService->deleteVisit($uuid, $userId);

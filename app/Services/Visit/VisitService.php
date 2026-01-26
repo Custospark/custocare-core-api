@@ -154,6 +154,15 @@ class VisitService implements VisitServiceInterface
         }
     }
 
+    
+    public function findByIdentifier(string $identifier)
+    {
+        return Visit::query()
+            ->where('visit_uuid', $identifier)
+            ->orWhere('visit_code', $identifier) // adjust column name if different
+            ->first();
+    }
+
     /**
      * {@inheritDoc}
      */

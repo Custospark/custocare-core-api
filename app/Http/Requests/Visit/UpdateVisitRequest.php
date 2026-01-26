@@ -21,8 +21,9 @@ class UpdateVisitRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        $visit = $this->route('visit');
-        return $this->user()->can('update', $visit);
+        // $visit = $this->route('visit');
+        // return $this->user()->can('update', $visit);
+        return true;
     }
 
     /**

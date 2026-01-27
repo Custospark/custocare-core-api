@@ -16,6 +16,7 @@ use App\Services\User\Contracts\UserServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Request as HttpRequest;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 
@@ -272,58 +273,62 @@ public function getAllMedicalProfesionalRecords(Request $request): JsonResponse
     /**
      * Store a newly created staff in storage.
      */
-    public function store(StoreStaffRequest $request): JsonResponse
-    {
-        try {
-            $staff = $this->staffService->createStaff(
-                $request->validated()
-            );
+   public function store(StoreStaffRequest $request): JsonResponse
+{
+    try {
+        $staff = $this->staffService->createStaff(
+            $request->validated()
+        );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Staff account created successfully.',
-                'data'    => new StaffResource($staff),
-                'errors'  => null,
-            ], JsonResponse::HTTP_CREATED);
+        // ✅ Eager load user for the resource (prevents MissingValue issues)
+        $staff->load('user');
 
-        } catch (\Illuminate\Auth\AuthenticationException $e) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Staff account created successfully.',
+            'data'    => new StaffResource($staff),
+            'errors'  => null,
+        ], JsonResponse::HTTP_CREATED);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthenticated.',
-                'data'    => null,
-                'errors'  => null,
-            ], JsonResponse::HTTP_UNAUTHORIZED);
+    } catch (\Illuminate\Auth\AuthenticationException $e) {
 
-        } catch (\RuntimeException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthenticated.',
+            'data'    => null,
+            'errors'  => null,
+        ], JsonResponse::HTTP_UNAUTHORIZED);
 
-            Log::warning('Staff creation failed', [
-                'reason' => $e->getMessage(),
-                'input'  => $request->validated(),
-            ]);
+    } catch (\RuntimeException $e) {
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to create staff record.',
-                'data'    => null,
-                'errors'  => null,
-            ], JsonResponse::HTTP_BAD_REQUEST);
+        Log::warning('Staff creation failed', [
+            'reason' => $e->getMessage(),
+            'input'  => $request->validated(),
+        ]);
 
-        } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unable to create staff record.',
+            'data'    => null,
+            'errors'  => null,
+        ], JsonResponse::HTTP_BAD_REQUEST);
 
-            Log::error('Unexpected staff creation error', [
-                'exception' => $e,
-                'input'     => $request->validated(),
-            ]);
+    } catch (\Throwable $e) {
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Internal server error.',
-                'data'    => null,
-                'errors'  => null,
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        Log::error('Unexpected staff creation error', [
+            'exception' => $e,
+            'input'     => $request->validated(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Internal server error.',
+            'data'    => null,
+            'errors'  => null,
+        ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
+}
+
 
     public function createStaffByAdmin(StoreStaffByAdminRequest $request): JsonResponse
     {
@@ -351,10 +356,7 @@ public function getAllMedicalProfesionalRecords(Request $request): JsonResponse
         Log::info("New User created!.");
         $user=User::create($userRegistrationData);
        }
-       Log::warning("User Existed.");
-       dd("Wait");
-    //    Log::alert($user);
-    //    dd("Hold on");
+       
         try {
             $staff = $this->staffService->createStaff(
                 $request->validated()

@@ -27,7 +27,7 @@ class StoreStaffRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => 'required|integer|exists:users,id|unique:staff,user_id',
+            'user_id' => 'required|integer|exists:users,id',
             'professional_title' => 'required|string|max:100',
             'professional_license_number_encrypted' => 'nullable|string|max:512',
             'license_issuing_state' => 'nullable|string|max:50',
@@ -96,7 +96,7 @@ class StoreStaffRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'user_id.unique' => 'This user is already registered as staff.',
+            'user_id.unique' => 'This user is required and must be unique.',
             'employee_id.unique' => 'This employee ID is already in use.',
             'npi_number.unique' => 'This NPI number is already registered.',
             'license_expiry_date.after' => 'License expiry date must be in the future.',

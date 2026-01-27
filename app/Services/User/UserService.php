@@ -50,13 +50,14 @@ class UserService implements Contracts\UserServiceInterface
             $email = strtolower($data['email']);
             Log::info("Email: ".$email);
             $emailHash = hash('sha256', $email);
-            Log::info("Email hah: ".$emailHash);
+            Log::info("Email hash: ".$emailHash);
 
 
             // Check for duplicate email
-            if ($user=$this->userRepository->findByEmailHash($emailHash)) {
+            if ($this->userRepository->findByEmailHash($emailHash)) {
                 throw new \Exception('A user with this email already exists.');
             }
+            
 
             // Check for duplicate national ID if provided
             if (!empty($data['national_id'])) {

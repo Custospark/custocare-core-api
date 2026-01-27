@@ -37,8 +37,6 @@ class AuthController extends Controller
      */
     public function register(RegisterRequest $request): JsonResponse
 {
-    $email = $request->input('email');
-
     try {
         $user = $this->userService->register($request->validated());
 

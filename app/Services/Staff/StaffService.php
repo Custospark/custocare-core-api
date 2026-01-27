@@ -128,10 +128,9 @@ class StaffService implements StaffServiceInterface
         $existingStaff = $this->staffRepository
             ->findByUserId($data['user_id']);
 
-        if ($existingStaff) {
+            if ($existingStaff) {
             return $existingStaff;
         }
-
         // 2️⃣ Only generate identifiers for NEW staff
         $data['staff_uuid']  = HealthcareIdGenerator::generate('staff');
         $data['employee_id'] = HealthcareIdGenerator::generateRandomCode('EMP');

@@ -36,7 +36,6 @@ class DepartmentService implements DepartmentServiceInterface
     public function getAllDepartments(array $filters = []): array
     {
         try {
-            dd('here');
             $perPage = $filters['per_page'] ?? 20;
             $departments = $this->repository->getAllPaginated($filters, $perPage);
 

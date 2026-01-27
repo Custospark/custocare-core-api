@@ -463,40 +463,108 @@ use Illuminate\Support\Facades\Auth;
         /**
          * Display the specified staff.
          */
-        public function show(int $id): JsonResponse
-        {
-        Log::info($id);
-        try {
-                // Get staff by ID
-                $staff = $this->staffService->getStaffById($id);
-                Log::info($staff);
-                
-                if (!$staff) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Staff not found.',
-                        'data' => null
-                    ], JsonResponse::HTTP_NOT_FOUND);
-                }
-                
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Staff retrieved successfully.',
-                    'data' => new StaffResource($staff)
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Error retrieving staff', [
-                    'id' => $id,
-                    'error' => $e->getMessage()
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to retrieve staff.',
-                    'data' => null
-                ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-            }
+public function show(Request $request, int $id): JsonResponse
+{
+    try {
+        // ✅ Pick facility deterministically for this staff
+        $facilityId = FacilityStaffRole::query()
+            ->where('staff_id', $id)
+            ->whereNull('deleted_at')
+            ->orderByDesc('is_primary_facility')
+            ->orderByRaw("CASE assignment_status WHEN 'active' THEN 1 ELSE 0 END DESC")
+            ->orderByDesc('effective_from')
+            ->value('facility_id');
+
+        if (!$facilityId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No facility assignment found for this staff.',
+                'data'    => null,
+            ], JsonResponse::HTTP_NOT_FOUND);
         }
+
+        // ✅ FIX: Inject facility_id into request so StaffResource can access it
+        $request->merge(['facility_id' => $facilityId]);
+
+        // ✅ Load staff by ID
+        $staff = $this->staffService
+            ->getAllStaff([])
+            ->where('staff.id', $id)
+            ->select('staff.*')
+            ->with([
+                'user',
+                'facilityStaffRoles' => function ($q) use ($facilityId) {
+                    $q->where('facility_id', $facilityId)
+                      ->whereNull('deleted_at')
+                      ->with(['facility', 'staff.user']);
+                },
+            ])
+            ->first();
+
+        if (!$staff) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Staff not found.',
+                'data'    => null,
+            ], JsonResponse::HTTP_NOT_FOUND);
+        }
+
+        // ✅ Build department lookup map AFTER staff is loaded
+        $deptIds = collect($staff->facilityStaffRoles)
+            ->flatMap(function ($role) {
+                return is_array($role->department_ids) ? $role->department_ids : [];
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
+        $departmentsById = [];
+
+        if ($deptIds->isNotEmpty()) {
+            $departmentsById = Department::query()
+                ->where('facility_id', $facilityId)
+                ->whereIn('id', $deptIds->all())
+                ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
+                ->keyBy('id')
+                ->map(fn ($d) => [
+                    'id'              => $d->id,
+                    'department_uuid' => $d->department_uuid,
+                    'department_code' => $d->department_code,
+                    'department_name' => $d->department_name,
+                    'department_type' => $d->department_type,
+                ])
+                ->toArray();
+        }
+
+        // ✅ Inject for resources
+        $request->attributes->set('departmentsById', $departmentsById);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Staff retrieved successfully.',
+            'data'    => new StaffResource($staff),
+            'meta'    => [
+                'facility_id' => (int) $facilityId,
+            ],
+        ]);
+    } catch (\Throwable $e) {
+        Log::error('Error retrieving staff', [
+            'staff_id' => $id,
+            'error'    => $e->getMessage(),
+            'trace'    => $e->getTraceAsString(),
+            'query'    => $request->all(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to retrieve staff.',
+            'data'    => null,
+        ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}
+
+
+
 
         /**
          * Update the specified staff in storage.

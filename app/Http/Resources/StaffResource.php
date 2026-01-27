@@ -68,11 +68,9 @@ class StaffResource extends JsonResource
         // ✅ Facility assignment summary (appended, legacy-safe)
         $facilityId = $request->integer('facility_id');
         $assignment = null;
-
         if ($facilityId && $this->relationLoaded('facilityStaffRoles')) {
             $assignment = $this->facilityStaffRoles->firstWhere('facility_id', $facilityId);
         }
-
         return [
             // ===== Staff fields (keep stable) =====
             'id' => $this->id,

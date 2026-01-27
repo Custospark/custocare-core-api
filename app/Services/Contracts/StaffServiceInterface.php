@@ -19,6 +19,9 @@ interface StaffServiceInterface
      */
     public function getStaffByUuid(string $uuid): ?Staff;
 
+    public function getStaffQueryById(int $id);
+  
+
     /**
      * Get all staff with pagination.
      */

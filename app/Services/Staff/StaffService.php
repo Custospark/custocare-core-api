@@ -114,6 +114,10 @@ class StaffService implements StaffServiceInterface
     }
 
 
+    public function getStaffQueryById(int $id)
+    {
+        return Staff::query()->where('id', $id);
+    }
 
     /**
      * Create new staff.

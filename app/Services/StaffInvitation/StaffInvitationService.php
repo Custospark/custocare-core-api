@@ -3,6 +3,7 @@
 namespace App\Services\StaffInvitation;
 
 use App\Models\FacilityStaffRole;
+use App\Models\Staff;
 use App\Models\StaffInvitation;
 use App\Services\Contracts\StaffInvitationServiceInterface;
 use App\Repositories\Contracts\StaffInvitationRepositoryInterface;
@@ -10,6 +11,7 @@ use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use App\Services\FacilityStaffService;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -69,8 +71,15 @@ class StaffInvitationService implements StaffInvitationServiceInterface
         // Add invited_by_staff_id if provided
         if ($invitedByStaffId) {
             $data['invited_by_staff_id'] = (int)$invitedByStaffId;
+        } 
+        $invitedByStaffId = Staff::where('user_id',Auth::id())->value('id'); 
+        if (!$invitedByStaffId) {
+            throw new \Exception('Inviter staff context not found.');
         }
-        
+        // Prevent self-invitation into a facility
+        if ((int) $data['staff_id'] === (int) $invitedByStaffId) {
+            throw new \Exception('You cannot invite yourself to a facility.');
+        }        
         // Check for duplicate pending/accepted invitations
         $duplicateExists = $this->repository->duplicateExists(
             $data['staff_id'],

@@ -8,6 +8,21 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class FacilityStaffRoleSummaryResource extends JsonResource
 {
     /**
+     * role_code -> "LAB TECH" (uppercased, separators to spaces)
+     */
+    private function formatRoleAtFacility(?string $roleCode): ?string
+    {
+        if (!$roleCode) {
+            return null;
+        }
+
+        $clean = preg_replace('/[-_]+/', ' ', trim($roleCode));
+        $clean = preg_replace('/\s+/', ' ', $clean);
+
+        return strtoupper($clean);
+    }
+
+    /**
      * Transform the resource into an array.
      * Keep this lean: <= 20 fields. Aggregated from related tables.
      *
@@ -25,6 +40,8 @@ class FacilityStaffRoleSummaryResource extends JsonResource
 
         // Departments list is optionally preloaded as a mapped list
         $departments = $this->whenLoaded('departments');
+
+        $roleCode = $this->role_code;
 
         return [
             // 1) Assignment public ID
@@ -52,8 +69,9 @@ class FacilityStaffRoleSummaryResource extends JsonResource
             'global_role_level' => $staff?->global_role_level,
             'employment_status' => $staff?->employment_status,
 
-            // 8) Assignment role
-            'role_code' => $this->role_code,
+            // 8) Assignment role (raw + formatted)
+            'role_code' => $roleCode,
+            'role_at_facility' => $this->formatRoleAtFacility($roleCode),
 
             // 9) Assignment status & primacy
             'assignment_status' => $this->assignment_status,

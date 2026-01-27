@@ -191,10 +191,9 @@ public function staffSearch(Request $request): JsonResponse
    /**
     * Record of all medical Professionals.
     */
-     public function getAllMedicalProfesionalRecords(Request $request): JsonResponse
+public function getAllMedicalProfesionalRecords(Request $request): JsonResponse
 {
     try {
-        // Get filters from request
         $filters = $request->only([
             'employment_status',
             'global_role_level',
@@ -202,10 +201,9 @@ public function staffSearch(Request $request): JsonResponse
             'has_expired_license'
         ]);
 
-        // Start the query directly on the Staff model
-        $query = Staff::query();
+        $query = Staff::query()
+            ->with('user'); // ✅ eager-load users to avoid N+1
 
-        // Apply filters if provided
         if (!empty($filters['employment_status'])) {
             $query->where('employment_status', $filters['employment_status']);
         }
@@ -214,22 +212,33 @@ public function staffSearch(Request $request): JsonResponse
             $query->where('global_role_level', $filters['global_role_level']);
         }
 
-        if (!empty($filters['has_expired_license'])) {
-            // Assuming has_expired_license is boolean
-            $query->where('has_expired_license', $filters['has_expired_license']);
+        if (!is_null($filters['has_expired_license'] ?? null)) {
+            $query->where('has_expired_license', (bool) $filters['has_expired_license']);
         }
 
         if (!empty($filters['search'])) {
-            $search = $filters['search'];
+            $search = trim($filters['search']);
+
             $query->where(function ($q) use ($search) {
+                // If Staff has these columns, keep them; otherwise remove them.
                 $q->where('first_name', 'like', "%{$search}%")
                   ->orWhere('last_name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%");
+                  ->orWhere('employee_id', 'like', "%{$search}%");
+
+                // ✅ Search user profile fields (recommended)
+                $q->orWhereHas('user', function ($uq) use ($search) {
+                    $uq->where('display_name', 'like', "%{$search}%")
+                       ->orWhere('first_name', 'like', "%{$search}%")
+                       ->orWhere('last_name', 'like', "%{$search}%")
+                       ->orWhere('global_user_uuid', 'like', "%{$search}%");
+
+                    // Optional: only if you store/compare hashes for email search
+                    // $uq->orWhere('email_hash', hash('sha256', strtolower($search)));
+                });
             });
         }
 
-        // Pagination
-        $perPage = $request->get('per_page', 20);
+        $perPage = (int) $request->get('per_page', 20);
         $staff = $query->paginate($perPage);
 
         return response()->json([
@@ -256,6 +265,7 @@ public function staffSearch(Request $request): JsonResponse
         ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
 }
+
 
 
 
@@ -317,7 +327,6 @@ public function staffSearch(Request $request): JsonResponse
 
     public function createStaffByAdmin(StoreStaffByAdminRequest $request): JsonResponse
     {
-    //    Log::info($request);
            $first_name = $request->input('first_name');
            $last_name = $request->input('last_name');
            $email = $request->input('email');

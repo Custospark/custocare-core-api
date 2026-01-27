@@ -137,6 +137,11 @@ class Staff extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function facilityStaffRoles()
+    {
+        return $this->hasMany(FacilityStaffRole::class, 'staff_id');
+}
+
     /**
      * Get the supervisor this staff reports to.
      */

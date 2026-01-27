@@ -140,6 +140,13 @@ class Staff extends Model
     public function facilityStaffRoles()
     {
         return $this->hasMany(FacilityStaffRole::class, 'staff_id');
+    }
+
+    public function facilityStaffRoleAtFacility(int $facilityId)
+{
+    return $this->hasOne(FacilityStaffRole::class, 'staff_id')
+        ->where('facility_id', $facilityId)
+        ->whereNull('deleted_at'); 
 }
 
     /**

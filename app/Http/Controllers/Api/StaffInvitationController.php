@@ -34,35 +34,55 @@ class StaffInvitationController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request): JsonResponse
-    {
-        try {
-            $filters = $request->only(['status', 'facility_id', 'staff_id', 'department_id', 'role_code', 'module_code', 'invited_by_staff_id', 'sent_from', 'sent_to', 'sort_by', 'sort_order']);
-            $perPage = $request->input('per_page', 20);
-            
-            $invitations = $this->service->getAllInvitations($filters, $perPage);
-            
-            return $this->successResponse(
-                StaffInvitationResource::collection($invitations),
-                'Invitations retrieved successfully.',
-                [
-                    'filters_applied' => $filters,
-                ]
-            );
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve invitations', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return $this->errorResponse(
-                'Failed to retrieve invitations.',
-                500,
-                ['system' => 'An unexpected error occurred.']
-            );
-        }
+  public function index(Request $request): JsonResponse
+{
+    try {
+        $filters = $request->only([
+            'status',
+            'facility_id',
+            'staff_id',
+            'department_id',
+            'role_code',
+            'module_code',
+            'invited_by_staff_id',
+            'sent_from',
+            'sent_to',
+            'sort_by',
+            'sort_order'
+        ]);
+
+        $perPage = $request->input('per_page', 20);
+
+        $invitations = $this->service->getAllInvitations($filters, $perPage);
+
+        // ✅ Ensure user relationships are loaded (if not already in service)
+        $invitations->load([
+            'staff.user',
+            'invitedByStaff.user',
+        ]);
+
+        return $this->successResponse(
+            StaffInvitationResource::collection($invitations),
+            'Invitations retrieved successfully.',
+            [
+                'filters_applied' => $filters,
+            ]
+        );
+
+    } catch (\Exception $e) {
+        Log::error('Failed to retrieve invitations', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return $this->errorResponse(
+            'Failed to retrieve invitations.',
+            500,
+            ['system' => 'An unexpected error occurred.']
+        );
     }
+}
+
 
     /**
      * Store a newly created resource in storage.

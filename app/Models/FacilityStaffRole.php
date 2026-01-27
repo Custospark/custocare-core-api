@@ -140,6 +140,17 @@ class FacilityStaffRole extends Model
     {
         return $this->belongsTo(Facility::class);
     }
+       /**
+     * Departments within the facility this role applies to
+     */
+    public function departments()
+    {
+        return $this->belongsToMany(
+            Department::class,
+            'facility_staff_role_id',
+            'department_ids'
+        );
+    }
 
     /**
      * Get the staff member associated with this role assignment

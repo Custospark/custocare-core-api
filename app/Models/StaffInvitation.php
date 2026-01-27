@@ -75,6 +75,11 @@ class StaffInvitation extends Model
     {
         return $this->belongsTo(Facility::class);
     }
+    
+     public function invitedByStaff()
+    {
+        return $this->belongsTo(Staff::class, 'invited_by_staff_id');
+    }
 
     /**
      * Get the department (if specified).

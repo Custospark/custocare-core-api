@@ -164,10 +164,10 @@ class StaffResource extends JsonResource
 
             // ===== Computed properties (kept) =====
             'is_active' => $this->employment_status === 'active',
-            'can_prescribe' => $this->canPrescribe(),
-            'has_expired_license' => $this->hasExpiredLicense(),
-            'has_expired_dea' => $this->hasExpiredDEA(),
-            'requires_credential_renewal' => $this->requiresCredentialRenewal(),
+            // 'can_prescribe' => $this->canPrescribe(),
+            // 'has_expired_license' => $this->hasExpiredLicense(),
+            // 'has_expired_dea' => $this->hasExpiredDEA(),
+            // 'requires_credential_renewal' => $this->requiresCredentialRenewal(),
         ];
     }
 }

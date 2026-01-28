@@ -34,9 +34,12 @@ class UpdateFacilityStaffRoleRequest extends FormRequest
         return [
             'facility_id' => 'sometimes|integer|exists:facilities,id',
             'staff_id' => 'sometimes|integer|exists:staff,id',
-          'role_code' => 'required|string',
+            'role_code' => 'nullable|string',
+            'department_ids' => 'nullable|array',
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'integer',
+            'module_code' => 'nullable|array',
+            'module_code.*' => 'string',
             'is_primary_facility' => 'sometimes|boolean',
             'privileges_bitmask' => 'nullable|array',
             'privileges_bitmask.*' => 'string',

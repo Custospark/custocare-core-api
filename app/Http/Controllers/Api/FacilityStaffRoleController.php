@@ -334,8 +334,10 @@ class FacilityStaffRoleController extends Controller
      * @param int $id
      * @return JsonResponse
      */
+    
     public function update(UpdateFacilityStaffRoleRequest $request, int $id): JsonResponse
     {
+        Log::alert($request);
         try {
             $validatedData = $request->validated();
             

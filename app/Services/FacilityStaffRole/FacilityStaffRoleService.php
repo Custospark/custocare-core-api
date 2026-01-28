@@ -5,6 +5,7 @@ namespace App\Services\FacilityStaffRole;
 use App\Models\FacilityStaffRole;
 use App\Models\Module;
 use App\Models\RoleModuleDefault;
+use App\Models\Staff;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use App\Support\HealthcareIdGenerator;
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -292,91 +294,149 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
     /**
      * Update an existing role assignment
      */
-    public function updateAssignment(int $id, array $data): array
-    {
-        // Get existing assignment
-        $assignment = $this->repository->findById($id);
-        
-        if (!$assignment) {
+     public function updateAssignment(int $id, array $data): array
+{
+    /**
+     * NOTE:
+     * The `$id` passed into this method is currently the facility ID (not the assignment ID).
+     * Therefore, we resolve the real assignment ID using the mandatory `facility_id` and `staff_id`
+     * from the payload.
+     */
+    if (!isset($data['facility_id'], $data['staff_id'])) {
+        return [
+            'success' => false,
+            'message' => 'facility_id and staff_id are required to update a role assignment.',
+            'errors'  => [
+                'facility_id' => ['The facility_id field is required.'],
+                'staff_id'    => ['The staff_id field is required.'],
+            ],
+            'data'    => null,
+        ];
+    }
+
+    $assignmentId = FacilityStaffRole::query()
+        ->where('facility_id', (int) $data['facility_id'])
+        ->where('staff_id', (int) $data['staff_id'])
+        ->value('id');
+
+    // 1) Fetch existing assignment
+    $assignment = $assignmentId ? $this->repository->findById((int) $assignmentId) : null;
+
+    if (!$assignment) {
+        return [
+            'success' => false,
+            'message' => 'Staff is not affiliated to this facility.',
+            'data'    => null,
+        ];
+    }
+
+    // 2) Parse JSON-ish fields early so all checks use normalized data
+    $data = $this->parseJsonFields($data);
+
+    // 3) Duplicate active assignment check (exclude current)
+    if (isset($data['facility_id'], $data['staff_id'], $data['role_code'], $data['effective_from'])) {
+        $duplicateExists = $this->repository->duplicateAssignmentExists(
+            (int) $data['facility_id'],
+            (int) $data['staff_id'],
+            (string) $data['role_code'],
+            (string) $data['effective_from'],
+            (int) $assignment->id // exclude current assignment ID
+        );
+
+        if ($duplicateExists) {
             return [
                 'success' => false,
-                'message' => 'Role assignment not found',
-                'data' => null
-            ];
-        }
-        
-        // Validate business rules
-        $validationResult = $this->validateAssignmentData($data, $id);
-        
-        if (!$validationResult['success']) {
-            return $validationResult;
-        }
-        
-        // Check for duplicate active assignments (excluding current)
-        if (isset($data['facility_id'], $data['staff_id'], $data['role_code'], $data['effective_from'])) {
-            $duplicateExists = $this->repository->duplicateAssignmentExists(
-                $data['facility_id'],
-                $data['staff_id'],
-                $data['role_code'],
-                $data['effective_from'],
-                $id
-            );
-            
-            if ($duplicateExists) {
-                return [
-                    'success' => false,
-                    'message' => 'An active assignment already exists for this staff member at this facility with the same role and effective date',
-                    'errors' => [
-                        'assignment' => ['Duplicate assignment detected']
-                    ]
-                ];
-            }
-        }
-        
-        DB::beginTransaction();
-        
-        try {
-            // Parse JSON fields if they're arrays
-            $data = $this->parseJsonFields($data);
-            
-            // Update the assignment
-            $updatedAssignment = $this->repository->update($assignment, $data);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'message' => 'Role assignment updated successfully',
-                'data' => $updatedAssignment
-            ];
-        } catch (\RuntimeException $e) {
-            DB::rollBack();
-            
-            return [
-                'success' => false,
-                'message' => $e->getMessage(),
-                'errors' => [
-                    'system' => ['Failed to update assignment']
-                ]
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            Log::error('Service: Failed to update assignment', [
-                'id' => $id,
-                'data' => $data,
-                'error' => $e->getMessage()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to update role assignment. Please try again.',
-                'errors' => [
-                    'system' => ['Internal server error']
-                ]
+                'message' => 'An active assignment already exists for this staff member at this facility with the same role and effective date',
+                'errors'  => [
+                    'assignment' => ['Duplicate assignment detected'],
+                ],
+                'data'    => null,
             ];
         }
     }
+
+    // 4) Guardrail: prevent self-lockout (facility-admin cannot remove Administration module from self)
+    if (array_key_exists('module_code', $data)) {
+        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+        $modules = array_values(array_filter(array_map('strval', $modules)));
+
+        // Resolve auth staff ID (adjust if your auth model differs)
+        $authStaffId = Staff::query()->where('user_id', Auth::id())->value('id');
+
+        // Prefer the role_code of the assignment being updated (most accurate)
+        $currentRoleCode = (string) ($assignment->role_code ?? '');
+
+        if (
+            $authStaffId &&
+            (int) $authStaffId === (int) $data['staff_id'] &&
+            $currentRoleCode === 'facility-administrator' &&
+            !in_array('administration', $modules, true)
+        ) {
+            return [
+                'success' => false,
+                'message' => 'You cannot remove Administration access from your own account.',
+                'errors'  => [
+                    'module_code' => [
+                        "Include 'administration' in your access to prevent you from losing control of your account.",
+                    ],
+                ],
+                'data'    => null,
+            ];
+        }
+    }
+
+    DB::beginTransaction();
+
+    try {
+        Log::info('Service: Updating role assignment', [
+            'assignment_id' => (int) $assignment->id,
+            'facility_id'   => (int) $data['facility_id'],
+            'staff_id'      => (int) $data['staff_id'],
+            'payload'       => $data,
+        ]);
+
+        $updatedAssignment = $this->repository->update($assignment, $data);
+
+        DB::commit();
+
+        return [
+            'success' => true,
+            'message' => 'Role assignment updated successfully',
+            'data'    => $updatedAssignment,
+        ];
+    } catch (\RuntimeException $e) {
+        DB::rollBack();
+
+        return [
+            'success' => false,
+            'message' => $e->getMessage(),
+            'errors'  => [
+                'system' => ['Failed to update assignment'],
+            ],
+            'data'    => null,
+        ];
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        Log::error('Service: Failed to update assignment', [
+            'assignment_id' => (int) $assignment->id,
+            'facility_id'   => $data['facility_id'] ?? null,
+            'staff_id'      => $data['staff_id'] ?? null,
+            'payload'       => $data,
+            'error'         => $e->getMessage(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to update role assignment. Please try again.',
+            'errors'  => [
+                'system' => ['Internal server error'],
+            ],
+            'data'    => null,
+        ];
+    }
+}
+
 
     /**
      * Delete a role assignment
@@ -670,7 +730,7 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
         $rules = [
             'facility_id' => 'required|integer|exists:facilities,id',
             'staff_id' => 'required|integer|exists:staff,id',
-            'role_code' => 'required|string|in:' . implode(',', FacilityStaffRole::ROLE_CODES),
+            'role_code' => 'nullable|string|exists:facility_roles,code',
             'department_ids' => 'nullable|array',
             'department_ids.*' => 'integer',
             'is_primary_facility' => 'boolean',
@@ -680,7 +740,7 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
             'shift_schedule' => 'nullable|array',
             'shift_type' => 'nullable|string|in:day,night,rotating,on_call,flexible',
             'hours_per_week' => 'nullable|integer|min:1|max:168',
-            'effective_from' => 'required|date',
+            'effective_from' => 'nullable|date',
             'effective_to' => 'nullable|date|after_or_equal:effective_from',
             'assignment_status' => 'nullable|string|in:active,on_leave,suspended,terminated',
             'facility_satisfaction_score' => 'nullable|numeric|min:0|max:5',

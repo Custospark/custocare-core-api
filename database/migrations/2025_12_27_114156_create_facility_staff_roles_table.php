@@ -32,6 +32,20 @@ return new class extends Migration
             $table->json('shift_schedule')->nullable()->comment('Weekly schedule for this facility');
             $table->enum('shift_type', ['day', 'night', 'rotating', 'on_call', 'flexible'])->nullable();
             $table->unsignedSmallInteger('hours_per_week')->nullable();
+              // Employment status
+            $table->enum('employment_status', [
+                'employed',
+                'suspended',
+                'unemployed',
+                'terminated',
+                'retired',
+                'credentialing_pending'
+            ])->default('employed')->index();
+            $table->enum('employment_type', ['full_time', 'part_time', 'contract', 'locum_tenens', 'volunteer'])->default('full_time');
+            $table->date('hire_date')->nullable();
+            $table->date('termination_date')->nullable();
+            $table->text('termination_reason')->nullable();
+
             
             // Effective period
             $table->date('effective_from')->index();

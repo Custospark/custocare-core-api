@@ -16,70 +16,42 @@ class FacilityStaffRole extends Model
      *
      * @var array<int, string>
      */
-    protected $fillable = [
-        'assignment_uuid',
-        'facility_id',
-        'staff_invitation_id',
-        'staff_id',
-        'employee_number',
-        'role_code',
-        'module_code',
-        'department_ids',
-        'is_primary_facility',
-        'privileges_bitmask',
-        'accessible_patient_populations',
-        'prescribing_authority_at_facility',
-        'shift_schedule',
-        'shift_type',
-        'hours_per_week',
-        'effective_from',
-        'effective_to',
-        'assignment_status',
-        'credentialing_completed_at',
-        'credentialed_by_staff_id',
-        'privileging_approved_at',
-        'next_reappointment_date',
-        'patients_treated_at_facility',
-        'facility_satisfaction_score',
-        'created_by_staff_id',
-        'metadata',
-    ];
+   protected $fillable = [
+    'assignment_uuid',
+    'facility_id',
+    'staff_invitation_id',
+    'staff_id',
+    // Employment (NEW)
+    'employee_number',
+    'employment_status',
+    'employment_type',
+    'hire_date',
+    'termination_date',
+    'termination_reason',
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
-    protected $casts = [
-        'assignment_uuid' => 'string',
-        'module_code' => 'array',
-        'department_ids' => 'array',
-        'is_primary_facility' => 'boolean',
-        'privileges_bitmask' => 'array',
-        'accessible_patient_populations' => 'array',
-        'prescribing_authority_at_facility' => 'array',
-        'shift_schedule' => 'array',
-        'hours_per_week' => 'integer',
-        'effective_from' => 'date',
-        'effective_to' => 'date',
-        'credentialing_completed_at' => 'datetime',
-        'privileging_approved_at' => 'datetime',
-        'next_reappointment_date' => 'datetime',
-        'patients_treated_at_facility' => 'integer',
-        'facility_satisfaction_score' => 'decimal:2',
-        'metadata' => 'array',
-        'deleted_at' => 'datetime',
-    ];
+    'role_code',
+    'module_code',
+    'department_ids',
+    'is_primary_facility',
+    'privileges_bitmask',
+    'accessible_patient_populations',
+    'prescribing_authority_at_facility',
+    'shift_schedule',
+    'shift_type',
+    'hours_per_week',
+    'effective_from',
+    'effective_to',
+    'assignment_status',
+    'credentialing_completed_at',
+    'credentialed_by_staff_id',
+    'privileging_approved_at',
+    'next_reappointment_date',
+    'patients_treated_at_facility',
+    'facility_satisfaction_score',
+    'created_by_staff_id',
+    'metadata',
+];
 
-    /**
-     * The attributes that should be mutated to dates.
-     *
-     * @var array<string>
-     */
-    protected $dates = [
-        'effective_from',
-        'effective_to',
-    ];
 
     /**
      * Role codes as constants for easy reference
@@ -113,6 +85,44 @@ class FacilityStaffRole extends Model
         'infection_control',
         'it_support'
     ];
+
+    protected $casts = [
+    'assignment_uuid' => 'string',
+    'module_code' => 'array',
+    'department_ids' => 'array',
+    'is_primary_facility' => 'boolean',
+
+    // Employment (NEW)
+    'employment_status' => 'string',
+    'employment_type' => 'string',
+    'hire_date' => 'date',
+    'termination_date' => 'date',
+
+    'privileges_bitmask' => 'array',
+    'accessible_patient_populations' => 'array',
+    'prescribing_authority_at_facility' => 'array',
+    'shift_schedule' => 'array',
+    'hours_per_week' => 'integer',
+    'effective_from' => 'date',
+    'effective_to' => 'date',
+    'credentialing_completed_at' => 'datetime',
+    'privileging_approved_at' => 'datetime',
+    'next_reappointment_date' => 'datetime',
+    'patients_treated_at_facility' => 'integer',
+    'facility_satisfaction_score' => 'decimal:2',
+    'metadata' => 'array',
+    'deleted_at' => 'datetime',
+    ];
+
+    protected $dates = [
+        'effective_from',
+        'effective_to',
+
+        // Employment (NEW)
+        'hire_date',
+        'termination_date',
+    ];
+
 
     /**
      * Assignment statuses as constants

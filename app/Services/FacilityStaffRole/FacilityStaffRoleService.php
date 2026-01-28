@@ -2,6 +2,7 @@
 
 namespace App\Services\FacilityStaffRole;
 
+use App\Models\FacilityOwner;
 use App\Models\FacilityStaffRole;
 use App\Models\Module;
 use App\Models\RoleModuleDefault;
@@ -319,71 +320,100 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
         ->where('staff_id', (int) $data['staff_id'])
         ->value('id');
 
-    // 1) Fetch existing assignment
-    $assignment = $assignmentId ? $this->repository->findById((int) $assignmentId) : null;
+        // 1) Fetch existing assignment
+        $assignment = $assignmentId ? $this->repository->findById((int) $assignmentId) : null;
 
-    if (!$assignment) {
-        return [
-            'success' => false,
-            'message' => 'Staff is not affiliated to this facility.',
-            'data'    => null,
-        ];
-    }
-
-    // 2) Parse JSON-ish fields early so all checks use normalized data
-    $data = $this->parseJsonFields($data);
-
-    // 3) Duplicate active assignment check (exclude current)
-    if (isset($data['facility_id'], $data['staff_id'], $data['role_code'], $data['effective_from'])) {
-        $duplicateExists = $this->repository->duplicateAssignmentExists(
-            (int) $data['facility_id'],
-            (int) $data['staff_id'],
-            (string) $data['role_code'],
-            (string) $data['effective_from'],
-            (int) $assignment->id // exclude current assignment ID
-        );
-
-        if ($duplicateExists) {
+        if (!$assignment) {
             return [
                 'success' => false,
-                'message' => 'An active assignment already exists for this staff member at this facility with the same role and effective date',
-                'errors'  => [
-                    'assignment' => ['Duplicate assignment detected'],
-                ],
+                'message' => 'Staff is not affiliated to this facility.',
                 'data'    => null,
             ];
         }
-    }
 
-    // 4) Guardrail: prevent self-lockout (facility-admin cannot remove Administration module from self)
-    if (array_key_exists('module_code', $data)) {
-        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
-        $modules = array_values(array_filter(array_map('strval', $modules)));
+        // 2) Parse JSON-ish fields early so all checks use normalized data
+        $data = $this->parseJsonFields($data);
 
-        // Resolve auth staff ID (adjust if your auth model differs)
-        $authStaffId = Staff::query()->where('user_id', Auth::id())->value('id');
+        // Resolve facility/staff (prefer payload, fallback to assignment)
+        $facilityId = (int) ($data['facility_id'] ?? $assignment->facility_id);
+        $targetStaffId = (int) ($data['staff_id'] ?? $assignment->staff_id);
 
-        // Prefer the role_code of the assignment being updated (most accurate)
-        $currentRoleCode = (string) ($assignment->role_code ?? '');
+        // Resolve auth staff ID 
+        $authStaffId = (int) (Staff::query()->where('user_id', Auth::id())->value('id') ?? 0);
 
-        if (
-            $authStaffId &&
-            (int) $authStaffId === (int) $data['staff_id'] &&
-            $currentRoleCode === 'facility-administrator' &&
-            !in_array('administration', $modules, true)
-        ) {
-            return [
-                'success' => false,
-                'message' => 'You cannot remove Administration access from your own account.',
-                'errors'  => [
-                    'module_code' => [
-                        "Include 'administration' in your access to prevent you from losing control of your account.",
+        // Are we editing our own assignment?
+        $isSelfEdit = $authStaffId > 0 && $authStaffId === $targetStaffId;
+
+        // Is this staff an owner of this facility?
+        $isFacilityOwner = FacilityOwner::query()
+            ->where('facility_id', $facilityId)
+            ->where('staff_id', $targetStaffId)
+            ->exists();
+
+        /**
+         * 2.1) Guardrail (Owners): owners must never lose Administration module access on self-edit.
+         * This fixes the pharmacist scenario: owner status is separate from role_code.
+         *
+         * Only enforce when module_code is being updated (PATCH-safe).
+         */
+        if ($isSelfEdit && $isFacilityOwner && array_key_exists('module_code', $data)) {
+            $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+            $modules = array_values(array_filter(array_map('strval', $modules)));
+
+            if (!in_array('administration', $modules, true)) {
+                return [
+                    'success' => false,
+                    'message' => 'You cannot remove Administration access from your own account.',
+                    'errors'  => [
+                        'module_code' => [
+                            "Include 'administration' in your access to prevent you from losing control of your account.",
+                        ],
                     ],
-                ],
-                'data'    => null,
-            ];
+                    'data'    => null,
+                ];
+            }
         }
-    }
+
+        /**
+         * 2.2) Guardrail (Owners): owners cannot set their own assignment_status to anything other than active.
+         * Only enforce if assignment_status is being updated (PATCH-safe).
+         */
+        if ($isSelfEdit && $isFacilityOwner && array_key_exists('assignment_status', $data)) {
+            if (($data['assignment_status'] ?? null) !== 'active') {
+                return [
+                    'success' => false,
+                    'message' => 'Facility owners must always have an active assignment.',
+                    'errors'  => [
+                        'assignment_status' => [
+                            "Invalid assignment_status. Facility owners can only be 'active'.",
+                        ],
+                    ],
+                    'data'    => null,
+                ];
+            }
+        }
+
+        // 3) Duplicate active assignment check (exclude current)
+        if (isset($data['facility_id'], $data['staff_id'], $data['role_code'], $data['effective_from'])) {
+            $duplicateExists = $this->repository->duplicateAssignmentExists(
+                (int) $data['facility_id'],
+                (int) $data['staff_id'],
+                (string) $data['role_code'],
+                (string) $data['effective_from'],
+                (int) $assignment->id // exclude current assignment ID
+            );
+
+            if ($duplicateExists) {
+                return [
+                    'success' => false,
+                    'message' => 'An active assignment already exists for this staff member at this facility with the same role and effective date',
+                    'errors'  => [
+                        'assignment' => ['Duplicate assignment detected'],
+                    ],
+                    'data'    => null,
+                ];
+            }
+        }
 
     DB::beginTransaction();
 

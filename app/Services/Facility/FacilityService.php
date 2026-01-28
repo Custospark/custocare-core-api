@@ -3,6 +3,7 @@
 namespace App\Services\Facility;
 
 use App\Models\Facility;
+use App\Models\FacilityOwner;
 use App\Repositories\Contracts\FacilityRepositoryInterface;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityServiceInterface;
@@ -200,11 +201,11 @@ class FacilityService implements FacilityServiceInterface
 
 
     /**
-     * Create Facility By Admin at UI Accountion
+     * Create Facility By Admin at UI Account creation.
      */
 
  
-    public function createFacilityByAdmin(array $data, int $actorUserId): Facility
+public function createFacilityByAdmin(array $data, int $actorUserId): Facility
 {
     return DB::transaction(function () use ($data, $actorUserId) {
 
@@ -242,11 +243,21 @@ class FacilityService implements FacilityServiceInterface
          * 4️⃣ Create Facility
          */
         $facility = $this->facilityRepository->create($data);
+        
+
+        /**
+         * 4.1️⃣ Create Facility Owner (creator becomes primary owner)
+         */
+        FacilityOwner::query()->create([
+            'facility_id'       => $facility->id,
+            'staff_id'          => $createdByStaffId,
+            'is_primary_owner'  => true,
+        ]);
 
         /**
          * 5️⃣ Assign Administrator Role
          */
-            $this->facilityStaffRoleService->createAssignment([
+        $this->facilityStaffRoleService->createAssignment([
             'facility_id'         => $facility->id,
             'staff_id'            => $createdByStaffId,
             'role_code'           => 'facility-administrator',
@@ -255,11 +266,11 @@ class FacilityService implements FacilityServiceInterface
             'effective_from'      => now()->toDateString(),
             'created_by_staff_id' => $createdByStaffId,
             'metadata' => [
-                'assigned_by' => 'system',
-                'assignment_reason' => 'facility_creator'
-            ]
+                'assigned_by'        => 'system',
+                'assignment_reason'  => 'facility_creator',
+                'owner_record_created' => true,
+            ],
         ]);
-
 
         return $facility;
     });

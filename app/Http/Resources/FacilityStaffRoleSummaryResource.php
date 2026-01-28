@@ -63,6 +63,10 @@ class FacilityStaffRoleSummaryResource extends JsonResource
             'role_at_facility'    => $this->formatRoleAtFacility($roleCode),
 
             'assignment_status'   => $this->assignment_status,
+            'employment_status'   => $this->employment_status,
+            'employment_type'   => $this->employment_type,
+            'assignment_status'   => $this->assignment_status,
+            'hire_date'   => $this->hire_date,
             'is_primary_facility' => (bool) $this->is_primary_facility,
 
             // ✅ now works (from JSON ids + map)

@@ -29,38 +29,67 @@ class UpdateFacilityStaffRoleRequest extends FormRequest
      *
      * @return array<string, mixed>
      */
-    public function rules(): array
-    {
-        return [
-            'facility_id' => 'sometimes|integer|exists:facilities,id',
-            'staff_id' => 'sometimes|integer|exists:staff,id',
-            'role_code' => 'nullable|string',
-            'department_ids' => 'nullable|array',
-            'department_ids' => 'nullable|array',
-            'department_ids.*' => 'integer',
-            'module_code' => 'nullable|array',
-            'module_code.*' => 'string',
-            'is_primary_facility' => 'sometimes|boolean',
-            'privileges_bitmask' => 'nullable|array',
-            'privileges_bitmask.*' => 'string',
-            'accessible_patient_populations' => 'nullable|array',
-            'accessible_patient_populations.*' => 'string',
-            'prescribing_authority_at_facility' => 'nullable|array',
-            'prescribing_authority_at_facility.*' => 'string',
-            'shift_schedule' => 'nullable|array',
-            'shift_type' => 'nullable|string|in:day,night,rotating,on_call,flexible',
-            'hours_per_week' => 'nullable|integer|min:1|max:168',
-            'effective_from' => 'sometimes|date',
-            'effective_to' => 'nullable|date|after_or_equal:effective_from',
-            'assignment_status' => 'sometimes|string|in:active,on_leave,suspended,terminated',
-            'credentialing_completed_at' => 'nullable|date',
-            'credentialed_by_staff_id' => 'nullable|integer|exists:staff,id',
-            'privileging_approved_at' => 'nullable|date',
-            'next_reappointment_date' => 'nullable|date',
-            'facility_satisfaction_score' => 'nullable|numeric|min:0|max:5',
-            'metadata' => 'nullable|array'
-        ];
-    }
+   public function rules(): array
+{
+    return [
+        'facility_id' => 'sometimes|integer|exists:facilities,id',
+        'staff_id' => 'sometimes|integer|exists:staff,id',
+
+        'role_code' => 'nullable|string',
+
+        // Departments
+        'department_ids' => 'nullable|array',
+        'department_ids.*' => 'integer',
+
+        // Modules
+        'module_code' => 'nullable|array',
+        'module_code.*' => 'string',
+
+        'is_primary_facility' => 'sometimes|boolean',
+
+        // Privileges / access
+        'privileges_bitmask' => 'nullable|array',
+        'privileges_bitmask.*' => 'string',
+
+        'accessible_patient_populations' => 'nullable|array',
+        'accessible_patient_populations.*' => 'string',
+
+        'prescribing_authority_at_facility' => 'nullable|array',
+        'prescribing_authority_at_facility.*' => 'string',
+
+        // Schedule (ADDED/CONFIRMED)
+        'shift_schedule' => 'nullable|array',
+        'shift_type' => 'nullable|string|in:day,night,rotating,on_call,flexible',
+        'hours_per_week' => 'nullable|integer|min:1|max:168',
+
+        // Employment (ADDED)
+        'employment_status' => 'sometimes|string|in:employed,suspended,unemployed,terminated,retired,credentialing_pending',
+        'employment_type' => 'sometimes|string|in:full_time,part_time,contract,locum_tenens,volunteer',
+        'hire_date' => 'nullable|date',
+        'termination_date' => 'nullable|date|after_or_equal:hire_date',
+        'termination_reason' => 'nullable|string',
+
+        // Effective period
+        'effective_from' => 'sometimes|date',
+        'effective_to' => 'nullable|date|after_or_equal:effective_from',
+
+        // Assignment status
+        'assignment_status' => 'sometimes|string|in:active,on_leave,suspended,terminated',
+
+        // Credentialing
+        'credentialing_completed_at' => 'nullable|date',
+        'credentialed_by_staff_id' => 'nullable|integer|exists:staff,id',
+        'privileging_approved_at' => 'nullable|date',
+        'next_reappointment_date' => 'nullable|date',
+
+        // Performance
+        'facility_satisfaction_score' => 'nullable|numeric|min:0|max:5',
+
+        // Misc
+        'metadata' => 'nullable|array',
+    ];
+}
+
 
     /**
      * Get custom messages for validator errors.
@@ -120,36 +149,34 @@ class UpdateFacilityStaffRoleRequest extends FormRequest
      *
      * @return void
      */
-    protected function prepareForValidation(): void
-    {
-        // Ensure boolean fields are properly cast
-        if ($this->has('is_primary_facility')) {
-            $this->merge([
-                'is_primary_facility' => filter_var($this->is_primary_facility, FILTER_VALIDATE_BOOLEAN)
-            ]);
-        }
+   protected function prepareForValidation(): void
+{
+    // Ensure boolean fields are properly cast
+    if ($this->has('is_primary_facility')) {
+        $this->merge([
+            'is_primary_facility' => filter_var($this->is_primary_facility, FILTER_VALIDATE_BOOLEAN),
+        ]);
+    }
 
-        // Ensure array fields are properly formatted
-        $arrayFields = [
-            'department_ids',
-            'privileges_bitmask',
-            'accessible_patient_populations',
-            'prescribing_authority_at_facility',
-            'shift_schedule',
-            'metadata'
-        ];
+    // Ensure array fields are properly formatted (JSON string -> array)
+    $arrayFields = [
+        'department_ids',
+        'module_code', // IMPORTANT: add this
+        'privileges_bitmask',
+        'accessible_patient_populations',
+        'prescribing_authority_at_facility',
+        'shift_schedule',
+        'metadata',
+    ];
 
-        foreach ($arrayFields as $field) {
-            if ($this->has($field) && is_string($this->input($field))) {
-                try {
-                    $decoded = json_decode($this->input($field), true);
-                    if (json_last_error() === JSON_ERROR_NONE) {
-                        $this->merge([$field => $decoded]);
-                    }
-                } catch (\Exception $e) {
-                    // Keep as is if JSON decoding fails
-                }
+    foreach ($arrayFields as $field) {
+        if ($this->has($field) && is_string($this->input($field))) {
+            $decoded = json_decode($this->input($field), true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $this->merge([$field => $decoded]);
             }
         }
     }
+}
+
 }

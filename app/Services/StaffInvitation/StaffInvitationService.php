@@ -66,47 +66,63 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     /**
      * Create a new staff invitation.
      */
-    public function createInvitation(array $data, $invitedByStaffId = null): StaffInvitation
-    {
-        // Add invited_by_staff_id if provided
-        if ($invitedByStaffId) {
-            $data['invited_by_staff_id'] = (int)$invitedByStaffId;
-        } 
-        $invitedByStaffId = Staff::where('user_id',Auth::id())->value('id'); 
-        if (!$invitedByStaffId) {
+   public function createInvitation(array $data, $invitedByStaffId = null): StaffInvitation
+{
+    // 1) Resolve inviter staff context
+    if ($invitedByStaffId) {
+        $data['invited_by_staff_id'] = (int) $invitedByStaffId;
+    } else {
+        $resolvedInviterStaffId = Staff::query()
+            ->where('user_id', Auth::id())
+            ->value('id');
+
+        if (!$resolvedInviterStaffId) {
             throw new \Exception('Inviter staff context not found.');
         }
-        // Prevent self-invitation into a facility
-        if ((int) $data['staff_id'] === (int) $invitedByStaffId) {
-            throw new \Exception('You cannot invite yourself to a facility.');
-        }        
-        // Check for duplicate pending/accepted invitations
-        $duplicateExists = $this->repository->duplicateExists(
-            $data['staff_id'],
-            $data['facility_id'],
-            $data['department_id'] ?? null
-        );
-        
-        if ($duplicateExists) {
-            throw new \Exception('An active invitation already exists for this staff member at the specified facility/department.');
-        }
-        
-        // Set default expiration (e.g., 7 days from now) if not provided
-        if (!isset($data['expires_at'])) {
-            $data['expires_at'] = now()->addDays(7);
-        }
-        
-        // Generate UUID if not provided
-        if (!isset($data['invitation_uuid'])) {
-            $data['invitation_uuid'] = Str::uuid();
-        }
-        
-        // Set sent timestamp
-        $data['sent_at'] = now();
-        Log::info($data);
-        
-        return $this->repository->create($data);
+
+        $data['invited_by_staff_id'] = (int) $resolvedInviterStaffId;
     }
+
+    // 2) Prevent self-invitation into a facility
+    if (isset($data['staff_id']) && (int) $data['staff_id'] === (int) $data['invited_by_staff_id']) {
+        throw new \Exception('You cannot invite yourself to a facility.');
+    }
+
+    // 3) Prevent duplicate pending/accepted invitations
+    $duplicateExists = $this->repository->duplicateExists(
+        $data['staff_id'],
+        $data['facility_id'],
+        $data['department_id'] ?? null
+    );
+
+    if ($duplicateExists) {
+        throw new \Exception(
+            'An active invitation already exists for this staff member at the specified facility/department.'
+        );
+    }
+
+    // 4) Defaults
+    $data['expires_at'] ??= now()->addDays(7);
+    $data['invitation_uuid'] ??= (string) Str::uuid();
+    $data['sent_at'] = now();
+
+    // 5) Always include 'account' module if module_code is provided
+    if (array_key_exists('module_code', $data)) {
+        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+
+        $data['module_code'] = array_values(array_unique(array_merge(
+            array_map('strval', $modules),
+            ['account']
+        )));
+    }
+
+    Log::info('Creating staff invitation', ['data' => $data]);
+        Log::alert(['Invitation data'=>$data]);
+
+
+    return $this->repository->create($data);
+}
+
 
     /**
      * Update an existing staff invitation.

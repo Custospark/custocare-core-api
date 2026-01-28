@@ -483,7 +483,7 @@ public function show(Request $request, int $id): JsonResponse
             ], JsonResponse::HTTP_NOT_FOUND);
         }
 
-        // ✅ FIX: Inject facility_id into request so StaffResource can access it
+        // ✅ Inject facility_id into request so StaffResource can access it
         $request->merge(['facility_id' => $facilityId]);
 
         // ✅ Load staff by ID

@@ -572,4 +572,296 @@ class StaffInvitationController extends Controller
         
         return 500;
     }
+
+    /**
+ * Batch resend multiple invitations.
+ */
+public function batchResend(Request $request): JsonResponse
+{
+    try {
+        $request->validate([
+            'invitation_ids' => 'required|array',
+            'invitation_ids.*' => 'required|integer|exists:staff_invitations,id',
+        ]);
+
+        $invitationIds = $request->input('invitation_ids');
+        $successful = [];
+        $failed = [];
+
+        foreach ($invitationIds as $invitationId) {
+            try {
+                // Check if invitation exists and can be resent
+                $invitation = StaffInvitation::findOrFail($invitationId);
+                
+                // Authorization check (uncomment when ready)
+                // $this->authorize('resend', $invitation);
+                
+                // Validate invitation status for resend
+                if (!$invitation->can_be_resent) {
+                    throw new \Exception("Invitation {$invitationId} cannot be resent (status: {$invitation->status})");
+                }
+                
+                // Resend invitation through service
+                $this->service->resendInvitation($invitationId);
+                $successful[] = $invitationId;
+                
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Invitation not found'
+                ];
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Not authorized to resend this invitation'
+                ];
+            } catch (\Exception $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => $e->getMessage()
+                ];
+            }
+        }
+
+        $totalRequested = count($invitationIds);
+        $successfulCount = count($successful);
+        $failedCount = count($failed);
+
+        Log::info('Batch resend invitations completed', [
+            'total_requested' => $totalRequested,
+            'successful_count' => $successfulCount,
+            'failed_count' => $failedCount,
+            'successful_ids' => $successful,
+            'failed_details' => $failed,
+        ]);
+
+        return $this->successResponse(
+            [
+                'successful' => $successful,
+                'failed' => $failed,
+            ],
+            "Successfully resent {$successfulCount} invitation(s)." . 
+            ($failedCount > 0 ? " Failed: {$failedCount}." : ''),
+            [
+                'total_requested' => $totalRequested,
+                'successful_count' => $successfulCount,
+                'failed_count' => $failedCount,
+            ]
+        );
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return $this->errorResponse(
+            'Validation failed.',
+            422,
+            $e->errors()
+        );
+    } catch (\Exception $e) {
+        Log::error('Failed to batch resend invitations', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'request_data' => $request->all()
+        ]);
+
+        return $this->errorResponse(
+            'Failed to process batch resend operation.',
+            500,
+            ['system' => 'An unexpected error occurred.']
+        );
+    }
+}
+
+/**
+ * Batch cancel multiple invitations.
+ */
+public function batchCancel(Request $request): JsonResponse
+{
+    try {
+        $request->validate([
+            'invitation_ids' => 'required|array',
+            'invitation_ids.*' => 'required|integer|exists:staff_invitations,id',
+        ]);
+
+        $invitationIds = $request->input('invitation_ids');
+        $successful = [];
+        $failed = [];
+
+        foreach ($invitationIds as $invitationId) {
+            try {
+                // Check if invitation exists and can be cancelled
+                $invitation = StaffInvitation::findOrFail($invitationId);
+                
+                // Authorization check (uncomment when ready)
+                // $this->authorize('cancel', $invitation);
+                
+                // Validate invitation status for cancellation
+                if (!$invitation->can_be_cancelled) {
+                    throw new \Exception("Invitation {$invitationId} cannot be cancelled (status: {$invitation->status})");
+                }
+                
+                // Cancel invitation through service
+                $this->service->cancelInvitation($invitationId);
+                $successful[] = $invitationId;
+                
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Invitation not found'
+                ];
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Not authorized to cancel this invitation'
+                ];
+            } catch (\Exception $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => $e->getMessage()
+                ];
+            }
+        }
+
+        $totalRequested = count($invitationIds);
+        $successfulCount = count($successful);
+        $failedCount = count($failed);
+
+        Log::info('Batch cancel invitations completed', [
+            'total_requested' => $totalRequested,
+            'successful_count' => $successfulCount,
+            'failed_count' => $failedCount,
+            'successful_ids' => $successful,
+            'failed_details' => $failed,
+        ]);
+
+        return $this->successResponse(
+            [
+                'successful' => $successful,
+                'failed' => $failed,
+            ],
+            "Successfully cancelled {$successfulCount} invitation(s)." . 
+            ($failedCount > 0 ? " Failed: {$failedCount}." : ''),
+            [
+                'total_requested' => $totalRequested,
+                'successful_count' => $successfulCount,
+                'failed_count' => $failedCount,
+            ]
+        );
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return $this->errorResponse(
+            'Validation failed.',
+            422,
+            $e->errors()
+        );
+    } catch (\Exception $e) {
+        Log::error('Failed to batch cancel invitations', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'request_data' => $request->all()
+        ]);
+
+        return $this->errorResponse(
+            'Failed to process batch cancel operation.',
+            500,
+            ['system' => 'An unexpected error occurred.']
+        );
+    }
+}
+
+/**
+ * Batch delete multiple invitations.
+ */
+public function batchDelete(Request $request): JsonResponse
+{
+    try {
+        $request->validate([
+            'invitation_ids' => 'required|array',
+            'invitation_ids.*' => 'required|integer|exists:staff_invitations,id',
+        ]);
+
+        $invitationIds = $request->input('invitation_ids');
+        $successful = [];
+        $failed = [];
+
+        foreach ($invitationIds as $invitationId) {
+            try {
+                // Check if invitation exists
+                $invitation = StaffInvitation::findOrFail($invitationId);
+                
+                // Authorization check (uncomment when ready)
+                // $this->authorize('delete', $invitation);
+                
+                // Validate invitation status for deletion
+                // Only allow deletion of declined or expired invitations
+                if (!in_array($invitation->status, ['declined', 'expired'])) {
+                    throw new \Exception("Invitation {$invitationId} cannot be deleted (status: {$invitation->status})");
+                }
+                
+                // Delete invitation through service
+                $this->service->deleteInvitation($invitationId);
+                $successful[] = $invitationId;
+                
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Invitation not found'
+                ];
+            } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => 'Not authorized to delete this invitation'
+                ];
+            } catch (\Exception $e) {
+                $failed[] = [
+                    'id' => $invitationId,
+                    'reason' => $e->getMessage()
+                ];
+            }
+        }
+
+        $totalRequested = count($invitationIds);
+        $successfulCount = count($successful);
+        $failedCount = count($failed);
+
+        Log::info('Batch delete invitations completed', [
+            'total_requested' => $totalRequested,
+            'successful_count' => $successfulCount,
+            'failed_count' => $failedCount,
+            'successful_ids' => $successful,
+            'failed_details' => $failed,
+        ]);
+
+        return $this->successResponse(
+            [
+                'successful' => $successful,
+                'failed' => $failed,
+            ],
+            "Successfully deleted {$successfulCount} invitation(s)." . 
+            ($failedCount > 0 ? " Failed: {$failedCount}." : ''),
+            [
+                'total_requested' => $totalRequested,
+                'successful_count' => $successfulCount,
+                'failed_count' => $failedCount,
+            ]
+        );
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return $this->errorResponse(
+            'Validation failed.',
+            422,
+            $e->errors()
+        );
+    } catch (\Exception $e) {
+        Log::error('Failed to batch delete invitations', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'request_data' => $request->all()
+        ]);
+
+        return $this->errorResponse(
+            'Failed to process batch delete operation.',
+            500,
+            ['system' => 'An unexpected error occurred.']
+        );
+    }
+}
 }

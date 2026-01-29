@@ -36,6 +36,7 @@ Route::prefix('staff-invitations')->middleware(['auth:sanctum'])->name('staff-in
         // Batch operations
         Route::post('/batch/resend', [StaffInvitationController::class, 'batchResend'])->name('batch.resend');
         Route::post('/batch/cancel', [StaffInvitationController::class, 'batchCancel'])->name('batch.cancel');
+        Route::post('/batch/delete', [StaffInvitationController::class, 'batchDelete'])->name('batch.delete');
         Route::post('/process-expired', [StaffInvitationController::class, 'processExpired'])->name('process.expired');
     });
 });

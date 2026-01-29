@@ -18,6 +18,8 @@ class StaffInvitationResource extends JsonResource
             'id' => $this->id,
             'invitation_uuid' => $this->invitation_uuid,
             'status' => $this->status,
+            'role_code' => $this->role_code,
+            'module_code' => $this->module_code,
             'sent_at' => $this->sent_at?->toIso8601String(),
             'responded_at' => $this->responded_at?->toIso8601String(),
             'expires_at' => $this->expires_at?->toIso8601String(),

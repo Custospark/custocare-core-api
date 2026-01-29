@@ -331,26 +331,70 @@ class StaffInvitationRepository implements StaffInvitationRepositoryInterface
     /**
      * Check if duplicate invitation exists.
      */
-    public function duplicateExists(int $staffId, int $facilityId, ?int $departmentId = null): bool
+    public function duplicateExists(
+        int $staffId, 
+        int $facilityId, 
+        ?int $departmentId = null,
+        bool $hasTerminatedAssignment = false
+    ): bool
     {
         try {
-            $query = StaffInvitation::where('staff_id', $staffId)
+            // If staff has a terminated assignment at this facility,
+            // we still check for duplicates but with different logic
+            if ($hasTerminatedAssignment) {
+                // For terminated staff, we allow ONE pending invitation at a time
+                // Check if there's already a pending invitation that hasn't expired
+                $query = StaffInvitation::query()
+                    ->where('staff_id', $staffId)
+                    ->where('facility_id', $facilityId)
+                    ->where('status', 'pending')
+                    ->where(function ($q) {
+                        $q->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                    });
+
+                if ($departmentId) {
+                    $query->where('department_id', $departmentId);
+                }
+
+                // Return true if there's already a valid pending invitation
+                // (We don't want multiple pending invites for terminated staff)
+                return $query->exists();
+            }
+
+            // For non-terminated cases (no assignment or different status)
+            // Original logic: check for accepted or valid pending invitations
+            $query = StaffInvitation::query()
+                ->where('staff_id', $staffId)
                 ->where('facility_id', $facilityId)
-                ->whereIn('status', ['pending', 'accepted']);
+                ->where(function ($q) {
+                    $q->where('status', 'accepted')
+                    ->orWhere(function ($sub) {
+                        $sub->where('status', 'pending')
+                            ->where(function ($expiry) {
+                                $expiry->whereNull('expires_at')
+                                        ->orWhere('expires_at', '>', now());
+                            });
+                    });
+                });
 
             if ($departmentId) {
                 $query->where('department_id', $departmentId);
             }
 
             return $query->exists();
+
         } catch (\Exception $e) {
-          Log::error('Failed to check for duplicate invitation', [
+            Log::error('Failed to check for duplicate invitation', [
                 'staff_id' => $staffId,
                 'facility_id' => $facilityId,
                 'department_id' => $departmentId,
+                'has_terminated_assignment' => $hasTerminatedAssignment,
                 'error' => $e->getMessage()
             ]);
-            return false;
+
+            return false; // On error, default to allowing the invitation
         }
     }
+
 }

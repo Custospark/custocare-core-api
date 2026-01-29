@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class FacilityRoleRepository 
 {
@@ -27,9 +28,8 @@ class FacilityRoleRepository
             ->paginate($perPage);
     }
 
-    public function findById(int $id): ?FacilityRole
-    {
-        return FacilityRole::find($id);
+    public function findById(int $id): ?FacilityRole {
+        return FacilityRole::findOrFail($id);
     }
 
     public function findByCode(string $code): ?FacilityRole

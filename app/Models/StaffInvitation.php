@@ -104,6 +104,11 @@ class StaffInvitation extends Model
     {
         return $this->belongsTo(FacilityStaffRole::class);
     }
+    public function canBeResent(): bool
+{
+    // Only pending invitations can be resent, and only if not expired
+    return $this->status === 'pending' && !$this->isExpired();
+}
 
     /**
      * Get the staff member who sent the invitation.
@@ -155,6 +160,12 @@ class StaffInvitation extends Model
             'status' => 'expired',
         ]);
     }
+
+        public function canBeCancelled(): bool
+    {
+        // Only pending invitations that have not expired should be cancellable
+        return $this->status === 'pending' && !$this->isExpired();
+}
     /**
      * Check if invitation can be accepted
      * 

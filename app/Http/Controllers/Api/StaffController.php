@@ -72,20 +72,23 @@ use Illuminate\Support\Facades\Auth;
 
             // ✅ Base staff query scoped to facility
             $staff = $this->staffService
-                ->getAllStaff($filters)
-                ->select('staff.*')
-                ->join('facility_staff_roles', 'facility_staff_roles.staff_id', '=', 'staff.id')
-                ->where('facility_staff_roles.facility_id', $facilityId)
-                ->distinct('staff.id')
-                ->with([
-                    'user',
-                    'facilityStaffRoles' => function ($q) use ($facilityId) {
-                        $q->where('facility_id', $facilityId);
-                    },
-                    'facilityStaffRoles.facility',
-                    'facilityStaffRoles.staff.user',
-                ])
-                ->paginate($perPage);
+                        ->getAllStaff($filters)
+                        ->select('staff.*')
+                        ->join('facility_staff_roles', 'facility_staff_roles.staff_id', '=', 'staff.id')
+                        ->where('facility_staff_roles.facility_id', $facilityId)
+                        ->whereIn('facility_staff_roles.assignment_status', ['active', 'on_leave', 'suspended'])
+                        ->distinct('staff.id')
+                        ->with([
+                            'user',
+                            'facilityStaffRoles' => function ($q) use ($facilityId) {
+                                $q->where('facility_id', $facilityId)
+                                ->whereIn('assignment_status', ['active', 'on_leave', 'suspended']);
+                            },
+                            'facilityStaffRoles.facility',
+                            'facilityStaffRoles.staff.user',
+                        ])
+                        ->paginate($perPage);
+
 
             /**
              * ✅ Build a department lookup map in ONE query

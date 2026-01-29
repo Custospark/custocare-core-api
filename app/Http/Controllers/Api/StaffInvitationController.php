@@ -578,6 +578,8 @@ class StaffInvitationController extends Controller
  */
 public function batchResend(Request $request): JsonResponse
 {
+
+        Log::alert($request);
     try {
         $request->validate([
             'invitation_ids' => 'required|array',
@@ -593,11 +595,11 @@ public function batchResend(Request $request): JsonResponse
                 // Check if invitation exists and can be resent
                 $invitation = StaffInvitation::findOrFail($invitationId);
                 
-                // Authorization check (uncomment when ready)
+                // Authorization check,later.
                 // $this->authorize('resend', $invitation);
                 
                 // Validate invitation status for resend
-                if (!$invitation->can_be_resent) {
+                if (!$invitation->canBeResent()) {
                     throw new \Exception("Invitation {$invitationId} cannot be resent (status: {$invitation->status})");
                 }
                 
@@ -690,11 +692,11 @@ public function batchCancel(Request $request): JsonResponse
                 // Check if invitation exists and can be cancelled
                 $invitation = StaffInvitation::findOrFail($invitationId);
                 
-                // Authorization check (uncomment when ready)
+                // Authorization check (uncomment later)
                 // $this->authorize('cancel', $invitation);
                 
                 // Validate invitation status for cancellation
-                if (!$invitation->can_be_cancelled) {
+                if (!$invitation->canBeCancelled()) {
                     throw new \Exception("Invitation {$invitationId} cannot be cancelled (status: {$invitation->status})");
                 }
                 

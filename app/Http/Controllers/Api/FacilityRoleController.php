@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Facility\UpdateFacilityRequest;
 use App\Http\Requests\FacilityRoles\StoreFacilityRoleRequest;
+use App\Http\Requests\FacilityRoles\UpdateFacilityRoleRequest;
 use App\Http\Resources\FacilityRoleResource;
+use App\Models\FacilityRole;
 use App\Services\FacilityRole\FacilityRoleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -170,7 +172,7 @@ class FacilityRoleController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateFacilityRequest $request, int $id): JsonResponse
+    public function update(UpdateFacilityRoleRequest $request, int $id): JsonResponse
     {
         try {
             $validatedData = $request->validated();
@@ -203,8 +205,11 @@ class FacilityRoleController extends Controller
      */
     public function destroy(int $id): JsonResponse
     {
+        Log::info($id);
         try {
-            $this->service->deleteRole($id);
+            // Find and delete the FacilityRole model
+            $facilityRole = FacilityRole::findOrFail($id);
+            $facilityRole->delete();
             
             return $this->successResponse(
                 null,

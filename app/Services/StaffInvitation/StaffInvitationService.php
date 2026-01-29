@@ -66,61 +66,98 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     /**
      * Create a new staff invitation.
      */
-   public function createInvitation(array $data, $invitedByStaffId = null): StaffInvitation
+    public function createInvitation(array $data, $invitedByStaffId = null): StaffInvitation
 {
-    // 1) Resolve inviter staff context
-    if ($invitedByStaffId) {
-        $data['invited_by_staff_id'] = (int) $invitedByStaffId;
-    } else {
-        $resolvedInviterStaffId = Staff::query()
-            ->where('user_id', Auth::id())
-            ->value('id');
+    return DB::transaction(function () use ($data, $invitedByStaffId) {
+        // 1) Resolve inviter staff context
+        if ($invitedByStaffId) {
+            $data['invited_by_staff_id'] = (int) $invitedByStaffId;
+        } else {
+            $resolvedInviterStaffId = Staff::query()
+                ->where('user_id', Auth::id())
+                ->value('id');
 
-        if (!$resolvedInviterStaffId) {
-            throw new \Exception('Inviter staff context not found.');
+            if (!$resolvedInviterStaffId) {
+                throw new \Exception('Inviter staff context not found.');
+            }
+
+            $data['invited_by_staff_id'] = (int) $resolvedInviterStaffId;
         }
 
-        $data['invited_by_staff_id'] = (int) $resolvedInviterStaffId;
-    }
+        // 2) Prevent self-invitation into a facility
+        if (isset($data['staff_id']) && (int) $data['staff_id'] === (int) $data['invited_by_staff_id']) {
+            throw new \Exception('You cannot invite yourself to a facility.');
+        }
 
-    // 2) Prevent self-invitation into a facility
-    if (isset($data['staff_id']) && (int) $data['staff_id'] === (int) $data['invited_by_staff_id']) {
-        throw new \Exception('You cannot invite yourself to a facility.');
-    }
+        $staffId = (int) $data['staff_id'];
+        $facilityId = (int) $data['facility_id'];
+        $departmentId = $data['department_id'] ?? null;
 
-    // 3) Prevent duplicate pending/accepted invitations
-    $duplicateExists = $this->repository->duplicateExists(
-        $data['staff_id'],
-        $data['facility_id'],
-        $data['department_id'] ?? null
-    );
+        // 3) Check existing assignment
+        $existingAssignment = FacilityStaffRole::query()
+            ->where('facility_id', $facilityId)
+            ->where('staff_id', $staffId)
+            ->whereNull('deleted_at')
+            ->latest('id')
+            ->first();
 
-    if ($duplicateExists) {
-        throw new \Exception(
-            'An active invitation already exists for this staff member at the specified facility/department.'
+        if ($existingAssignment) {
+            $activeStatuses = ['active', 'on_leave', 'suspended'];
+            $assignmentStatus = $existingAssignment->assignment_status;
+            
+            // Block if assignment is active/on_leave/suspended
+            if (in_array($assignmentStatus, $activeStatuses, true)) {
+                $statusDisplay = ucfirst(str_replace('_', ' ', $assignmentStatus));
+                throw new \Exception(
+                    "This staff member already has an active affiliation with your facility (status: {$statusDisplay})."
+                );
+            }
+            // If assignment is terminated, we need special handling for duplicate check
+            // Continue to duplicate check with terminated flag
+        }
+
+        // 4) Check for duplicate invitations with terminated assignment consideration
+        $hasTerminatedAssignment = $existingAssignment && $existingAssignment->assignment_status === 'terminated';
+        
+        $duplicateExists = $this->repository->duplicateExists(
+            $staffId,
+            $facilityId,
+            $departmentId,
+            $hasTerminatedAssignment
         );
-    }
 
-    // 4) Defaults
-    $data['expires_at'] ??= now()->addDays(7);
-    $data['invitation_uuid'] ??= (string) Str::uuid();
-    $data['sent_at'] = now();
+        if ($duplicateExists) {
+            $message = $hasTerminatedAssignment 
+                ? 'An invitation already exists for this terminated staff member. Please wait for their response.'
+                : 'An active invitation already exists for this staff member at the specified facility/department.';
+            
+            throw new \Exception($message);
+        }
 
-    // 5) Always include 'account' module if module_code is provided
-    if (array_key_exists('module_code', $data)) {
-        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+        // 5) Defaults
+        $data['expires_at'] ??= now()->addDays(7);
+        $data['invitation_uuid'] ??= (string) Str::uuid();
+        $data['sent_at'] = now();
 
-        $data['module_code'] = array_values(array_unique(array_merge(
-            array_map('strval', $modules),
-            ['account']
-        )));
-    }
+        // 6) Always include 'account' module if module_code is provided
+        if (array_key_exists('module_code', $data)) {
+            $modules = is_array($data['module_code']) ? $data['module_code'] : [];
 
-    Log::info('Creating staff invitation', ['data' => $data]);
-        Log::alert(['Invitation data'=>$data]);
+            $data['module_code'] = array_values(array_unique(array_merge(
+                array_map('strval', $modules),
+                ['account']
+            )));
+        }
 
+        Log::info('Creating staff invitation', [
+            'staff_id' => $staffId,
+            'facility_id' => $facilityId,
+            'invited_by' => $data['invited_by_staff_id'],
+            'has_terminated_assignment' => $hasTerminatedAssignment
+        ]);
 
-    return $this->repository->create($data);
+        return $this->repository->create($data);
+    });
 }
 
 
@@ -170,101 +207,122 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     /**
      * Accept an invitation.
      */
-    // public function acceptInvitation(int $id): array
-    // {
-    //     return DB::transaction(function () use ($id) {
-    //         $invitation = $this->repository->findById($id);
+
+   public function acceptInvitation(int $id): array
+{
+    return DB::transaction(function () use ($id) {
+        // 1. Fetch and lock the invitation row
+        $invitation = StaffInvitation::lockForUpdate()->find($id);
+        
+        if (!$invitation) {
+            throw new \Exception('Invitation not found.');
+        }
+        
+        // 2. Validate invitation can be accepted
+        if (!$invitation->canBeAccepted()) {
+            $message = $invitation->isExpired() 
+                ? 'This invitation has expired.' 
+                : 'This invitation cannot be accepted in its current state.';
+            throw new \Exception($message);
+        }
+
+        // 3. Check if staff already has an active assignment at this facility
+        $existingActiveAssignment = FacilityStaffRole::query()
+            ->where('facility_id', $invitation->facility_id)
+            ->where('staff_id', $invitation->staff_id)
+            ->whereIn('assignment_status', ['active', 'on_leave', 'suspended'])
+            ->first();
+
+        // 4. REJECT if staff already has an active assignment (active/on_leave/suspended)
+        if ($existingActiveAssignment) {
+            $statusDisplay = match($existingActiveAssignment->assignment_status) {
+                'active' => 'actively working',
+                'on_leave' => 'on leave',
+                'suspended' => 'suspended',
+                default => 'associated'
+            };
             
-    //         if (!$invitation) {
-    //             throw new \Exception('Invitation not found.');
-    //         }
+            throw new \Exception(
+                "The staff member is already {$statusDisplay} at this facility."
+            );
+        }
+
+        // 5. Check if staff has a terminated assignment at this facility
+        $existingTerminatedAssignment = FacilityStaffRole::query()
+            ->where('facility_id', $invitation->facility_id)
+            ->where('staff_id', $invitation->staff_id)
+            ->where('assignment_status', 'terminated')
+            ->first();
+
+        // 6. Handle terminated assignment or create new one
+        if ($existingTerminatedAssignment) {
+            $assignment = $this->reactivateTerminatedAssignment($existingTerminatedAssignment, $invitation);
+            $wasExisting = true;
+            $action = 'reactivated_terminated';
             
-    //         // Check if invitation can be accepted
-    //         if (!$invitation->canBeAccepted()) {
-    //             $message = $invitation->isExpired() 
-    //                 ? 'This invitation has expired.' 
-    //                 : 'This invitation cannot be accepted in its current state.';
-    //             throw new \Exception($message);
-    //         }
-            
-    //         // Update invitation status
-    //         $updatedInvitation = $this->repository->updateStatus($id, 'accepted');
-            
-    //         // Create facility-staff assignment
-    //         // $assignment = $this->facilityStaffService->createAssignment($updatedInvitation);
-            
-    //         return [
-    //             'invitation' => $updatedInvitation,
-    //             // 'assignment' => $assignment
-    //         ];
-    //     });
-    // }
-    public function acceptInvitation(int $id): array
-    {
-        return DB::transaction(function () use ($id) {
-            // 1. Fetch and lock the invitation row
-            $invitation = StaffInvitation::lockForUpdate()->find($id);
-            
-            if (!$invitation) {
-                throw new \Exception('Invitation not found.');
-            }
-            
-            // 2. Validate invitation can be accepted
-            if (!$invitation->canBeAccepted()) {
-                $message = $invitation->isExpired() 
-                    ? 'This invitation has expired.' 
-                    : 'This invitation cannot be accepted in its current state.';
-                throw new \Exception($message);
-            }
-            
-            // 3. Check if assignment already exists (idempotency check)
-            $existingAssignment = FacilityStaffRole::where('facility_id', $invitation->facility_id)
-                ->where('staff_id', $invitation->staff_id)
-                ->where('role_code', $invitation->role_code)
-                ->whereNull('effective_to')
-                ->first();
-            
-            if ($existingAssignment) {
-                // If assignment exists, just update invitation status
-                $invitation->update([
-                    'status' => 'accepted',
-                    'responded_at' => now(),
-                ]);
-                
-                return [
-                    'invitation' => $invitation->fresh(),
-                    'assignment' => $existingAssignment,
-                    'was_existing' => true
-                ];
-            }
-            
-            // 4. Create facility staff role assignment FIRST
-            $assignment = $this->createFacilityStaffRole($invitation);
-            
-            // 5. Update invitation status AFTER successful assignment creation
-            $invitation->update([
-                'status' => 'accepted',
-                'responded_at' => now(),
-            ]);
-            
-            // 6. Link the invitation to the assignment (optional but recommended)
-            $assignment->update([
-                'staff_invitation_id' => $invitation->id
-            ]);
-            
-            Log::info('Invitation accepted and staff assigned', [
+            Log::info('Reactivated terminated assignment with invitation data', [
                 'invitation_id' => $invitation->id,
                 'assignment_id' => $assignment->id,
                 'staff_id' => $invitation->staff_id,
                 'facility_id' => $invitation->facility_id,
+                'old_role_code' => $existingTerminatedAssignment->role_code,
+                'new_role_code' => $invitation->role_code,
             ]);
+        } else {
+            // 7. No existing assignment at all - CREATE new one
+            $assignment = $this->createFacilityStaffRole($invitation);
+            $wasExisting = false;
+            $action = 'created_new';
             
-            return [
-                'invitation' => $invitation->fresh(),
-                'assignment' => $assignment->fresh(),
-                'was_existing' => false
-            ];
-        });
+            Log::info('Created new facility assignment', [
+                'invitation_id' => $invitation->id,
+                'assignment_id' => $assignment->id,
+                'staff_id' => $invitation->staff_id,
+                'facility_id' => $invitation->facility_id,
+                'role_code' => $invitation->role_code,
+            ]);
+        }
+
+        // 8. Update invitation status AFTER successful assignment creation/update
+        $invitation->update([
+            'status' => 'accepted',
+            'responded_at' => now(),
+        ]);
+        
+        // 9. Link the invitation to the assignment
+        $assignment->update([
+            'staff_invitation_id' => $invitation->id
+        ]);
+        
+        return [
+            'invitation' => $invitation->fresh(),
+            'assignment' => $assignment->fresh(),
+            'was_existing' => $wasExisting,
+            'action' => $action
+        ];
+    });
+}
+
+    /**
+     * Reactivate a terminated assignment with new invitation data
+     */
+    private function reactivateTerminatedAssignment(FacilityStaffRole $assignment, StaffInvitation $invitation): FacilityStaffRole
+    {
+        $updateData = [
+            'role_code' => $invitation->role_code,
+            'assignment_status' => 'active',
+            'employment_status' => 'employed',
+            'effective_from' => now(),
+            'effective_to' => null,
+            'termination_date' => null,
+            'termination_reason' => null,
+            'staff_invitation_id' => $invitation->id,
+        ];
+        
+        // Update the assignment
+        $assignment->update($updateData);
+        
+        return $assignment;
     }
 
    /**
@@ -375,24 +433,7 @@ class StaffInvitationService implements StaffInvitationServiceInterface
                 return $invitation->fresh();
             });
         }
-    /**
-     * Decline an invitation.
-     */
-    // public function declineInvitation(int $id): StaffInvitation
-    // {
-    //     $invitation = $this->repository->findById($id);
-        
-    //     if (!$invitation) {
-    //         throw new \Exception('Invitation not found.');
-    //     }
-        
-    //     // Check if invitation can be declined
-    //     if (!$invitation->isPending()) {
-    //         throw new \Exception('Only pending invitations can be declined.');
-    //     }
-        
-    //     return $this->repository->updateStatus($id, 'declined');
-    // }
+   
 
     /**
      * Resend an invitation.

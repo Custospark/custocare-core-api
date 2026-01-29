@@ -18,7 +18,7 @@ class StoreFacilityRoleRequest extends FormRequest
         return true;
 
         // Later you can replace with:
-        // return auth()->user()->can('create', FacilityRole::class);
+        // return auth()->user()->can('create', \App\Models\FacilityRole::class);
     }
 
     /**
@@ -28,7 +28,23 @@ class StoreFacilityRoleRequest extends FormRequest
     {
         return [
             'name'           => 'required|string|max:255',
-            'code'           => 'nullable|string|max:100|unique:facility_roles,code',
+            'code'           => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) {
+                    $facilityId = $this->input('facility_id');
+                    
+                    // Check unique combination of code + facility_id
+                    $exists = \App\Models\FacilityRole::where('code', $value)
+                        ->where('facility_id', $facilityId)
+                        ->exists();
+                        
+                    if ($exists) {
+                        $fail('This role code already exists for the in your facility.');
+                    }
+                }
+            ],
             'description'    => 'nullable|string',
             'facility_id'    => 'nullable|exists:facilities,id',
             'is_system_role' => 'sometimes|boolean',
@@ -42,9 +58,29 @@ class StoreFacilityRoleRequest extends FormRequest
     {
         return [
             'name.required'      => 'Role name is required.',
-            'code.unique'        => 'This role code already exists.',
+            'code.required'      => 'Role code is required.',
+            'code.max'           => 'Role code may not be greater than 100 characters.',
             'facility_id.exists' => 'Selected facility does not exist.',
         ];
+    }
+
+    /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        // If facility_id is not provided, set it to null for system roles
+        if (!$this->has('facility_id')) {
+            $this->merge([
+                'facility_id' => null,
+            ]);
+        }
+        
+        // Trim string inputs
+        $this->merge([
+            'name' => trim($this->name),
+            'code' => trim($this->code),
+        ]);
     }
 
     /**

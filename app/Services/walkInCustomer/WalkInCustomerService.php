@@ -124,7 +124,7 @@ class WalkInCustomerService
                         'immutable' => true,
                         'purpose' => 'Anchor identity for facility-scoped walk-in patients',
                         'created_via' => 'SystemUserService::getOrCreateGlobalSystemUserWithTransaction',
-                        'created_at' => now()->toISOString(),
+                        // 'created_at' => now()->toISOString(),
                     ],
                 ]
             );
@@ -390,7 +390,7 @@ class WalkInCustomerService
 
                 'metadata' => json_encode([
                     'upgraded_from_walkin' => true,
-                    'upgraded_at' => now()->toISOString(),
+                    // 'upgraded_at' => now()->toISOString(),
                     'facility_id' => $facilityId,
                 ]),
 

@@ -55,6 +55,16 @@ class StaffSpaceAssignment extends Model
     {
         return $this->belongsTo(User::class, 'released_by_user_id');
     }
+    
+     public function assignedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_by_user_id');
+    }
+
+    public function releasedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'released_by_user_id');
+    }
 
     // Scopes
     public function scopeActive(Builder $query): Builder

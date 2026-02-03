@@ -5,18 +5,161 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StaffSpace\AssignStaffSpaceRequest;
 use App\Http\Resources\StaffSpaceAssignmentResource;
+use App\Http\Resources\FacilitySpaceResource;
 use App\Models\FacilitySpace;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Staff;
-use App\Models\FacilityStaffRole;
+use App\Models\StaffSpaceAssignment;
 use App\Services\StaffSpaceAssignmentService\StaffSpaceAssignmentService;
+use Illuminate\Support\Facades\DB;
 
 class StaffSpaceAssignmentController extends Controller
 {
     public function __construct(private StaffSpaceAssignmentService $service) {}
+
+    /**
+     * Get current occupancy for a facility (all spaces with their current assignments)
+     */
+    public function currentOccupancy(Request $request): JsonResponse
+    {
+        Log::info('Current occupancy request', ['query' => $request->all()]);
+
+        $validated = $request->validate([
+            'facility_id' => ['required', 'integer', 'min:1', 'exists:facilities,id'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'space_type' => ['nullable', 'string'],
+            'floor' => ['nullable', 'string'],
+            'building' => ['nullable', 'string'],
+            'search' => ['nullable', 'string'],
+            'status' => ['nullable', 'in:all,occupied,unoccupied'],
+        ]);
+
+        try {
+            $facilityId = (int) $validated['facility_id'];
+            $perPage = (int) ($validated['per_page'] ?? 20);
+            
+            $filters = [
+                'space_type' => $validated['space_type'] ?? null,
+                'floor' => $validated['floor'] ?? null,
+                'building' => $validated['building'] ?? null,
+                'search' => $validated['search'] ?? null,
+                'status' => $validated['status'] ?? 'all',
+            ];
+
+            // Get paginated spaces with their current assignments
+            $spaces = $this->service->listCurrentOccupancy($facilityId, $filters, $perPage);
+            
+            // Load staff resources efficiently for all assignments
+            $this->loadStaffResourcesForSpaces($spaces, $facilityId);
+
+            // Transform the spaces data
+            $transformedData = $spaces->getCollection()->map(function ($space) use ($facilityId) {
+                $currentAssignment = $space->currentAssignment;
+                
+                // Get staff role code from the pre-loaded relationship
+                $roleCode = null;
+                if ($currentAssignment && 
+                    $currentAssignment->relationLoaded('staff') && 
+                    $currentAssignment->staff && 
+                    $currentAssignment->staff->relationLoaded('facilityStaffRoles')) {
+                    
+                    $primaryRole = $currentAssignment->staff->facilityStaffRoles
+                        ->where('facility_id', $facilityId)
+                        ->where('assignment_status', 'active')
+                        ->first();
+                    
+                    $roleCode = $primaryRole ? $primaryRole->role_code : null;
+                }
+
+                // Get department information if available
+                $departmentInfo = null;
+                if ($currentAssignment && 
+                    $currentAssignment->relationLoaded('staff') && 
+                    $currentAssignment->staff &&
+                    $currentAssignment->staff->relationLoaded('facilityStaffRoles')) {
+                    
+                    $primaryRole = $currentAssignment->staff->facilityStaffRoles
+                        ->where('facility_id', $facilityId)
+                        ->where('assignment_status', 'active')
+                        ->first();
+                    
+                    if ($primaryRole && !empty($primaryRole->department_ids)) {
+                        $departmentsById = request('departmentsById', []);
+                        $deptId = is_array($primaryRole->department_ids) ? 
+                            ($primaryRole->department_ids[0] ?? null) : 
+                            $primaryRole->department_ids;
+                        
+                        if ($deptId && isset($departmentsById[$deptId])) {
+                            $departmentInfo = $departmentsById[$deptId];
+                        }
+                    }
+                }
+
+                return [
+                    'id' => $space->id,
+                    'name' => $space->name,
+                    'type' => $space->type,
+                    'floor' => $space->floor,
+                    'building' => $space->building,
+                    'is_active' => $space->is_active,
+                    'facility_id' => $space->facility_id,
+                    'is_occupied' => $space->is_occupied,
+                    'occupancy_count' => $space->occupancy_count,
+                    'current_assignment' => $currentAssignment ? [
+                        'id' => $currentAssignment->id,
+                        'staff_id' => $currentAssignment->staff_id,
+                        'staff' => $currentAssignment->relationLoaded('staff') && $currentAssignment->staff ? [
+                            'staff_id' => $currentAssignment->staff->id,
+                            'staff_uuid' => $currentAssignment->staff->staff_uuid,
+                            'employee_id' => $currentAssignment->staff->employee_id,
+                            'user' => $currentAssignment->staff->relationLoaded('user') && $currentAssignment->staff->user ? [
+                                'id' => $currentAssignment->staff->user->id,
+                                'first_name' => $currentAssignment->staff->user->first_name,
+                                'last_name' => $currentAssignment->staff->user->last_name,
+                                'full_name' => trim("{$currentAssignment->staff->user->first_name} {$currentAssignment->staff->user->last_name}"),
+                            ] : null,
+                            'role_code' => $roleCode,
+                            'department' => $departmentInfo,
+                        ] : null,
+                        'assigned_at' => $currentAssignment->assigned_at?->toISOString(),
+                        'released_at' => $currentAssignment->released_at?->toISOString(),
+                        'note' => $currentAssignment->note,
+                        'is_active' => $currentAssignment->is_active,
+                        'duration_minutes' => $currentAssignment->duration_minutes,
+                    ] : null,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Current occupancy retrieved successfully.',
+                'data' => $transformedData,
+                'meta' => [
+                    'facility_id' => $facilityId,
+                    'current_page' => $spaces->currentPage(),
+                    'last_page' => $spaces->lastPage(),
+                    'per_page' => $spaces->perPage(),
+                    'total' => $spaces->total(),
+                    'filters' => $filters,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error retrieving current occupancy', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'query' => $request->all(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve current occupancy.',
+                'data' => [],
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 
     /**
      * Get space by currently authenticated user.
@@ -35,6 +178,20 @@ class StaffSpaceAssignmentController extends Controller
             $facilityId = (int) $request->query('facility_id');
 
             $assignment = $this->service->getCurrentSpaceForStaff($staffId, $facilityId);
+            
+            // Load relationships if assignment exists
+            if ($assignment) {
+                $assignment->load([
+                    'space',
+                    'staff.user',
+                    'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                        $q->where('facility_id', $facilityId)
+                          ->where('assignment_status', 'active');
+                    },
+                    'assignedByUser',
+                    'releasedByUser',
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -81,6 +238,18 @@ class StaffSpaceAssignmentController extends Controller
                 note: $request->input('note')
             );
 
+            // Load relationships for the resource
+            $assignment->load([
+                'space',
+                'staff.user',
+                'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                    $q->where('facility_id', $facilityId)
+                      ->where('assignment_status', 'active');
+                },
+                'assignedByUser',
+                'releasedByUser',
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Space assigned successfully.',
@@ -126,6 +295,18 @@ class StaffSpaceAssignmentController extends Controller
                 note: $request->input('note')
             );
 
+            // Load relationships for the resource
+            $assignment->load([
+                'space',
+                'staff.user',
+                'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                    $q->where('facility_id', $facilityId)
+                      ->where('assignment_status', 'active');
+                },
+                'assignedByUser',
+                'releasedByUser',
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Space assigned successfully.',
@@ -167,7 +348,32 @@ class StaffSpaceAssignmentController extends Controller
             $staffId = $user->staff->id;
             $facilityId = (int) $request->input('facility_id');
 
-            $releasedAssignment = $this->service->releaseStaffSpace($staffId, $facilityId, $user->id);
+            // Get current assignment before releasing
+            $currentAssignment = $this->service->getCurrentSpaceForStaff($staffId, $facilityId);
+            
+            $this->service->releaseStaffSpace($staffId, $facilityId, $user->id);
+            
+            // Get the released assignment
+            $releasedAssignment = StaffSpaceAssignment::query()
+                ->where('staff_id', $staffId)
+                ->where('facility_id', $facilityId)
+                ->whereNotNull('released_at')
+                ->latest('released_at')
+                ->first();
+            
+            if ($releasedAssignment) {
+                // Load relationships for the resource
+                $releasedAssignment->load([
+                    'space',
+                    'staff.user',
+                    'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                        $q->where('facility_id', $facilityId)
+                          ->where('assignment_status', 'active');
+                    },
+                    'assignedByUser',
+                    'releasedByUser',
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -176,6 +382,7 @@ class StaffSpaceAssignmentController extends Controller
                 'meta' => [
                     'facility_id' => $facilityId,
                     'staff_id' => $staffId,
+                    'had_assignment' => $currentAssignment !== null,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -209,7 +416,32 @@ class StaffSpaceAssignmentController extends Controller
             $staffId = (int) $request->input('staff_id');
             $facilityId = (int) $request->input('facility_id');
 
-            $releasedAssignment = $this->service->releaseStaffSpace($staffId, $facilityId, Auth::id());
+            // Get current assignment before releasing
+            $currentAssignment = $this->service->getCurrentSpaceForStaff($staffId, $facilityId);
+            
+            $this->service->releaseStaffSpace($staffId, $facilityId, Auth::id());
+            
+            // Get the released assignment
+            $releasedAssignment = StaffSpaceAssignment::query()
+                ->where('staff_id', $staffId)
+                ->where('facility_id', $facilityId)
+                ->whereNotNull('released_at')
+                ->latest('released_at')
+                ->first();
+            
+            if ($releasedAssignment) {
+                // Load relationships for the resource
+                $releasedAssignment->load([
+                    'space',
+                    'staff.user',
+                    'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                        $q->where('facility_id', $facilityId)
+                          ->where('assignment_status', 'active');
+                    },
+                    'assignedByUser',
+                    'releasedByUser',
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
@@ -218,6 +450,7 @@ class StaffSpaceAssignmentController extends Controller
                 'meta' => [
                     'facility_id' => $facilityId,
                     'staff_id' => $staffId,
+                    'had_assignment' => $currentAssignment !== null,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -235,159 +468,86 @@ class StaffSpaceAssignmentController extends Controller
         }
     }
 
-   public function currentOccupancy(Request $request): JsonResponse
-{
-    Log::info('Current occupancy request', ['query' => $request->all()]);
-
-    $validated = $request->validate([
-        'facility_id' => ['required', 'integer', 'min:1', 'exists:facilities,id'],
-        'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
-        'space_type' => ['nullable', 'string'],
-        'floor' => ['nullable', 'string'],
-        'building' => ['nullable', 'string'],
-        'search' => ['nullable', 'string'],
-    ]);
-
-    try {
-        $facilityId = (int) $validated['facility_id'];
-        $perPage = (int) ($validated['per_page'] ?? 20);
-        
-        $filters = $request->only(['space_type', 'floor', 'building', 'search']);
-
-        // Get spaces with their current assignments using the service
-        $spaces = $this->service->listCurrentOccupancy($facilityId, $filters, $perPage);
-
-        // Preload staff data for all assignments to optimize queries
-        $this->loadStaffResourcesForSpaces($spaces, $facilityId);
-
-        // Check if $spaces is paginated or a collection
-        if ($spaces instanceof \Illuminate\Pagination\AbstractPaginator) {
-            // It's paginated - use pagination methods
-            $meta = [
-                'facility_id' => $facilityId,
-                'filters_applied' => $filters,
-                'current_page' => $spaces->currentPage(),
-                'last_page' => $spaces->lastPage(),
-                'per_page' => $spaces->perPage(),
-                'total' => $spaces->total(),
-                'occupied_spaces' => $spaces->where('current_assignment', '!=', null)->count(),
-                'available_spaces' => $spaces->where('current_assignment', null)->count(),
-            ];
-        } else {
-            // It's a collection - provide manual counts
-            $meta = [
-                'facility_id' => $facilityId,
-                'filters_applied' => $filters,
-                'current_page' => 1,
-                'last_page' => 1,
-                'per_page' => $perPage,
-                'total' => $spaces->count(),
-                'occupied_spaces' => $spaces->where('current_assignment', '!=', null)->count(),
-                'available_spaces' => $spaces->where('current_assignment', null)->count(),
-            ];
-        }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Current occupancy retrieved successfully.',
-            'data' => StaffSpaceAssignmentResource::collection($spaces),
-            'meta' => $meta,
-        ]);
-    } catch (\Throwable $e) {
-        Log::error('Error retrieving occupancy list', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
-            'query' => $request->all(),
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to retrieve occupancy list.',
-            'data' => [],
-        ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-    }
-}
-
     public function availableSpaces(Request $request): JsonResponse
-{
-    Log::info('Available spaces request', ['query' => $request->all()]);
+    {
+        Log::info('Available spaces request', ['query' => $request->all()]);
 
-    $validated = $request->validate([
-        'facility_id' => ['required', 'integer', 'min:1', 'exists:facilities,id'],
-        'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
-        'space_type' => ['nullable', 'string'],
-        'floor' => ['nullable', 'string'],
-        'building' => ['nullable', 'string'],
-        'search' => ['nullable', 'string'],
-    ]);
+        $validated = $request->validate([
+            'facility_id' => ['required', 'integer', 'min:1', 'exists:facilities,id'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'space_type' => ['nullable', 'string'],
+            'floor' => ['nullable', 'string'],
+            'building' => ['nullable', 'string'],
+            'search' => ['nullable', 'string'],
+        ]);
 
-    try {
-        $facilityId = (int) $validated['facility_id'];
-        $perPage = (int) ($validated['per_page'] ?? 20);
+        try {
+            $facilityId = (int) $validated['facility_id'];
+            $perPage = (int) ($validated['per_page'] ?? 20);
 
-        $query = FacilitySpace::query()
-            ->where('facility_id', $facilityId)
-            ->active()
-            ->unoccupied()
-            ->select([
-                'id',
-                'facility_id',
-                'name',
-                'type',
-                'floor',
-                'building',
-                'is_active',
+            $query = FacilitySpace::query()
+                ->where('facility_id', $facilityId)
+                ->active()
+                ->unoccupied()
+                ->select([
+                    'id',
+                    'facility_id',
+                    'name',
+                    'type',
+                    'floor',
+                    'building',
+                    'is_active',
+                ]);
+
+            // Optional filters (kept lightweight)
+            if (!empty($validated['space_type'])) {
+                $query->where('type', $validated['space_type']);
+            }
+
+            if (!empty($validated['floor'])) {
+                $query->where('floor', $validated['floor']);
+            }
+
+            if (!empty($validated['building'])) {
+                $query->where('building', $validated['building']);
+            }
+
+            if (!empty($validated['search'])) {
+                $term = trim((string) $validated['search']);
+                $query->where('name', 'like', "%{$term}%");
+            }
+
+            $spaces = $query
+                ->orderBy('building')
+                ->orderBy('floor')
+                ->orderBy('name')
+                ->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Available spaces retrieved successfully.',
+                'data' => $spaces->items(),
+                'meta' => [
+                    'facility_id' => $facilityId,
+                    'current_page' => $spaces->currentPage(),
+                    'last_page' => $spaces->lastPage(),
+                    'per_page' => $spaces->perPage(),
+                    'total' => $spaces->total(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error retrieving available spaces', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
-        // Optional filters (kept lightweight)
-        if (!empty($validated['space_type'])) {
-            $query->where('type', $validated['space_type']);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve available spaces.',
+                'data' => [],
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
-
-        if (!empty($validated['floor'])) {
-            $query->where('floor', $validated['floor']);
-        }
-
-        if (!empty($validated['building'])) {
-            $query->where('building', $validated['building']);
-        }
-
-        if (!empty($validated['search'])) {
-            $term = trim((string) $validated['search']);
-            $query->where('name', 'like', "%{$term}%");
-        }
-
-        $spaces = $query
-            ->orderBy('building')
-            ->orderBy('floor')
-            ->orderBy('name')
-            ->paginate($perPage);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Available spaces retrieved successfully.',
-            'data' => $spaces->items(),
-            'meta' => [
-                'facility_id' => $facilityId,
-                'current_page' => $spaces->currentPage(),
-                'last_page' => $spaces->lastPage(),
-                'per_page' => $spaces->perPage(),
-                'total' => $spaces->total(),
-            ],
-        ]);
-    } catch (\Throwable $e) {
-        Log::error('Error retrieving available spaces', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to retrieve available spaces.',
-            'data' => [],
-        ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
-}
 
     /**
      * GET /api/facilities/{facilityId}/staff-for-space-assignment
@@ -403,11 +563,13 @@ class StaffSpaceAssignmentController extends Controller
         $validated = $request->validate([
             'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
             'search' => ['nullable', 'string'],
+            'exclude_assigned' => ['nullable', 'boolean'],
         ]);
 
         try {
             $perPage = (int) ($validated['per_page'] ?? 20);
             $search = $validated['search'] ?? null;
+            $excludeAssigned = $validated['exclude_assigned'] ?? false;
 
             // Get staff with active assignments at the facility
             $staffQuery = Staff::query()
@@ -418,7 +580,7 @@ class StaffSpaceAssignmentController extends Controller
                     'users.first_name',
                     'users.last_name',
                     'facility_staff_roles.role_code',
-                    'facility_staff_roles.assignment_status'
+                    'facility_staff_roles.assignment_status',
                 ])
                 ->join('facility_staff_roles', function ($join) use ($facilityId) {
                     $join->on('facility_staff_roles.staff_id', '=', 'staff.id')
@@ -430,6 +592,17 @@ class StaffSpaceAssignmentController extends Controller
                 ->whereNull('staff.deleted_at')
                 ->whereNull('users.deleted_at')
                 ->distinct('staff.id');
+
+            // Exclude staff who already have an active space assignment
+            if ($excludeAssigned) {
+                $staffQuery->whereNotExists(function ($query) use ($facilityId) {
+                    $query->select(DB::raw(1))
+                        ->from('staff_space_assignments')
+                        ->whereColumn('staff_space_assignments.staff_id', 'staff.id')
+                        ->where('staff_space_assignments.facility_id', $facilityId)
+                        ->whereNull('staff_space_assignments.released_at');
+                });
+            }
 
             // Apply search if provided
             if ($search) {
@@ -469,6 +642,7 @@ class StaffSpaceAssignmentController extends Controller
                     'per_page' => $staff->perPage(),
                     'total' => $staff->total(),
                     'search_applied' => $search ? true : false,
+                    'exclude_assigned' => $excludeAssigned,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -487,87 +661,86 @@ class StaffSpaceAssignmentController extends Controller
         }
     }
 
- /**
- * Load staff resources for all assignments in the spaces collection
- */
-private function loadStaffResourcesForSpaces($spaces, int $facilityId): void
-{
-    // Handle both paginator and collection objects
-    $spaceItems = method_exists($spaces, 'items') 
-        ? $spaces->items()  // If it's a paginator, get the items
-        : $spaces;          // If it's already a collection, use as-is
-    
-    // Collect all staff IDs from current assignments
-    $staffIds = collect($spaceItems)
-        ->filter(function ($space) {
-            // Check if currentAssignment relationship is loaded and has data
-            return $space->relationLoaded('currentAssignment') && 
-                   $space->currentAssignment && 
-                   $space->currentAssignment->staff_id;
+    /**
+     * Load staff resources for all assignments in the spaces collection
+     */
+    private function loadStaffResourcesForSpaces($spaces, int $facilityId): void
+    {
+        // Handle both paginator and collection objects
+        $spaceItems = method_exists($spaces, 'items') 
+            ? $spaces->items()  // If it's a paginator, get the items
+            : $spaces;          // If it's already a collection, use as-is
+        
+        // Collect all staff IDs from current assignments
+        $staffIds = collect($spaceItems)
+            ->filter(function ($space) {
+                // Check if currentAssignment relationship is loaded and has data
+                return $space->relationLoaded('currentAssignment') && 
+                       $space->currentAssignment && 
+                       $space->currentAssignment->staff_id;
+            })
+            ->pluck('currentAssignment.staff_id')
+            ->unique()
+            ->values()
+            ->toArray();
+
+        if (empty($staffIds)) {
+            return;
+        }
+
+        // Load staff with their facility roles and user data
+        $staffWithRoles = Staff::with([
+            'user',
+            'facilityStaffRoles' => function ($q) use ($facilityId) {
+                $q->where('facility_id', $facilityId)
+                  ->where('assignment_status', 'active');
+            },
+        ])
+        ->whereIn('id', $staffIds)
+        ->get()
+        ->keyBy('id');
+
+        // Load department lookup map
+        $deptIds = $staffWithRoles->flatMap(function ($staff) {
+            return collect($staff->facilityStaffRoles ?? [])
+                ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
         })
-        ->pluck('currentAssignment.staff_id')
+        ->filter()
         ->unique()
         ->values()
         ->toArray();
 
-    if (empty($staffIds)) {
-        return;
-    }
+        $departmentsById = [];
+        if (!empty($deptIds)) {
+            $departmentsById = \App\Models\Department::query()
+                ->where('facility_id', $facilityId)
+                ->whereIn('id', $deptIds)
+                ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
+                ->keyBy('id')
+                ->map(fn ($d) => [
+                    'id' => $d->id,
+                    'department_uuid' => $d->department_uuid,
+                    'department_code' => $d->department_code,
+                    'department_name' => $d->department_name,
+                    'department_type' => $d->department_type,
+                ])
+                ->toArray();
+        }
 
-    // Load staff with their facility roles and user data
-    $staffWithRoles = Staff::with([
-        'user',
-        'facilityStaffRoles' => function ($q) use ($facilityId) {
-            $q->where('facility_id', $facilityId)
-              ->where('assignment_status', 'active');
-        },
-        'facilityStaffRoles.facility',
-    ])
-    ->whereIn('id', $staffIds)
-    ->get()
-    ->keyBy('id');
+        // Merge departments into request context for resources
+        request()->merge(['departmentsById' => $departmentsById]);
 
-    // Load department lookup map
-    $deptIds = $staffWithRoles->flatMap(function ($staff) {
-        return collect($staff->facilityStaffRoles ?? [])
-            ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
-    })
-    ->filter()
-    ->unique()
-    ->values()
-    ->toArray();
-
-    $departmentsById = [];
-    if (!empty($deptIds)) {
-        $departmentsById = \App\Models\Department::query()
-            ->where('facility_id', $facilityId)
-            ->whereIn('id', $deptIds)
-            ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
-            ->keyBy('id')
-            ->map(fn ($d) => [
-                'id' => $d->id,
-                'department_uuid' => $d->department_uuid,
-                'department_code' => $d->department_code,
-                'department_name' => $d->department_name,
-                'department_type' => $d->department_type,
-            ])
-            ->toArray();
-    }
-
-    // Merge departments into request context for resources
-    request()->merge(['departmentsById' => $departmentsById]);
-
-    // Attach staff data to each space's assignment
-    foreach ($spaceItems as $space) {
-        // Check if the space has a current assignment loaded and if we have the staff data
-        if ($space->relationLoaded('currentAssignment') && 
-            $space->currentAssignment && 
-            $space->currentAssignment->staff_id &&
-            isset($staffWithRoles[$space->currentAssignment->staff_id])) {
-            
-            // Attach the pre-loaded staff to the assignment
-            $space->currentAssignment->setRelation('staff', $staffWithRoles[$space->currentAssignment->staff_id]);
+        // Attach staff data to each space's assignment
+        foreach ($spaceItems as $space) {
+            // Check if the space has a current assignment loaded and if we have the staff data
+            if ($space->relationLoaded('currentAssignment') && 
+                $space->currentAssignment && 
+                $space->currentAssignment->staff_id &&
+                isset($staffWithRoles[$space->currentAssignment->staff_id])) {
+                
+                // Attach the pre-loaded staff to the assignment
+                $space->currentAssignment->setRelation('staff', $staffWithRoles[$space->currentAssignment->staff_id]);
+            }
         }
     }
-}
 }

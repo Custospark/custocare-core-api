@@ -296,6 +296,7 @@ class StaffSpaceAssignmentService
             return ['can_assign' => false, 'reason' => 'Space is not active.'];
         }
 
+       
 
         return ['can_assign' => true, 'reason' => null];
     }

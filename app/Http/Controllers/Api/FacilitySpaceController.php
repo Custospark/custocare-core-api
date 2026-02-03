@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\FacilitySpace\StoreFacilitySpaceRequest;
 use App\Http\Requests\FacilitySpace\UpdateFacilitySpaceRequest;
 use App\Models\FacilitySpace;
-use App\Services\FacilitySpaceService;
+use App\Services\FacilitySpaceService\FacilitySpaceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 

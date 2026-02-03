@@ -2,15 +2,18 @@
 
 namespace App\Services\Staff;
 
+use App\Models\Department;
 use App\Models\Staff;
 use App\Repositories\Contracts\StaffRepositoryInterface;
 use App\Services\Contracts\StaffServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request as HttpRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Str;
 
 class StaffService implements StaffServiceInterface
@@ -113,6 +116,80 @@ class StaffService implements StaffServiceInterface
         return $query; // ✅ Builder, NOT Collection
     }
 
+      /**
+     * Get paginated staff resources for a facility with applied filters
+     */
+    public  function getStaffResources(HttpRequest $request, array $validated): array
+    {
+        $facilityId = (int) $validated['facility_id'];
+        $perPage    = (int) ($validated['per_page'] ?? 20);
+
+        $filters = $request->only([
+            'employment_status',
+            'global_role_level',
+            'search',
+            'has_expired_license',
+        ]);
+
+        // ✅ Base staff query scoped to facility
+        
+        $staff = $this->getAllStaff($filters)
+                    ->select('staff.*')
+                    ->join('facility_staff_roles', 'facility_staff_roles.staff_id', '=', 'staff.id')
+                    ->where('facility_staff_roles.facility_id', $facilityId)
+                    ->whereIn('facility_staff_roles.assignment_status', ['active', 'on_leave', 'suspended'])
+                    ->distinct('staff.id')
+                    ->with([
+                        'user',
+                        'facilityStaffRoles' => function ($q) use ($facilityId) {
+                            $q->where('facility_id', $facilityId)
+                            ->whereIn('assignment_status', ['active', 'on_leave', 'suspended']);
+                        },
+                        'facilityStaffRoles.facility',
+                        'facilityStaffRoles.staff.user',
+                    ])
+                    ->paginate($perPage);
+
+        /**
+         * ✅ Build a department lookup map in ONE query
+         * Collect all department ids from the loaded facilityStaffRoles for this page.
+         */
+        $deptIds = collect($staff->items())
+            ->flatMap(function ($s) {
+                return collect($s->facilityStaffRoles ?? [])
+                    ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
+        $departmentsById = [];
+
+        if ($deptIds->isNotEmpty()) {
+            $departmentsById = Department::query()
+                ->where('facility_id', $facilityId)  // ✅ extra safety: enforce facility scope
+                ->whereIn('id', $deptIds->all())
+                ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
+                ->keyBy('id')
+                ->map(fn ($d) => [
+                    'id'              => $d->id,
+                    'department_uuid' => $d->department_uuid,
+                    'department_code' => $d->department_code,
+                    'department_name' => $d->department_name,
+                    'department_type' => $d->department_type,
+                ])
+                ->toArray();
+        }
+
+        // ✅ Inject the lookup map into request for resources
+        $request->merge(['departmentsById' => $departmentsById]);
+
+        return [
+            'staff'         => $staff,
+            'facility_id'   => $facilityId,
+            'filters'       => $filters,
+        ];
+    }
 
     public function getStaffQueryById(int $id)
     {

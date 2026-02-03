@@ -46,111 +46,53 @@ use Illuminate\Support\Facades\Auth;
             // $this->middleware('can:delete,staff')->only(['destroy']);
         }
 
-    public function index(Request $request): JsonResponse
+   public function index(Request $request): JsonResponse
     {
-        Log::info('Staff index request', ['query' => $request->all()]);
+    Log::info('Staff index request', ['query' => $request->all()]);
 
-        $validated = $request->validate([
-            'facility_id'          => ['required', 'integer', 'min:1'],
-            'per_page'             => ['nullable', 'integer', 'min:1', 'max:200'],
-            'employment_status'    => ['nullable', 'string'],
-            'global_role_level'    => ['nullable', 'string'],
-            'search'               => ['nullable', 'string'],
-            'has_expired_license'  => ['nullable'],
-        ]);
+    $validated = $request->validate([
+    'facility_id'          => ['required', 'integer', 'min:1'],
+    'per_page'             => ['nullable', 'integer', 'min:1', 'max:200'],
+    'employment_status'    => ['nullable', 'string'],
+    'global_role_level'    => ['nullable', 'string'],
+    'search'               => ['nullable', 'string'],
+    'has_expired_license'  => ['nullable'],
+    ]);
 
-        try {
-            $facilityId = (int) $validated['facility_id'];
-            $perPage    = (int) ($validated['per_page'] ?? 20);
+    try {
+    // Use the reusable method to get staff resources
+    $staffData = $this->staffService->getStaffResources($request, $validated);
 
-            $filters = $request->only([
-                'employment_status',
-                'global_role_level',
-                'search',
-                'has_expired_license',
-            ]);
+    $staff = $staffData['staff'];
 
-            // ✅ Base staff query scoped to facility
-            $staff = $this->staffService
-                        ->getAllStaff($filters)
-                        ->select('staff.*')
-                        ->join('facility_staff_roles', 'facility_staff_roles.staff_id', '=', 'staff.id')
-                        ->where('facility_staff_roles.facility_id', $facilityId)
-                        ->whereIn('facility_staff_roles.assignment_status', ['active', 'on_leave', 'suspended'])
-                        ->distinct('staff.id')
-                        ->with([
-                            'user',
-                            'facilityStaffRoles' => function ($q) use ($facilityId) {
-                                $q->where('facility_id', $facilityId)
-                                ->whereIn('assignment_status', ['active', 'on_leave', 'suspended']);
-                            },
-                            'facilityStaffRoles.facility',
-                            'facilityStaffRoles.staff.user',
-                        ])
-                        ->paginate($perPage);
+    return response()->json([
+        'success' => true,
+        'message' => 'Staff retrieved successfully.',
+        'data'    => StaffResource::collection($staff),
+        'meta'    => [
+            'facility_id'      => $staffData['facility_id'],
+            'filters_applied'  => $staffData['filters'],
+            'current_page'     => $staff->currentPage(),
+            'last_page'        => $staff->lastPage(),
+            'per_page'         => $staff->perPage(),
+            'total'            => $staff->total(),
+        ],
+    ]);
+    } catch (\Throwable $e) {
+    Log::error('Error retrieving staff list', [
+        'error' => $e->getMessage(),
+        'trace' => $e->getTraceAsString(),
+        'query' => $request->all(),
+    ]);
 
-
-            /**
-             * ✅ Build a department lookup map in ONE query
-             * Collect all department ids from the loaded facilityStaffRoles for this page.
-             */
-            $deptIds = collect($staff->items())
-                ->flatMap(function ($s) {
-                    return collect($s->facilityStaffRoles ?? [])
-                        ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
-                })
-                ->filter()
-                ->unique()
-                ->values();
-
-            $departmentsById = [];
-
-            if ($deptIds->isNotEmpty()) {
-                $departmentsById = Department::query()
-                    ->where('facility_id', $facilityId)  // ✅ extra safety: enforce facility scope
-                    ->whereIn('id', $deptIds->all())
-                    ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
-                    ->keyBy('id')
-                    ->map(fn ($d) => [
-                        'id'              => $d->id,
-                        'department_uuid' => $d->department_uuid,
-                        'department_code' => $d->department_code,
-                        'department_name' => $d->department_name,
-                        'department_type' => $d->department_type,
-                    ])
-                    ->toArray();
-            }
-
-            // ✅ Inject the lookup map into request for resources
-            $request->attributes->set('departmentsById', $departmentsById);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Staff retrieved successfully.',
-                'data'    => StaffResource::collection($staff),
-                'meta'    => [
-                    'facility_id'      => $facilityId,
-                    'filters_applied'  => $filters,
-                    'current_page'     => $staff->currentPage(),
-                    'last_page'        => $staff->lastPage(),
-                    'per_page'         => $staff->perPage(),
-                    'total'            => $staff->total(),
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            Log::error('Error retrieving staff list', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'query' => $request->all(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve staff list.',
-                'data'    => [],
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+    return response()->json([
+        'success' => false,
+        'message' => 'Failed to retrieve staff list.',
+        'data'    => [],
+    ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
     }
+    }
+
 
     
 

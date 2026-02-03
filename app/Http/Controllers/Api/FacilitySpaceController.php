@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\FacilitySpace\StoreFacilitySpaceRequest;
 use App\Http\Requests\FacilitySpace\UpdateFacilitySpaceRequest;
 use App\Models\FacilitySpace;
+use App\Models\StaffSpaceAssignment;
 use App\Services\FacilitySpaceService\FacilitySpaceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class FacilitySpaceController extends Controller
 {
@@ -66,12 +68,60 @@ class FacilitySpaceController extends Controller
         return response()->json(['data' => $space]);
     }
 
-    public function destroy(FacilitySpace $space): JsonResponse
-{
-    $this->service->deleteSpace($space);
+ public function destroy(FacilitySpace $space): JsonResponse
+    {
+        try {
+            // Check if space has active assignments
+            $activeAssignmentsCount = StaffSpaceAssignment::query()
+                ->where('space_id', $space->id)
+                ->whereNull('released_at')
+                ->count();
+            
+            if ($activeAssignmentsCount > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot delete space/room  with active staff assignments.',
+                    'errors' => [
+                        'space_id' => [
+                            'This space has ' . $activeAssignmentsCount . ' active staff assignment(s). ' .
+                            'Please release all staff from this space before deleting.'
+                        ]
+                    ]
+                ], JsonResponse::HTTP_CONFLICT); // 409 Conflict
+            }
+            
+            // Optionally: Check for any historical assignments before deletion
+            $totalAssignmentsCount = StaffSpaceAssignment::query()
+                ->where('space_id', $space->id)
+                ->count();
+            
+            // Soft delete the space
+            $space->delete();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Space deleted successfully.',
+                'meta' => [
+                    'space_id' => $space->id,
+                    'space_name' => $space->name,
+                    'had_historical_assignments' => $totalAssignmentsCount > 0,
+                    'historical_assignments_count' => $totalAssignmentsCount,
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Error deleting space', [
+                'space_id' => $space->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete space.',
+                'error' => config('app.debug') ? $e->getMessage() : 'An error occurred while deleting the space.'
+            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+}
 
-    return response()->json([
-        'message' => 'Space deleted successfully.'
-    ]);
-}
-}

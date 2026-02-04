@@ -50,4 +50,5 @@ require __DIR__.'/api_v1/module/_index.php';
 require __DIR__.'/api_v1/facilityRoles/_index.php';
 require __DIR__.'/api_v1/customerWalkIn/_index.php';
 require __DIR__.'/api_v1/facilitySpace/_index.php';
+require __DIR__.'/api_v1/staffPresence/_index.php';
 require __DIR__.'/api_v1/wards/_index.php';

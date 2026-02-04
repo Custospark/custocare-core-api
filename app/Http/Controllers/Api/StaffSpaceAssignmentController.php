@@ -226,7 +226,7 @@ class StaffSpaceAssignmentController extends Controller
 
         try {
             $user = $request->user();
-            $staffId = $user->staff->id;
+            $staffId = Staff::where('user_id',Auth::id())->value('id');
             $facilityId = (int) $request->input('facility_id');
             $spaceId = (int) $request->input('space_id');
 
@@ -345,7 +345,7 @@ class StaffSpaceAssignmentController extends Controller
 
         try {
             $user = Auth::user();
-            $staffId = $user->staff->id;
+            $staffId = Staff::where('user_id',Auth::id())->value('id');
             $facilityId = (int) $request->input('facility_id');
 
             // Get current assignment before releasing
@@ -549,10 +549,7 @@ class StaffSpaceAssignmentController extends Controller
         }
     }
 
-    /**
-     * GET /api/facilities/{facilityId}/staff-for-space-assignment
-     * Get staff members for space assignment (admin use)
-     */
+   
   /**
  * GET /api/facilities/{facilityId}/staff-for-space-assignment
  * Get staff members for space assignment (admin use)
@@ -688,86 +685,86 @@ public function getStaffForSpaceAssignment(Request $request, int $facilityId): J
     }
 }
 
-    /**
-     * Load staff resources for all assignments in the spaces collection
-     */
-    private function loadStaffResourcesForSpaces($spaces, int $facilityId): void
-    {
-        // Handle both paginator and collection objects
-        $spaceItems = method_exists($spaces, 'items') 
-            ? $spaces->items()  // If it's a paginator, get the items
-            : $spaces;          // If it's already a collection, use as-is
-        
-        // Collect all staff IDs from current assignments
-        $staffIds = collect($spaceItems)
-            ->filter(function ($space) {
-                // Check if currentAssignment relationship is loaded and has data
-                return $space->relationLoaded('currentAssignment') && 
-                       $space->currentAssignment && 
-                       $space->currentAssignment->staff_id;
-            })
-            ->pluck('currentAssignment.staff_id')
-            ->unique()
-            ->values()
-            ->toArray();
-
-        if (empty($staffIds)) {
-            return;
-        }
-
-        // Load staff with their facility roles and user data
-        $staffWithRoles = Staff::with([
-            'user',
-            'facilityStaffRoles' => function ($q) use ($facilityId) {
-                $q->where('facility_id', $facilityId)
-                  ->where('assignment_status', 'active');
-            },
-        ])
-        ->whereIn('id', $staffIds)
-        ->get()
-        ->keyBy('id');
-
-        // Load department lookup map
-        $deptIds = $staffWithRoles->flatMap(function ($staff) {
-            return collect($staff->facilityStaffRoles ?? [])
-                ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
+/**
+ * Load staff resources for all assignments in the spaces collection
+ */
+private function loadStaffResourcesForSpaces($spaces, int $facilityId): void
+{
+    // Handle both paginator and collection objects
+    $spaceItems = method_exists($spaces, 'items') 
+        ? $spaces->items()  // If it's a paginator, get the items
+        : $spaces;          // If it's already a collection, use as-is
+    
+    // Collect all staff IDs from current assignments
+    $staffIds = collect($spaceItems)
+        ->filter(function ($space) {
+            // Check if currentAssignment relationship is loaded and has data
+            return $space->relationLoaded('currentAssignment') && 
+                    $space->currentAssignment && 
+                    $space->currentAssignment->staff_id;
         })
-        ->filter()
+        ->pluck('currentAssignment.staff_id')
         ->unique()
         ->values()
         ->toArray();
 
-        $departmentsById = [];
-        if (!empty($deptIds)) {
-            $departmentsById = \App\Models\Department::query()
-                ->where('facility_id', $facilityId)
-                ->whereIn('id', $deptIds)
-                ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
-                ->keyBy('id')
-                ->map(fn ($d) => [
-                    'id' => $d->id,
-                    'department_uuid' => $d->department_uuid,
-                    'department_code' => $d->department_code,
-                    'department_name' => $d->department_name,
-                    'department_type' => $d->department_type,
-                ])
-                ->toArray();
-        }
+    if (empty($staffIds)) {
+        return;
+    }
 
-        // Merge departments into request context for resources
-        request()->merge(['departmentsById' => $departmentsById]);
+    // Load staff with their facility roles and user data
+    $staffWithRoles = Staff::with([
+        'user',
+        'facilityStaffRoles' => function ($q) use ($facilityId) {
+            $q->where('facility_id', $facilityId)
+                ->where('assignment_status', 'active');
+        },
+    ])
+    ->whereIn('id', $staffIds)
+    ->get()
+    ->keyBy('id');
 
-        // Attach staff data to each space's assignment
-        foreach ($spaceItems as $space) {
-            // Check if the space has a current assignment loaded and if we have the staff data
-            if ($space->relationLoaded('currentAssignment') && 
-                $space->currentAssignment && 
-                $space->currentAssignment->staff_id &&
-                isset($staffWithRoles[$space->currentAssignment->staff_id])) {
-                
-                // Attach the pre-loaded staff to the assignment
-                $space->currentAssignment->setRelation('staff', $staffWithRoles[$space->currentAssignment->staff_id]);
-            }
+    // Load department lookup map
+    $deptIds = $staffWithRoles->flatMap(function ($staff) {
+        return collect($staff->facilityStaffRoles ?? [])
+            ->flatMap(fn ($r) => is_array($r->department_ids) ? $r->department_ids : []);
+    })
+    ->filter()
+    ->unique()
+    ->values()
+    ->toArray();
+
+    $departmentsById = [];
+    if (!empty($deptIds)) {
+        $departmentsById = \App\Models\Department::query()
+            ->where('facility_id', $facilityId)
+            ->whereIn('id', $deptIds)
+            ->get(['id', 'department_uuid', 'department_code', 'department_name', 'department_type'])
+            ->keyBy('id')
+            ->map(fn ($d) => [
+                'id' => $d->id,
+                'department_uuid' => $d->department_uuid,
+                'department_code' => $d->department_code,
+                'department_name' => $d->department_name,
+                'department_type' => $d->department_type,
+            ])
+            ->toArray();
+    }
+
+    // Merge departments into request context for resources
+    request()->merge(['departmentsById' => $departmentsById]);
+
+    // Attach staff data to each space's assignment
+    foreach ($spaceItems as $space) {
+        // Check if the space has a current assignment loaded and if we have the staff data
+        if ($space->relationLoaded('currentAssignment') && 
+            $space->currentAssignment && 
+            $space->currentAssignment->staff_id &&
+            isset($staffWithRoles[$space->currentAssignment->staff_id])) {
+            
+            // Attach the pre-loaded staff to the assignment
+            $space->currentAssignment->setRelation('staff', $staffWithRoles[$space->currentAssignment->staff_id]);
         }
     }
+}
 }

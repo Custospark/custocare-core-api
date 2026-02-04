@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StaffPresence\UpdatePresenceRequest;
+use App\Models\FacilityStaffRole;
+use App\Models\Staff;
 use App\Services\StaffPresence\StaffPresenceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class StaffPresenceController extends Controller
 {
@@ -17,10 +20,7 @@ class StaffPresenceController extends Controller
      */
     public function myPresence(Request $request): JsonResponse
     {
-        $user = $request->user();
-
-        // You likely already have a way to resolve staff_id from auth user
-        $staffId = $user->staff->id; // adjust to your structure
+        $staffId =Staff::where('user_id',Auth::id())->value('id');
 
         $facilityId = (int) $request->query('facility_id');
 
@@ -36,8 +36,7 @@ class StaffPresenceController extends Controller
      */
     public function setMyPresence(UpdatePresenceRequest $request): JsonResponse
     {
-        $user = $request->user();
-        $staffId = $user->staff->id; // adjust
+        $staffId =Staff::where('user_id',Auth::id())->value('id');
         $facilityId = (int) $request->input('facility_id');
 
         $updatedBy = $request->input('updated_by', 'staff');
@@ -47,12 +46,12 @@ class StaffPresenceController extends Controller
             facilityId: $facilityId,
             status: $request->input('status'),
             updatedBy: $updatedBy,
-            updatedByUserId: $user->id,
+            updatedByUserId: Auth::id(),
             note: $request->input('note')
         );
 
         return response()->json([
-            'message' => 'Presence updated successfully.',
+            'message' => 'Work status updated successfully.',
             'data' => $presence,
         ]);
     }

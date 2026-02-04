@@ -16,7 +16,7 @@ class StoreFacilitySpaceRequest extends FormRequest
         return [
             'facility_id' => ['required', 'integer', 'exists:facilities,id'],
             'name' => ['required', 'string', 'max:120'],
-            'type' => ['required', 'in:consultation,triage,lab,theatre,ward'],
+            'type' => ['required', 'in:consultation,triage,lab,theatre,ward,pharmacy'],
             'floor' => ['nullable', 'string', 'max:50'],
             'building' => ['nullable', 'string', 'max:80'],
             'is_active' => ['nullable', 'boolean'],

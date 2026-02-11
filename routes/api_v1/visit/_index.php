@@ -11,6 +11,10 @@ Route::prefix('visits')->middleware(['auth:api','auth:sanctum'])->group(function
     Route::put('/{visit}', [VisitController::class, 'update'])->where('visit', '[a-f0-9-]{36}');
     Route::delete('/{visit}', [VisitController::class, 'destroy'])->where('visit', '[a-f0-9-]{36}');
     
+    //Handling patient forwarding or assigning staff to visit.
+    Route::post('/assign-staff',[VisitController::class, 'assignStaffToVisit']);
+    Route::get('/staff/forwarding', [VisitController::class, 'getStaffForPatientForwarding']);
+    
     // Restore soft-deleted visit
     Route::post('/{visit}/restore', [VisitController::class, 'restore'])->where('visit', '[a-f0-9-]{36}');
     Route::get('/my-queue', [VisitController::class, 'myQueue']);

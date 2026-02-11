@@ -3,7 +3,6 @@
 namespace App\Services\WalkInCustomer;
 
 use App\Models\Facility;
-use App\Models\FacilityStaffRole;
 use App\Models\FacilityWalkinCustomer;
 use App\Models\Patient;
 use App\Models\Staff;

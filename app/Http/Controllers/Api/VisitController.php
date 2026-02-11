@@ -10,6 +10,7 @@ use App\Http\Resources\VisitResource;
 use App\Http\Resources\VisitCollection;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
+use App\Models\StaffPresence;
 use App\Models\Visit;
 use App\Services\Contracts\VisitServiceInterface;
 use Illuminate\Container\Attributes\Auth as AttributesAuth;
@@ -18,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Facades\Auth as SupportFacadesAuth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 use function Illuminate\Log\log;
@@ -414,6 +416,495 @@ class VisitController extends Controller
             ], 500);
         }
     }
+    
+   
+   /**
+    * Forwarding patient to anoother staff member within the same facility.
+    */
+
+    public function assignStaffToVisit(Request $request): JsonResponse
+    {
+        try {
+            // ✅ Logical flow:
+            // 0) Resolve facility (header) + referring staff (auth user -> staff)
+            // 1) Validate input
+            // 2) Ensure visit exists and belongs to same facility
+            // 3) Ensure assigned staff exists
+            // 4) Ensure BOTH referring staff and assigned staff have ACTIVE FacilityStaffRole in SAME facility
+            // 5) Ensure assigned staff presence status is allowed
+            // 6) Update visit (assigned_staff_id, assigned_at, referring_provider_staff_id) safely
+
+           
+            $facilityId = (int) $request->header('X-Facility-Id');
+            if (!$facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing X-Facility-Id header.',
+                    'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                    'data' => [],
+                ], 422);
+            }
+
+            $validated = $request->validate([
+                'visit_id' => 'required|integer',
+                'assigned_staff_id' => 'required|integer',
+            ]);
+
+            $visitId = (int) $validated['visit_id'];
+            $assignedStaffId = (int) $validated['assigned_staff_id'];
+
+            // Resolve referring staff from authenticated user
+            $referringStaffId = Staff::query()->where('user_id', Auth::id())->value('id');
+            if (!$referringStaffId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff profile not found for this user.',
+                    'errors' => ['staff' => ['No staff record is linked to this account.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            // 3) Check assigned staff exists
+            $staffExists = Staff::query()->whereKey($assignedStaffId)->exists();
+            if (!$staffExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Assigned staff not found.',
+                    'errors' => ['assigned_staff_id' => ['No staff record exists for the provided assigned staff.']],
+                    'data' => [],
+                ], 404);
+            }
+
+            // 4) Ensure BOTH staff are ACTIVE in the SAME facility
+            $referringActive = FacilityStaffRole::query()
+                ->where('facility_id', $facilityId)
+                ->where('staff_id', $referringStaffId)
+                ->where('assignment_status', 'active')
+                ->whereDate('effective_from', '<=', now()->toDateString())
+                ->where(function ($q) {
+                    $q->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', now()->toDateString());
+                })
+                ->exists();
+
+            if (!$referringActive) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not assigned to this facility.',
+                    'errors' => ['facility' => ['No active facility assignment found for the referring staff.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            $assignedActive = FacilityStaffRole::query()
+                ->where('facility_id', $facilityId)
+                ->where('staff_id', $assignedStaffId)
+                ->where('assignment_status', 'active')
+                ->whereDate('effective_from', '<=', now()->toDateString())
+                ->where(function ($q) {
+                    $q->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', now()->toDateString());
+                })
+                ->exists();
+
+            if (!$assignedActive) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Assigned staff is not active in this facility.',
+                    'errors' => ['assigned_staff_id' => ['Assigned staff has no active assignment in this facility.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            // 5) Check assigned staff presence status is allowed
+            $presence = StaffPresence::query()
+                ->where('staff_id', $assignedStaffId)
+                ->orderByDesc('updated_at')
+                ->first();
+
+            if (!$presence || !in_array($presence->status, ['busy', 'on_duty'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff is not available for assignment.',
+                    'errors' => ['staff_presence' => ['Staff must be in status busy or on_duty to be assigned.']],
+                    'data' => [],
+                ], 422);
+            }
+
+            // 6) Update visit assignment (lock to avoid race conditions)
+            $visit = DB::transaction(function () use ($visitId, $facilityId, $assignedStaffId, $referringStaffId) {
+                $visit = Visit::query()->lockForUpdate()->find($visitId);
+
+                if (!$visit) {
+                    return null;
+                }
+
+                // Ensure visit belongs to the same facility
+                if ((int) $visit->facility_id !== (int) $facilityId) {
+                    // return a sentinel value to handle outside transaction cleanly
+                    return 'FACILITY_MISMATCH';
+                }
+
+                $visit->update([
+                    'assigned_staff_id' => $assignedStaffId,
+                    'assigned_at' => now(),
+                    'referring_provider_staff_id' => $referringStaffId,
+                ]);
+
+                return $visit->fresh();
+            });
+
+            if ($visit === 'FACILITY_MISMATCH') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Visit does not belong to this facility.',
+                    'errors' => ['visit_id' => ['The provided visit_id is not under the current facility scope.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            if (!$visit) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Visit not found.',
+                    'errors' => ['visit_id' => ['No visit record exists for the provided visit_id.']],
+                    'data' => [],
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => new VisitResource($visit),
+                'message' => 'Visit assigned successfully.',
+            ], 200);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+                'data' => [],
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Failed to assign staff to visit', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+    /**
+ * Get available staff for patient forwarding within the facility.
+ * 
+ * This method returns staff members who are:
+ * 1. Assigned to the current facility (active FacilityStaffRole)
+ * 2. Currently on duty or busy (from StaffPresence)
+ * 3. Not overloaded (optional future enhancement)
+ * 
+ * @param Request $request
+ * @return JsonResponse
+ */
+public function getStaffForPatientForwarding(Request $request): JsonResponse
+{
+    Log::error($request);
+    try {
+        // 1) Facility from header
+        $facilityId = (int) $request->header('X-Facility-Id');
+        
+        if (!$facilityId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Missing X-Facility-Id header.',
+                'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                'data' => [],
+            ], 422);
+        }
+        $castExcludeStaffId=(bool)$request->input('exclude_current_staff');
+        // 2) Optional filters from request
+        $filters = $request->validate([
+            'role_code' => 'nullable',
+            'department_id' => 'nullable|integer',
+            'presence_status' => 'nullable|in:on_duty,busy',
+            'search' => 'nullable|string|max:100',
+            'limit' => 'nullable|integer|min:1|max:100',
+            // 'exclude_current_staff' => 'nullable|boolean',
+        ]);
+
+        // 3) If exclude_current_staff is true, get current staff ID
+        // Use boolean() to cast 'exclude_current_staff' string to bool
+        $excludeCurrentStaff = $request->boolean('exclude_current_staff');
+
+        $excludeStaffId = null;
+        if ($excludeCurrentStaff) {
+            $userId = Auth::id();
+            $excludeStaffId = Staff::query()->where('user_id', $userId)->value('id');
+        }
+
+        // 4) Query to get staff available for forwarding
+        $staffList = Staff::query()
+            ->with(['user:id,first_name,last_name,display_name'])
+            ->select([
+                'staff.id',
+                'staff.staff_uuid',
+                'staff.professional_title',
+                'staff.global_role_level',
+                'staff.employee_id',
+                'staff.max_concurrent_patients',
+                'staff.total_patients_treated',
+            ])
+            // Join with users table for names
+            ->join('users', 'staff.user_id', '=', 'users.id')
+            // Join with facility_staff_roles to filter by current facility and active assignment
+            ->join('facility_staff_roles as fsr', function ($join) use ($facilityId) {
+                $join->on('staff.id', '=', 'fsr.staff_id')
+                    ->where('fsr.facility_id', $facilityId)
+                    ->where('fsr.assignment_status', 'active')
+                    ->whereDate('fsr.effective_from', '<=', now()->toDateString())
+                    ->where(function ($q) {
+                        $q->whereNull('fsr.effective_to')
+                            ->orWhereDate('fsr.effective_to', '>=', now()->toDateString());
+                    });
+            })
+            // Join with staff_presences to get current status
+            ->leftJoin('staff_presences as sp', function ($join) use ($facilityId) {
+                $join->on('staff.id', '=', 'sp.staff_id')
+                    ->where('sp.facility_id', $facilityId)
+                    ->whereNull('sp.ended_at');
+            })
+            // Optional: Join with staff_space_assignments for current space
+            ->leftJoin('staff_space_assignments as ssa', function ($join) use ($facilityId) {
+                $join->on('staff.id', '=', 'ssa.staff_id')
+                    ->where('ssa.facility_id', $facilityId)
+                    ->whereNull('ssa.released_at');
+            })
+            // Optional: Join with facility_spaces for space details
+            ->leftJoin('facility_spaces as fs', 'ssa.space_id', '=', 'fs.id')
+            // Apply filters
+            ->when($filters['role_code'] ?? null, function ($query, $roleCode) {
+                return $query->where('fsr.role_code', $roleCode);
+            })
+            ->when($filters['department_id'] ?? null, function ($query, $departmentId) {
+                return $query->whereJsonContains('fsr.department_ids', (int)$departmentId);
+            })
+            ->when($filters['presence_status'] ?? null, function ($query, $status) {
+                return $query->where('sp.status', $status);
+            }, function ($query) {
+                // Default: only show staff who are on_duty or busy
+                return $query->whereIn('sp.status', ['on_duty', 'busy']);
+            })
+            ->when($filters['search'] ?? null, function ($query, $search) {
+                return $query->where(function ($q) use ($search) {
+                    $q->where('users.first_name', 'LIKE', "%{$search}%")
+                        ->orWhere('users.last_name', 'LIKE', "%{$search}%")
+                        ->orWhere('users.display_name', 'LIKE', "%{$search}%")
+                        ->orWhere('staff.employee_id', 'LIKE', "%{$search}%");
+                });
+            })
+            ->when($excludeStaffId, function ($query, $staffId) {
+                return $query->where('staff.id', '!=', $staffId);
+            })
+            // Group by staff to avoid duplicates from multiple joins
+            ->groupBy([
+                'staff.id',
+                'staff.staff_uuid',
+                'staff.professional_title',
+                'staff.global_role_level',
+                'staff.employee_id',
+                'staff.max_concurrent_patients',
+                'staff.total_patients_treated',
+                'users.id',
+                'users.first_name',
+                'users.last_name',
+                'users.display_name',
+                'fsr.role_code',
+                'fsr.module_code',
+                'fsr.department_ids',
+                'sp.status',
+                'sp.started_at',
+                'fs.name',
+                'fs.type',
+                'fs.floor',
+            ])
+            // Select additional columns after grouping
+            ->addSelect([
+                'users.first_name',
+                'users.last_name',
+                'users.display_name',
+                'fsr.role_code',
+                'fsr.module_code',
+                'fsr.department_ids',
+                'sp.status as presence_status',
+                'sp.started_at as presence_started_at',
+                'fs.name as current_space_name',
+                'fs.type as current_space_type',
+                'fs.floor as current_space_floor',
+            ])
+            ->orderBy('users.first_name')
+            ->orderBy('users.last_name')
+            ->limit($filters['limit'] ?? 50)
+            ->get();
+
+        // 5) Transform the results
+        $transformedStaff = $staffList->map(function ($staff) use ($facilityId) {
+            // Calculate current workload (you might want to get actual current patient count)
+            $currentPatientCount = 0; // You can implement this based on your data
+            
+            // Determine availability status
+            $availability = $this->determineStaffAvailability(
+                $staff->presence_status,
+                $currentPatientCount,
+                $staff->max_concurrent_patients
+            );
+
+            return [
+                'staff_id' => $staff->id,
+                'staff_uuid' => $staff->staff_uuid,
+                'employee_id' => $staff->employee_id,
+                'professional_title' => $staff->professional_title,
+                'global_role_level' => $staff->global_role_level,
+                
+                // User information
+                'first_name' => $staff->first_name,
+                'last_name' => $staff->last_name,
+                'display_name' => $staff->display_name,
+                'full_name' => trim("{$staff->first_name} {$staff->last_name}"),
+                
+                // Facility role information
+                'role_code' => $staff->role_code,
+                'module_code' => $staff->module_code,
+                'department_ids' => $staff->department_ids,
+                
+                // Presence information
+                'presence_status' => $staff->presence_status,
+                'presence_started_at' => $staff->presence_started_at,
+                'is_available' => $availability['is_available'],
+                'availability_reason' => $availability['reason'],
+                
+                // Space information
+                'current_space' => $staff->current_space_name ? [
+                    'name' => $staff->current_space_name,
+                    'type' => $staff->current_space_type,
+                    'floor' => $staff->current_space_floor,
+                ] : null,
+                
+                // Workload metrics
+                'max_concurrent_patients' => $staff->max_concurrent_patients,
+                'current_patient_count' => $currentPatientCount,
+                'total_patients_treated' => $staff->total_patients_treated,
+                'workload_percentage' => $staff->max_concurrent_patients > 0 
+                    ? round(($currentPatientCount / $staff->max_concurrent_patients) * 100, 2)
+                    : 0,
+            ];
+        });
+
+        // 6) Group by availability status for better UI presentation
+        $groupedStaff = [
+            'available' => $transformedStaff->where('is_available', true)->values(),
+            'busy' => $transformedStaff->where('presence_status', 'busy')->where('is_available', false)->values(),
+            'other' => $transformedStaff->where('is_available', false)->where('presence_status', '!=', 'busy')->values(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'staff' => $transformedStaff,
+                'grouped' => $groupedStaff,
+                'summary' => [
+                    'total' => $transformedStaff->count(),
+                    'available' => $groupedStaff['available']->count(),
+                    'busy' => $groupedStaff['busy']->count(),
+                    'other' => $groupedStaff['other']->count(),
+                ],
+            ],
+            'meta' => [
+                'facility_id' => $facilityId,
+                'filters_applied' => $filters,
+                'excluded_current_staff' => $excludeStaffId,
+            ],
+            'message' => 'Staff list retrieved successfully.',
+        ], 200);
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed.',
+            'errors' => $e->errors(),
+            'data' => [],
+        ], 422);
+    } catch (\Exception $e) {
+        Log::error('Failed to retrieve staff for patient forwarding', [
+            'facility_id' => $facilityId,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'An unexpected error occurred. Please try again later.',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
+    }
+}
+
+/**
+ * Helper method to determine staff availability based on presence and workload.
+ * 
+ * @param string $presenceStatus
+ * @param int $currentPatientCount
+ * @param int $maxConcurrentPatients
+ * @return array
+ */
+private function determineStaffAvailability(string $presenceStatus, int $currentPatientCount, int $maxConcurrentPatients): array
+{
+    // If staff is not on duty or busy, they're not available
+    if (!in_array($presenceStatus, ['on_duty', 'busy'])) {
+        return [
+            'is_available' => false,
+            'reason' => 'Staff is not on duty',
+        ];
+    }
+
+    // If staff is busy, they might still be available for high-priority cases
+    if ($presenceStatus === 'busy') {
+        return [
+            'is_available' => true, // Busy staff can still accept patients in emergency
+            'reason' => 'Staff is busy but can accept urgent cases',
+        ];
+    }
+
+    // Check workload capacity
+    if ($maxConcurrentPatients > 0 && $currentPatientCount >= $maxConcurrentPatients) {
+        return [
+            'is_available' => false,
+            'reason' => 'Staff has reached maximum patient capacity',
+        ];
+    }
+
+    // Calculate workload percentage
+    $workloadPercentage = $maxConcurrentPatients > 0 
+        ? ($currentPatientCount / $maxConcurrentPatients) * 100 
+        : 0;
+
+    // If workload is high (over 80%), mark as less available
+    if ($workloadPercentage > 80) {
+        return [
+            'is_available' => true,
+            'reason' => 'Staff has high workload',
+        ];
+    }
+
+    // Default: available
+    return [
+        'is_available' => true,
+        'reason' => 'Available for assignment',
+    ];
+}
+
 
     /**
      * Remove the specified visit.

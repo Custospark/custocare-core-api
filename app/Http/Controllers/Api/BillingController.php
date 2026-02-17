@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Billing\FinalizeBillingRequest;
 use App\Http\Requests\Billing\GetBillingRequest;
+use App\Services\Billing\BillingService;
 use App\Services\Contracts\BillingServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,7 +23,7 @@ class BillingController extends Controller
     /**
      * Billing service instance
      *
-     * @var BillingServiceInterface
+     * @var BillingService
      */
     protected $billingService;
 
@@ -31,7 +32,7 @@ class BillingController extends Controller
      *
      * @param BillingServiceInterface $billingService
      */
-    public function __construct(BillingServiceInterface $billingService)
+    public function __construct(BillingService $billingService)
     {
         $this->billingService = $billingService;
     }
@@ -46,6 +47,7 @@ class BillingController extends Controller
      */
     public function finalize(FinalizeBillingRequest $request): JsonResponse
     {
+        Log::alert($request);
         try {
             // 1) Get facility from header
             $facilityId = (int) $request->header('X-Facility-Id');

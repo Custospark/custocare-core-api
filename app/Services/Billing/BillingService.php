@@ -5,7 +5,6 @@ namespace App\Services\Billing;
 use App\Models\BillingCycle;
 use App\Models\InvoiceLineItem;
 use App\Models\Visit;
-use App\Services\Contracts\BillingServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -15,7 +14,7 @@ use Illuminate\Support\Str;
  *
  * Handles business logic for billing operations
  */
-class BillingService implements BillingServiceInterface
+class BillingService
 {
     /**
      * Finalize billing and persist to database

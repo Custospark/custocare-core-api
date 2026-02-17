@@ -53,3 +53,4 @@ require __DIR__.'/api_v1/facilitySpace/_index.php';
 require __DIR__.'/api_v1/staffPresence/_index.php';
 require __DIR__.'/api_v1/wards/_index.php';
 require __DIR__.'/api_v1/billableItems/_index.php';
+require __DIR__.'/api_v1/billing/_index.php';

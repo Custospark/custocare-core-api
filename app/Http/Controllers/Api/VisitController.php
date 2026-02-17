@@ -624,7 +624,14 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'data' => [],
             ], 422);
         }
-        $castExcludeStaffId=(bool)$request->input('exclude_current_staff');
+
+        // Cast exclude_current_staff to boolean before validation
+        if ($request->has('exclude_current_staff')) {
+            $request->merge([
+                'exclude_current_staff' => filter_var($request->input('exclude_current_staff'), FILTER_VALIDATE_BOOLEAN)
+            ]);
+        }
+
         // 2) Optional filters from request
         $filters = $request->validate([
             'role_code' => 'nullable',
@@ -632,18 +639,17 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             'presence_status' => 'nullable|in:on_duty,busy',
             'search' => 'nullable|string|max:100',
             'limit' => 'nullable|integer|min:1|max:100',
-            // 'exclude_current_staff' => 'nullable|boolean',
+            'exclude_current_staff' => 'nullable|boolean',
         ]);
 
-        // 3) If exclude_current_staff is true, get current staff ID
-        // Use boolean() to cast 'exclude_current_staff' string to bool
-        $excludeCurrentStaff = $request->boolean('exclude_current_staff');
-
-        $excludeStaffId = null;
-        if ($excludeCurrentStaff) {
-            $userId = Auth::id();
-            $excludeStaffId = Staff::query()->where('user_id', $userId)->value('id');
-        }
+        // 3) Get current user ID and exclude this user's staff record(s)
+        $userId = Auth::id();
+        
+        // Get ALL staff IDs that belong to the current user
+        $excludeStaffIds = Staff::query()
+            ->where('user_id', $userId)
+            ->pluck('id')
+            ->toArray();
 
         // 4) Query to get staff available for forwarding
         $staffList = Staff::query()
@@ -684,6 +690,18 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             })
             // Optional: Join with facility_spaces for space details
             ->leftJoin('facility_spaces as fs', 'ssa.space_id', '=', 'fs.id')
+            // ALWAYS exclude the current user's staff records
+            ->when(!empty($excludeStaffIds), function ($query) use ($excludeStaffIds) {
+                return $query->whereNotIn('staff.id', $excludeStaffIds);
+            })
+            // Also handle the optional exclude_current_staff flag for backward compatibility
+            ->when(
+                isset($filters['exclude_current_staff']) && $filters['exclude_current_staff'] === true && !empty($excludeStaffIds), 
+                function ($query) use ($excludeStaffIds) {
+                    // This is redundant now but kept for clarity
+                    return $query->whereNotIn('staff.id', $excludeStaffIds);
+                }
+            )
             // Apply filters
             ->when($filters['role_code'] ?? null, function ($query, $roleCode) {
                 return $query->where('fsr.role_code', $roleCode);
@@ -704,9 +722,6 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                         ->orWhere('users.display_name', 'LIKE', "%{$search}%")
                         ->orWhere('staff.employee_id', 'LIKE', "%{$search}%");
                 });
-            })
-            ->when($excludeStaffId, function ($query, $staffId) {
-                return $query->where('staff.id', '!=', $staffId);
             })
             // Group by staff to avoid duplicates from multiple joins
             ->groupBy([
@@ -824,7 +839,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             'meta' => [
                 'facility_id' => $facilityId,
                 'filters_applied' => $filters,
-                'excluded_current_staff' => $excludeStaffId,
+                'excluded_current_staff_ids' => $excludeStaffIds,
             ],
             'message' => 'Staff list retrieved successfully.',
         ], 200);
@@ -838,7 +853,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
         ], 422);
     } catch (\Exception $e) {
         Log::error('Failed to retrieve staff for patient forwarding', [
-            'facility_id' => $facilityId,
+            'facility_id' => $facilityId ?? null,
             'error' => $e->getMessage(),
             'trace' => $e->getTraceAsString(),
         ]);

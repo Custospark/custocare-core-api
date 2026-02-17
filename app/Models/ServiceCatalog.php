@@ -7,47 +7,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-/**
- * @OA\Schema(
- *     schema="ServiceCatalog",
- *     type="object",
- *     required={"service_code", "code_system", "service_name", "service_category", "applicable_region", "effective_from"},
- *     @OA\Property(property="id", type="integer", example=1),
- *     @OA\Property(property="service_uuid", type="string", format="uuid", example="123e4567-e89b-12d3-a456-426614174000"),
- *     @OA\Property(property="service_code", type="string", maxLength=50, example="99213"),
- *     @OA\Property(property="code_system", type="string", enum={"cpt", "hcpcs", "icd_10_pcs", "cdt", "local_custom"}),
- *     @OA\Property(property="service_name", type="string", maxLength=300, example="Office or other outpatient visit"),
- *     @OA\Property(property="service_description", type="string", nullable=true),
- *     @OA\Property(property="alternate_names", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="service_category", type="string", enum={"evaluation_management", "diagnostic_imaging", "laboratory_test", "surgical_procedure", "medical_procedure", "therapy_session", "preventive_care", "vaccination", "medication_administration", "emergency_service", "consultation", "anesthesia", "pathology", "radiology", "facility_fee"}),
- *     @OA\Property(property="service_subcategories", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="department_specialty", type="string", maxLength=100, nullable=true, example="Cardiology"),
- *     @OA\Property(property="regulatory_approval_status", type="object", nullable=true),
- *     @OA\Property(property="required_certifications", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="minimum_required_credentials", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="required_equipment", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="required_facility_capabilities", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="default_duration_minutes", type="integer", nullable=true, example=30),
- *     @OA\Property(property="typical_indications", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="contraindications", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="prerequisites", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="commonly_paired_services", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="risk_level", type="string", enum={"low", "moderate", "high", "critical"}, default="low"),
- *     @OA\Property(property="requires_informed_consent", type="boolean", default=false),
- *     @OA\Property(property="consent_form_template", type="string", maxLength=200, nullable=true),
- *     @OA\Property(property="applicable_region", type="string", maxLength=10, example="US"),
- *     @OA\Property(property="approved_countries", type="array", nullable=true, @OA\Items(type="string")),
- *     @OA\Property(property="state_specific_regulations", type="object", nullable=true),
- *     @OA\Property(property="status", type="string", enum={"active", "inactive", "deprecated", "under_review"}, default="active"),
- *     @OA\Property(property="effective_from", type="string", format="date", example="2024-01-01"),
- *     @OA\Property(property="effective_to", type="string", format="date", nullable=true),
- *     @OA\Property(property="created_by_staff_id", type="integer", nullable=true),
- *     @OA\Property(property="metadata", type="object", nullable=true),
- *     @OA\Property(property="created_at", type="string", format="date-time"),
- *     @OA\Property(property="updated_at", type="string", format="date-time"),
- *     @OA\Property(property="deleted_at", type="string", format="date-time", nullable=true)
- * )
- */
 class ServiceCatalog extends Model
 {
     use HasFactory, SoftDeletes;

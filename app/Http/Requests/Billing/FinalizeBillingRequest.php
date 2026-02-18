@@ -39,7 +39,7 @@ class FinalizeBillingRequest extends FormRequest
             
             // Charge items (line items)
             'charge_items' => 'required|array|min:1',
-            'charge_items.*.service_key' => 'required|string',
+            'charge_items.*.service_key' => 'nullable|string', // Changed from required to nullable
             'charge_items.*.service.id' => 'required|integer',
             'charge_items.*.service.code' => 'required|string|max:50',
             'charge_items.*.service.name' => 'required|string|max:500',
@@ -96,7 +96,7 @@ class FinalizeBillingRequest extends FormRequest
             
             'charge_items.required' => 'At least one charge item is required.',
             'charge_items.min' => 'At least one charge item must be provided.',
-            'charge_items.*.service_key.required' => 'Service key is required for each charge item.',
+            'charge_items.*.service_key.nullable' => 'Service key can be null or a string.', // Added new message
             'charge_items.*.quantity.required' => 'Quantity is required for each charge item.',
             'charge_items.*.quantity.min' => 'Quantity must be at least 1.',
             'charge_items.*.quantity.max' => 'Quantity cannot exceed 9999.',

@@ -37,6 +37,7 @@ class BillingService
             if (!$visitVerification['success']) {
                 return $visitVerification;
             }
+          
 
             // Calculate discount amount
             $discountAmount = $this->calculateDiscountAmount(
@@ -422,7 +423,7 @@ class BillingService
                 'visit_id' => $data['visit_id'],
                 
                 // Service snapshot (frozen at time of billing)
-                'service_version_id' => $service['id'],
+                // 'service_version_id' => $service['id'],//TODO: To be uncommented in the feature after integrating with service version.
                 'service_version_snapshot' => json_encode($service),
                 'service_code' => $service['code'],
                 'service_description' => $service['name'],

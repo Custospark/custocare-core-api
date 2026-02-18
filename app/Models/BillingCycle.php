@@ -5,11 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 
 class BillingCycle extends Model
 {
-    use HasFactory, SoftDeletes, HasUuids;
+    use HasFactory, SoftDeletes;
 
     /**
      * The primary key associated with the table.
@@ -140,11 +139,11 @@ class BillingCycle extends Model
     /**
      * Get the route key for the model.
      *
-     * @return string
+     * @return integer
      */
-    public function getRouteKeyName(): string
+    public function getRouteKeyName():int
     {
-        return 'billing_cycle_uuid';
+        return 'id';
     }
 
     /**

@@ -47,7 +47,6 @@ class BillingController extends Controller
      */
     public function finalize(FinalizeBillingRequest $request): JsonResponse
     {
-        Log::alert($request);
         try {
             // 1) Get facility from header
             $facilityId = (int) $request->header('X-Facility-Id');

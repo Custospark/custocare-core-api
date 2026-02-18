@@ -27,7 +27,7 @@ class BillingService
     public function finalizeBilling(array $data, int $facilityId, int $staffId): array
     {
         try {
-            // Verify visit belongs to facility and patient
+            // Step 1: Verify visit belongs to facility and patient
             $visitVerification = $this->verifyVisit(
                 $data['visit_id'],
                 $facilityId,
@@ -37,22 +37,37 @@ class BillingService
             if (!$visitVerification['success']) {
                 return $visitVerification;
             }
-          
 
-            // Calculate discount amount
+            $visit = $visitVerification['data'];
+
+            // Step 2: Check if visit can be billed
+            $billingEligibility = $this->canBeBilled($visit);
+            
+            if (!$billingEligibility['success']) {
+                return $billingEligibility;
+            }
+
+            // Step 3: Check for existing billing cycle to prevent duplicate billing
+            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
+            
+            if (!$existingBillingCheck['success']) {
+                return $existingBillingCheck;
+            }
+
+            // Step 4: Calculate discount amount
             $discountAmount = $this->calculateDiscountAmount(
                 $data['discount']['type'],
                 $data['discount']['value'],
                 $data['billing_data']['subtotal']
             );
 
-            // Calculate payment split
+            // Step 5: Calculate payment split
             $paymentSplit = $this->calculatePaymentSplit(
                 $data['payment_methods'],
                 $data['billing_data']['totalPaid']
             );
 
-            // Determine primary payment method
+            // Step 6: Determine primary payment method
             $primaryPaymentMethod = collect($data['payment_methods'])
                 ->sortByDesc('amount')
                 ->first();
@@ -60,7 +75,7 @@ class BillingService
             $isPrimaryCash = $primaryPaymentMethod['type'] === 'cash';
             $isInsuranceInvolved = $this->isInsuranceInvolved($data['payment_methods']);
 
-            // Begin database transaction
+            // Step 7: Begin database transaction
             $result = DB::transaction(function () use (
                 $data,
                 $facilityId,
@@ -68,7 +83,8 @@ class BillingService
                 $discountAmount,
                 $paymentSplit,
                 $isPrimaryCash,
-                $isInsuranceInvolved
+                $isInsuranceInvolved,
+                $visit
             ) {
                 // Create BillingCycle record
                 $billingCycle = $this->createBillingCycle(
@@ -89,15 +105,25 @@ class BillingService
                     $discountAmount
                 );
 
+                // Update visit with billing information
+                $this->updateVisitBillingStatus($visit, $data, $billingCycle, $staffId);
+
                 return [
                     'billing_cycle' => $billingCycle->fresh(),
                     'line_items' => $lineItems,
                 ];
             });
 
+            // Calculate balance for response context
+            $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
+            $isFullyPaid = $balance <= 0;
+
+            // Return success response with original structure
             return [
                 'success' => true,
-                'message' => 'Billing finalized successfully.',
+                'message' => $isFullyPaid 
+                    ? 'Payment successfully settled. Visit has been completed.' 
+                    : 'Billing finalized successfully.',
                 'data' => [
                     'billing_cycle_id' => $result['billing_cycle']->id,
                     'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid,
@@ -112,87 +138,95 @@ class BillingService
             Log::error('Failed to finalize billing in service', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'visit_id' => $data['visit_id'] ?? null,
             ]);
 
             return [
                 'success' => false,
                 'message' => 'An error occurred while finalizing billing.',
-                'error' => $e->getMessage(),
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }
 
     /**
-     * Get billing data for a visit
+     * Check if a visit can be billed
      *
-     * @param int $visitId Visit ID
-     * @param int $facilityId Facility ID
-     * @return array Success status and billing data
+     * @param Visit $visit
+     * @return array Success status and message
      */
-    public function getBillingByVisit(int $visitId, int $facilityId): array
+    public function canBeBilled(Visit $visit): array
     {
-        try {
-            // Verify visit exists and belongs to facility
-            $visit = Visit::query()
-                ->where('id', $visitId)
-                ->where('facility_id', $facilityId)
-                ->with(['patient.user'])
-                ->first();
-
-            if (!$visit) {
-                return [
-                    'success' => false,
-                    'message' => 'Visit not found or does not belong to this facility.',
-                    'errors' => ['visit_id' => ['Invalid visit for this facility.']],
-                ];
-            }
-
-            // Get billing cycle for this visit
-            $billingCycle = BillingCycle::query()
-                ->where('visit_id', $visitId)
-                ->where('facility_id', $facilityId)
-                ->with(['lineItems'])
-                ->orderByDesc('created_at')
-                ->first();
-
-            // If no billing cycle exists, return empty state
-            if (!$billingCycle) {
-                return [
-                    'success' => true,
-                    'message' => 'No billing record found for this visit.',
-                    'data' => [
-                        'has_billing' => false,
-                        'visit_id' => $visitId,
-                        'patient' => [
-                            'id' => $visit->patient_id,
-                            'name' => $visit->patient->user->display_name ?? 
-                                     "{$visit->patient->user->first_name} {$visit->patient->user->last_name}",
-                        ],
-                    ],
-                ];
-            }
-
-            // Parse and transform billing data
-            $billingData = $this->transformBillingData($billingCycle, $visit);
-
-            return [
-                'success' => true,
-                'message' => 'Billing data retrieved successfully.',
-                'data' => $billingData,
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve billing data in service', [
-                'visit_id' => $visitId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
+        // Check if visit is already completed
+        if ($visit->status === 'completed') {
             return [
                 'success' => false,
-                'message' => 'An error occurred while retrieving billing data.',
-                'error' => $e->getMessage(),
+                'message' => 'Cannot bill a completed visit.',
+                'errors' => ['visit' => ['This visit has already been completed and cannot be billed again.']],
             ];
         }
+
+        // Check if visit is cancelled
+        if ($visit->status === 'cancelled') {
+            return [
+                'success' => false,
+                'message' => 'Cannot bill a cancelled visit.',
+                'errors' => ['visit' => ['This visit has been cancelled and cannot be billed.']],
+            ];
+        }
+
+        // Check if visit is in terminal phase
+        $terminalPhases = ['discharged', 'expired', 'transferred'];
+        if (in_array($visit->current_phase, $terminalPhases)) {
+            return [
+                'success' => false,
+                'message' => 'Cannot bill a visit that is already ' . $visit->current_phase . '.',
+                'errors' => ['visit' => ['This visit is already in a terminal phase.']],
+            ];
+        }
+
+        // Check payment status - if already paid in full, prevent re-billing
+        if ($visit->payment_status === 'paid_in_full') {
+            return [
+                'success' => false,
+                'message' => 'Visit payment is already settled.',
+                'errors' => ['visit' => ['This visit has already been paid in full.']],
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Visit is eligible for billing.',
+        ];
+    }
+
+    /**
+     * Check if visit already has an existing billing cycle
+     *
+     * @param int $visitId
+     * @param int $facilityId
+     * @return array Success status and message
+     */
+    public function checkExistingBilling(int $visitId, int $facilityId): array
+    {
+        $existingBillingCycle = BillingCycle::query()
+            ->where('visit_id', $visitId)
+            ->where('facility_id', $facilityId)
+            ->whereIn('billing_status', ['paid_in_full', 'submitted_to_insurance', 'pending_submission'])
+            ->first();
+
+        if ($existingBillingCycle) {
+            return [
+                'success' => false,
+                'message' => 'This visit already has an active billing cycle.',
+                'errors' => ['billing' => ['A billing cycle already exists for this visit.']],
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'No existing billing cycle found.',
+        ];
     }
 
     /**
@@ -313,6 +347,114 @@ class BillingService
 
         return ($lineTotal / $subtotal) * $totalDiscount;
     }
+
+    /**
+ * Update visit with billing information
+ *
+ * @param Visit $visit
+ * @param array $data
+ * @param BillingCycle $billingCycle
+ * @param int $staffId
+ * @return void
+ */
+protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCycle $billingCycle, int $staffId): void
+{
+    // Calculate balance
+    $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
+    $isFullyPaid = $balance <= 0;
+
+    // Update visit to completed when payment is in full
+    if ($isFullyPaid) {
+        $visit->current_phase = 'discharged'; 
+        $visit->status = 'completed'; 
+        $visit->clinical_care_ended_at = now();
+        $visit->discharged_at = now();
+    } else {
+        // For partial payments, update to billing phase if not in terminal phase
+        if (!in_array($visit->current_phase, ['discharged', 'completed', 'expired', 'transferred'])) {
+            $visit->current_phase = 'billing'; 
+        }
+    }
+
+    // Update payment status based on balance
+    if ($isFullyPaid) {
+        $visit->payment_status = 'paid_in_full'; 
+    } elseif ($data['billing_data']['totalPaid'] > 0) {
+        $visit->payment_status = 'partially_paid'; 
+    } else {
+        $visit->payment_status = 'pending'; 
+    }
+
+    // Update financial snapshot
+    $visit->estimated_total_charges = $data['billing_data']['grandTotal'];
+    $visit->patient_estimated_responsibility = $data['billing_data']['totalPaid'];
+
+    // Update audit trail
+    $visit->updated_by_staff_id = $staffId;
+
+    // Add billing metadata
+    $metadata = $visit->metadata ?? [];
+    
+    // Initialize billing array if not exists
+    if (!isset($metadata['billing'])) {
+        $metadata['billing'] = [];
+    }
+    
+    // Add this billing transaction
+    $metadata['billing'][] = [
+        'billing_cycle_id' => $billingCycle->id,
+        'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+        'completed_at' => now()->toIso8601String(),
+        'completed_by_staff_id' => $staffId,
+        'receipt_number' => "REC-{$billingCycle->id}",
+        'grand_total' => $data['billing_data']['grandTotal'],
+        'total_paid' => $data['billing_data']['totalPaid'],
+        'balance' => $balance,
+        'is_fully_paid' => $isFullyPaid,
+        'payment_methods' => $data['payment_methods'],
+        'discount' => [
+            'type' => $data['discount']['type'],
+            'value' => $data['discount']['value'],
+            'reason' => $data['discount']['reason'] ?? null,
+        ],
+    ];
+
+    // Store latest billing summary at root level for quick access
+    $metadata['latest_billing'] = [
+        'billing_cycle_id' => $billingCycle->id,
+        'receipt_number' => "REC-{$billingCycle->id}",
+        'completed_at' => now()->toIso8601String(),
+        'grand_total' => $data['billing_data']['grandTotal'],
+        'balance' => $balance,
+        'payment_status' => $visit->payment_status,
+    ];
+
+    // If visit is completed, add completion metadata
+    if ($isFullyPaid) {
+        $metadata['visit_completion'] = [
+            'completed_at' => now()->toIso8601String(),
+            'completed_by_staff_id' => $staffId,
+            'completion_reason' => 'billing_finalized',
+            'final_balance' => $balance,
+            'billing_cycle_id' => $billingCycle->id,
+            'receipt_number' => "REC-{$billingCycle->id}",
+        ];
+    }
+
+    $visit->metadata = $metadata;
+
+    $visit->save();
+    
+    Log::info('Visit billing status updated', [
+        'visit_id' => $visit->id,
+        'payment_status' => $visit->payment_status,
+        'current_phase' => $visit->current_phase,
+        'visit_status' => $visit->status,
+        'balance' => $balance,
+        'is_fully_paid' => $isFullyPaid,
+        'billing_cycle_id' => $billingCycle->id,
+    ]);
+}
 
     /**
      * Create BillingCycle record
@@ -466,204 +608,277 @@ class BillingService
         return $lineItems;
     }
 
-        /**
-         * Transform billing data for response
-         *
-         * @param BillingCycle $billingCycle Billing cycle model
-         * @param Visit $visit Visit model
-         * @return array Transformed billing data
-         */
-        protected function transformBillingData(BillingCycle $billingCycle, Visit $visit): array
-        {
-            // ---- Helpers ------------------------------------------------------------
+    /**
+     * Get billing data for a visit
+     *
+     * @param int $visitId Visit ID
+     * @param int $facilityId Facility ID
+     * @return array Success status and billing data
+     */
+    public function getBillingByVisit(int $visitId, int $facilityId): array
+    {
+        try {
+            // Verify visit exists and belongs to facility
+            $visit = Visit::query()
+                ->where('id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['patient.user'])
+                ->first();
 
-            $decodeJsonish = function ($value): array {
-                if (is_array($value)) {
-                    return $value;
-                }
-
-                if (is_string($value) && trim($value) !== '') {
-                    $decoded = json_decode($value, true);
-                    return is_array($decoded) ? $decoded : [];
-                }
-
-                return [];
-            };
-
-            $toIso = function ($date): ?string {
-                if (!$date) {
-                    return null;
-                }
-
-                // Eloquent timestamps are usually Carbon instances
-                if (is_object($date)) {
-                    if (method_exists($date, 'toIso8601String')) {
-                        return $date->toIso8601String();
-                    }
-                    if (method_exists($date, 'format')) {
-                        return $date->format('c'); // ISO-8601 compatible
-                    }
-                }
-
-                // Fallback for string dates
-                if (is_string($date) && trim($date) !== '') {
-                    $ts = strtotime($date);
-                    return $ts ? date(DATE_ATOM, $ts) : null;
-                }
-
-                return null;
-            };
-
-            $toEpochMs = function ($date): int {
-                if (!$date) {
-                    return 0;
-                }
-
-                if (is_object($date)) {
-                    // Carbon/DateTimeInterface
-                    if (method_exists($date, 'getTimestamp')) {
-                        return (int) $date->getTimestamp() * 1000;
-                    }
-                    if (method_exists($date, 'timestamp')) {
-                        // Some objects expose timestamp as property/method; guard anyway
-                        try {
-                            $ts = $date->timestamp;
-                            return is_numeric($ts) ? ((int) $ts * 1000) : 0;
-                        } catch (\Throwable $e) {
-                            return 0;
-                        }
-                    }
-                }
-
-                if (is_string($date) && trim($date) !== '') {
-                    $ts = strtotime($date);
-                    return $ts ? ((int) $ts * 1000) : 0;
-                }
-
-                return 0;
-            };
-
-            // ---- Parse cycle-level blobs -------------------------------------------
-
-            $metadata = $decodeJsonish($billingCycle->metadata ?? null);
-            $paymentMethods = is_array($metadata['payment_methods'] ?? null) ? $metadata['payment_methods'] : [];
-            $additionalNotes = (string) ($metadata['additional_notes'] ?? '');
-
-            $taxes = $decodeJsonish($billingCycle->tax_details ?? null);
-
-            // Discount normalization
-            $discountApplied = (float) ($billingCycle->discount_applied ?? 0);
-            $discountReason  = $billingCycle->discount_reason ?? null;
-
-            $discount = [
-                // Keep your original behavior but make it explicit & safe
-                'type'   => $discountApplied > 0 ? ($discountReason ? 'fixed' : 'percentage') : 'percentage',
-                'value'  => $discountApplied,
-                'reason' => $discountReason,
-            ];
-
-            // ---- Line items -> charge_items ----------------------------------------
-
-            $lineItems = $billingCycle->lineItems ?? collect();
-
-            $chargeItems = $lineItems->map(function ($lineItem) use ($decodeJsonish) {
-                $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
-                $lineMetadata    = $decodeJsonish($lineItem->metadata ?? null);
-
-                $serviceCode = (string) ($lineItem->service_code ?? '');
-                $serviceKey  = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
-
-                $uuid = $lineItem->line_item_uuid ?? null;
-                $chargeId = $uuid ? "charge::{$uuid}" : "charge::{$lineItem->id}";
-
+            if (!$visit) {
                 return [
-                    'id' => $chargeId,
-                    'service_key' => $serviceKey,
-                    'service' => [
-                        'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
-                        'code' => $serviceCode,
-                        'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
-                        'unitPrice' => (float) ($lineItem->unit_price_at_time ?? 0),
-                        'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
-                    ],
-                    'quantity' => (int) ($lineItem->quantity ?? 0),
-                    'totalAmount' => (float) ($lineItem->line_total_amount ?? 0),
+                    'success' => false,
+                    'message' => 'Visit not found or does not belong to this facility.',
+                    'errors' => ['visit_id' => ['Invalid visit for this facility.']],
                 ];
-            })->values()->toArray();
-
-            // ---- Totals summary -----------------------------------------------------
-
-            $totalCharged = (float) ($billingCycle->total_amount_charged ?? 0);
-            $totalTax     = (float) ($billingCycle->total_tax_amount ?? 0);
-            $netAmount    = (float) ($billingCycle->net_amount ?? 0);
-
-            $patientPaid   = (float) ($billingCycle->patient_payment_received ?? 0);
-            $insurancePaid = (float) ($billingCycle->insurance_payment_received ?? 0);
-
-            $billingData = [
-                'subtotal'       => $totalCharged,
-                'discountAmount' => $discountApplied,
-                'taxableAmount'  => max(0, $totalCharged - $discountApplied),
-                'taxes'          => $taxes,
-                'taxTotal'       => $totalTax,
-                'grandTotal'     => $netAmount,
-                'totalPaid'      => $patientPaid + $insurancePaid,
-                'balance'        => 0,      // finalized billing
-                'isPaid'         => true,   // finalized billing
-            ];
-
-            // ---- Status mapping -----------------------------------------------------
-
-            $uiStatus = $this->mapBillingStatusToUI($billingCycle->billing_status);
-
-            // ---- Patient name safe fallback ----------------------------------------
-
-            $patientUser = $visit->patient->user ?? null;
-            $patientName = null;
-
-            if ($patientUser) {
-                $patientName = $patientUser->display_name
-                    ?? trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
             }
 
-            // ---- Response -----------------------------------------------------------
+            // Get billing cycle for this visit
+            $billingCycle = BillingCycle::query()
+                ->where('visit_id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['lineItems'])
+                ->orderByDesc('created_at')
+                ->first();
+
+            // If no billing cycle exists, return empty state
+            if (!$billingCycle) {
+                return [
+                    'success' => true,
+                    'message' => 'No billing record found for this visit.',
+                    'data' => [
+                        'has_billing' => false,
+                        'visit_id' => $visitId,
+                        'visit' => [
+                            'id' => $visit->id,
+                            'current_phase' => $visit->current_phase,
+                            'payment_status' => $visit->payment_status,
+                            'status' => $visit->status,
+                        ],
+                        'patient' => [
+                            'id' => $visit->patient_id,
+                            'name' => $visit->patient->user->display_name ?? 
+                                     "{$visit->patient->user->first_name} {$visit->patient->user->last_name}",
+                        ],
+                    ],
+                ];
+            }
+
+            // Parse and transform billing data
+            $billingData = $this->transformBillingData($billingCycle, $visit);
 
             return [
-                'has_billing' => true,
+                'success' => true,
+                'message' => 'Billing data retrieved successfully.',
+                'data' => $billingData,
+            ];
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve billing data in service', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
-                // Visit & patient info
-                'visit_id'      => $visit->id,
-                'visit_uuid'    => $visit->visit_uuid,
-                'patient_id'    => $visit->patient_id,
-                'patient_name'  => $patientName ?: 'Unknown',
-
-                // Billing cycle info
-                'billing_cycle_id'   => $billingCycle->id,
-                'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
-                'receipt_number'     => "REC-{$billingCycle->id}",
-
-                // Redux-shaped billing state
-                'charge_items'      => $chargeItems,
-                'discount'          => $discount,
-                'taxes'             => $taxes,
-                'payment_methods'   => $paymentMethods,
-                'additional_notes'  => $additionalNotes,
-                'status'            => $uiStatus,
-                'billing_status'    => $billingCycle->billing_status,
-
-                // Calculated
-                'billing_data' => $billingData,
-
-                // Timestamps (safe ISO)
-                'billed_at'  => $toIso($billingCycle->billed_at ?? null),
-                'created_at' => $toIso($billingCycle->created_at ?? null),
-                'updated_at' => $toIso($billingCycle->updated_at ?? null),
-
-                // Metadata (safe epoch ms)
-                'last_updated'   => $toEpochMs($billingCycle->updated_at ?? null),
-                'is_dirty'       => false,
-                'is_processing'  => false,
+            return [
+                'success' => false,
+                'message' => 'An error occurred while retrieving billing data.',
+                'error' => $e->getMessage(),
             ];
         }
+    }
 
+    /**
+     * Transform billing data for response
+     *
+     * @param BillingCycle $billingCycle Billing cycle model
+     * @param Visit $visit Visit model
+     * @return array Transformed billing data
+     */
+    protected function transformBillingData(BillingCycle $billingCycle, Visit $visit): array
+    {
+        // ---- Helpers ------------------------------------------------------------
+
+        $decodeJsonish = function ($value): array {
+            if (is_array($value)) {
+                return $value;
+            }
+
+            if (is_string($value) && trim($value) !== '') {
+                $decoded = json_decode($value, true);
+                return is_array($decoded) ? $decoded : [];
+            }
+
+            return [];
+        };
+
+        $toIso = function ($date): ?string {
+            if (!$date) {
+                return null;
+            }
+
+            if (is_object($date)) {
+                if (method_exists($date, 'toIso8601String')) {
+                    return $date->toIso8601String();
+                }
+                if (method_exists($date, 'format')) {
+                    return $date->format('c');
+                }
+            }
+
+            if (is_string($date) && trim($date) !== '') {
+                $ts = strtotime($date);
+                return $ts ? date(DATE_ATOM, $ts) : null;
+            }
+
+            return null;
+        };
+
+        $toEpochMs = function ($date): int {
+            if (!$date) {
+                return 0;
+            }
+
+            if (is_object($date)) {
+                if (method_exists($date, 'getTimestamp')) {
+                    return (int) $date->getTimestamp() * 1000;
+                }
+                if (method_exists($date, 'timestamp')) {
+                    try {
+                        $ts = $date->timestamp;
+                        return is_numeric($ts) ? ((int) $ts * 1000) : 0;
+                    } catch (\Throwable $e) {
+                        return 0;
+                    }
+                }
+            }
+
+            if (is_string($date) && trim($date) !== '') {
+                $ts = strtotime($date);
+                return $ts ? ((int) $ts * 1000) : 0;
+            }
+
+            return 0;
+        };
+
+        // ---- Parse cycle-level blobs -------------------------------------------
+
+        $metadata = $decodeJsonish($billingCycle->metadata ?? null);
+        $paymentMethods = is_array($metadata['payment_methods'] ?? null) ? $metadata['payment_methods'] : [];
+        $additionalNotes = (string) ($metadata['additional_notes'] ?? '');
+
+        $taxes = $decodeJsonish($billingCycle->tax_details ?? null);
+
+        // Discount normalization
+        $discountApplied = (float) ($billingCycle->discount_applied ?? 0);
+        $discountReason  = $billingCycle->discount_reason ?? null;
+
+        $discount = [
+            'type'   => $discountApplied > 0 ? ($discountReason ? 'fixed' : 'percentage') : 'percentage',
+            'value'  => $discountApplied,
+            'reason' => $discountReason,
+        ];
+
+        // ---- Line items -> charge_items ----------------------------------------
+
+        $lineItems = $billingCycle->lineItems ?? collect();
+
+        $chargeItems = $lineItems->map(function ($lineItem) use ($decodeJsonish) {
+            $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
+            $lineMetadata    = $decodeJsonish($lineItem->metadata ?? null);
+
+            $serviceCode = (string) ($lineItem->service_code ?? '');
+            $serviceKey  = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
+
+            $uuid = $lineItem->line_item_uuid ?? null;
+            $chargeId = $uuid ? "charge::{$uuid}" : "charge::{$lineItem->id}";
+
+            return [
+                'id' => $chargeId,
+                'service_key' => $serviceKey,
+                'service' => [
+                    'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
+                    'code' => $serviceCode,
+                    'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
+                    'unitPrice' => (float) ($lineItem->unit_price_at_time ?? 0),
+                    'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
+                ],
+                'quantity' => (int) ($lineItem->quantity ?? 0),
+                'totalAmount' => (float) ($lineItem->line_total_amount ?? 0),
+            ];
+        })->values()->toArray();
+
+        // ---- Totals summary -----------------------------------------------------
+
+        $totalCharged = (float) ($billingCycle->total_amount_charged ?? 0);
+        $totalTax     = (float) ($billingCycle->total_tax_amount ?? 0);
+        $netAmount    = (float) ($billingCycle->net_amount ?? 0);
+
+        $patientPaid   = (float) ($billingCycle->patient_payment_received ?? 0);
+        $insurancePaid = (float) ($billingCycle->insurance_payment_received ?? 0);
+
+        $billingData = [
+            'subtotal'       => $totalCharged,
+            'discountAmount' => $discountApplied,
+            'taxableAmount'  => max(0, $totalCharged - $discountApplied),
+            'taxes'          => $taxes,
+            'taxTotal'       => $totalTax,
+            'grandTotal'     => $netAmount,
+            'totalPaid'      => $patientPaid + $insurancePaid,
+            'balance'        => 0,
+            'isPaid'         => true,
+        ];
+
+        // ---- Status mapping -----------------------------------------------------
+
+        $uiStatus = $this->mapBillingStatusToUI($billingCycle->billing_status);
+
+        // ---- Patient name safe fallback ----------------------------------------
+
+        $patientUser = $visit->patient->user ?? null;
+        $patientName = null;
+
+        if ($patientUser) {
+            $patientName = $patientUser->display_name
+                ?? trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
+        }
+
+        // ---- Response -----------------------------------------------------------
+
+        return [
+            'has_billing' => true,
+
+            // Visit & patient info
+            'visit_id'      => $visit->id,
+            'visit_uuid'    => $visit->visit_uuid,
+            'patient_id'    => $visit->patient_id,
+            'patient_name'  => $patientName ?: 'Unknown',
+
+            // Billing cycle info
+            'billing_cycle_id'   => $billingCycle->id,
+            'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+            'receipt_number'     => "REC-{$billingCycle->id}",
+
+            // Redux-shaped billing state
+            'charge_items'      => $chargeItems,
+            'discount'          => $discount,
+            'taxes'             => $taxes,
+            'payment_methods'   => $paymentMethods,
+            'additional_notes'  => $additionalNotes,
+            'status'            => $uiStatus,
+            'billing_status'    => $billingCycle->billing_status,
+
+            // Calculated
+            'billing_data' => $billingData,
+
+            // Timestamps (safe ISO)
+            'billed_at'  => $toIso($billingCycle->billed_at ?? null),
+            'created_at' => $toIso($billingCycle->created_at ?? null),
+            'updated_at' => $toIso($billingCycle->updated_at ?? null),
+
+            // Metadata (safe epoch ms)
+            'last_updated'   => $toEpochMs($billingCycle->updated_at ?? null),
+            'is_dirty'       => false,
+            'is_processing'  => false,
+        ];
+    }
 }

@@ -6,17 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Billing\FinalizeBillingRequest;
 use App\Http\Requests\Billing\GetBillingRequest;
 use App\Services\Billing\BillingService;
-use App\Services\Contracts\BillingServiceInterface;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Billing Controller
  *
- * Handles HTTP requests for Billing operations
+ * Handles HTTP requests for Billing operations with comprehensive error handling
  */
 class BillingController extends Controller
 {
@@ -25,12 +24,12 @@ class BillingController extends Controller
      *
      * @var BillingService
      */
-    protected $billingService;
+    protected BillingService $billingService;
 
     /**
      * Constructor
      *
-     * @param BillingServiceInterface $billingService
+     * @param BillingService $billingService
      */
     public function __construct(BillingService $billingService)
     {
@@ -52,6 +51,11 @@ class BillingController extends Controller
             $facilityId = (int) $request->header('X-Facility-Id');
             
             if (!$facilityId) {
+                Log::warning('Missing X-Facility-Id header in billing finalize request', [
+                    'user_id' => Auth::id(),
+                    'ip' => $request->ip(),
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Missing X-Facility-Id header.',
@@ -61,9 +65,28 @@ class BillingController extends Controller
 
             // 2) Get authenticated staff ID
             $userId = Auth::id();
+            
+            if (!$userId) {
+                Log::warning('Unauthenticated billing finalize attempt', [
+                    'ip' => $request->ip(),
+                    'facility_id' => $facilityId,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Authentication required.',
+                    'errors' => ['auth' => ['You must be authenticated to perform this action.']],
+                ], 401);
+            }
+
             $staffId = DB::table('staff')->where('user_id', $userId)->value('id');
 
             if (!$staffId) {
+                Log::warning('Staff profile not found for user attempting billing finalize', [
+                    'user_id' => $userId,
+                    'facility_id' => $facilityId,
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Staff profile not found.',
@@ -79,21 +102,36 @@ class BillingController extends Controller
             );
 
             if (!$result['success']) {
+                Log::warning('Billing finalization failed at service layer', [
+                    'user_id' => $userId,
+                    'staff_id' => $staffId,
+                    'facility_id' => $facilityId,
+                    'visit_id' => $request->input('visit_id'),
+                    'message' => $result['message'] ?? 'Unknown error',
+                ]);
+
                 return response()->json($result, 400);
             }
 
             // 4) Return success response
             return response()->json($result, 201);
 
-        } catch (\Exception $e) {
-            Log::error('Failed to finalize billing in controller', [
-                'error' => $e->getMessage(),
+        } catch (Throwable $e) {
+            Log::error('Unexpected error in billing finalize controller', [
+                'error_message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::id(),
+                'facility_id' => $request->header('X-Facility-Id'),
+                'visit_id' => $request->input('visit_id'),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred while finalizing billing.',
+                'message' => 'An unexpected error occurred while finalizing billing. Please try again or contact support if the issue persists.',
+                'errors' => ['system' => ['A system error prevented billing finalization.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
@@ -115,6 +153,12 @@ class BillingController extends Controller
             $facilityId = (int) $request->header('X-Facility-Id');
             
             if (!$facilityId) {
+                Log::warning('Missing X-Facility-Id header in get billing request', [
+                    'user_id' => Auth::id(),
+                    'visit_id' => $visitId,
+                    'ip' => $request->ip(),
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Missing X-Facility-Id header.',
@@ -122,27 +166,59 @@ class BillingController extends Controller
                 ], 422);
             }
 
-            // 2) Call service to retrieve billing data
+            // 2) Verify user is authenticated
+            $userId = Auth::id();
+            
+            if (!$userId) {
+                Log::warning('Unauthenticated billing retrieval attempt', [
+                    'ip' => $request->ip(),
+                    'facility_id' => $facilityId,
+                    'visit_id' => $visitId,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Authentication required.',
+                    'errors' => ['auth' => ['You must be authenticated to view billing data.']],
+                ], 401);
+            }
+
+            // 3) Call service to retrieve billing data
             $result = $this->billingService->getBillingByVisit($visitId, $facilityId);
 
             if (!$result['success']) {
                 $statusCode = isset($result['errors']) ? 404 : 400;
+                
+                Log::info('Billing retrieval returned non-success', [
+                    'user_id' => $userId,
+                    'facility_id' => $facilityId,
+                    'visit_id' => $visitId,
+                    'status_code' => $statusCode,
+                    'message' => $result['message'] ?? 'Unknown error',
+                ]);
+
                 return response()->json($result, $statusCode);
             }
 
-            // 3) Return success response
+            // 4) Return success response
             return response()->json($result, 200);
 
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve billing data in controller', [
-                'visit_id' => $visitId,
-                'error' => $e->getMessage(),
+        } catch (Throwable $e) {
+            Log::error('Unexpected error in get billing controller', [
+                'error_message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::id(),
+                'facility_id' => $request->header('X-Facility-Id'),
+                'visit_id' => $visitId,
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred while retrieving billing data.',
+                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support if the issue persists.',
+                'errors' => ['system' => ['A system error prevented billing data retrieval.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }

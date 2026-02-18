@@ -5,19 +5,22 @@ namespace App\Services\Billing;
 use App\Models\BillingCycle;
 use App\Models\InvoiceLineItem;
 use App\Models\Visit;
+use App\Models\InventoryItem;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Billing Service
  *
- * Handles business logic for billing operations
+ * Handles business logic for billing operations with atomic transactions
+ * and comprehensive error handling
  */
 class BillingService
 {
     /**
-     * Finalize billing and persist to database
+     * Finalize billing and persist to database with atomic transaction
      *
      * @param array $data Validated billing data
      * @param int $facilityId Facility ID
@@ -54,20 +57,27 @@ class BillingService
                 return $existingBillingCheck;
             }
 
-            // Step 4: Calculate discount amount
+            // Step 4: Validate inventory availability BEFORE transaction
+            $inventoryValidation = $this->validateInventoryAvailability($data['charge_items'], $staffId);
+            
+            if (!$inventoryValidation['success']) {
+                return $inventoryValidation;
+            }
+
+            // Step 5: Calculate discount amount
             $discountAmount = $this->calculateDiscountAmount(
                 $data['discount']['type'],
                 $data['discount']['value'],
                 $data['billing_data']['subtotal']
             );
 
-            // Step 5: Calculate payment split
+            // Step 6: Calculate payment split
             $paymentSplit = $this->calculatePaymentSplit(
                 $data['payment_methods'],
                 $data['billing_data']['totalPaid']
             );
 
-            // Step 6: Determine primary payment method
+            // Step 7: Determine primary payment method
             $primaryPaymentMethod = collect($data['payment_methods'])
                 ->sortByDesc('amount')
                 ->first();
@@ -75,7 +85,7 @@ class BillingService
             $isPrimaryCash = $primaryPaymentMethod['type'] === 'cash';
             $isInsuranceInvolved = $this->isInsuranceInvolved($data['payment_methods']);
 
-            // Step 7: Begin database transaction
+            // Step 8: Begin atomic database transaction
             $result = DB::transaction(function () use (
                 $data,
                 $facilityId,
@@ -105,6 +115,9 @@ class BillingService
                     $discountAmount
                 );
 
+                // Reduce inventory stock for inventory items
+                $this->deductInventoryStock($data['charge_items'], $staffId);
+
                 // Update visit with billing information
                 $this->updateVisitBillingStatus($visit, $data, $billingCycle, $staffId);
 
@@ -117,6 +130,14 @@ class BillingService
             // Calculate balance for response context
             $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
             $isFullyPaid = $balance <= 0;
+
+            Log::info('Billing finalized successfully', [
+                'billing_cycle_id' => $result['billing_cycle']->id,
+                'visit_id' => $data['visit_id'],
+                'staff_id' => $staffId,
+                'grand_total' => $data['billing_data']['grandTotal'],
+                'is_fully_paid' => $isFullyPaid,
+            ]);
 
             // Return success response with original structure
             return [
@@ -134,18 +155,253 @@ class BillingService
                     'line_items_count' => count($result['line_items']),
                 ],
             ];
-        } catch (\Exception $e) {
-            Log::error('Failed to finalize billing in service', [
-                'error' => $e->getMessage(),
+
+        } catch (Throwable $e) {
+            Log::error('Failed to finalize billing', [
+                'error_message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
                 'visit_id' => $data['visit_id'] ?? null,
+                'patient_id' => $data['patient_id'] ?? null,
+                'facility_id' => $facilityId,
+                'staff_id' => $staffId,
             ]);
 
             return [
                 'success' => false,
-                'message' => 'An error occurred while finalizing billing.',
+                'message' => 'An unexpected error occurred while finalizing billing. Please try again or contact support if the issue persists.',
+                'errors' => ['system' => ['Billing transaction failed. All changes have been rolled back.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
+        }
+    }
+
+    /**
+     * Validate inventory availability before processing billing
+     * This runs OUTSIDE the transaction to fail fast without locking resources
+     *
+     * @param array $chargeItems Charge items from billing payload
+     * @param int $staffId Staff performing the action
+     * @return array Success status and validation results
+     */
+    protected function validateInventoryAvailability(array $chargeItems, int $staffId): array
+    {
+        $insufficientItems = [];
+        $unavailableItems = [];
+
+        foreach ($chargeItems as $chargeItem) {
+            $service = $chargeItem['service'];
+            $quantity = (int) $chargeItem['quantity'];
+
+            if ($quantity <= 0) {
+                continue;
+            }
+
+            // Check if this is an inventory item
+            $inventoryItem = InventoryItem::query()
+                ->where('item_code', $service['code'])
+                ->first();
+
+            if (!$inventoryItem) {
+                // It's a service (no inventory record) — skip validation
+                continue;
+            }
+
+            // Check if inventory item is inactive
+            if ($inventoryItem->status !== 'active') {
+                $unavailableItems[] = [
+                    'item_code' => $service['code'],
+                    'item_name' => $service['name'] ?? $inventoryItem->item_name,
+                    'status' => $inventoryItem->status,
+                    'requested_quantity' => $quantity,
+                ];
+
+                Log::warning('Attempted to bill inactive inventory item', [
+                    'item_code' => $service['code'],
+                    'status' => $inventoryItem->status,
+                    'requested_quantity' => $quantity,
+                    'staff_id' => $staffId,
+                ]);
+
+                continue;
+            }
+
+            // Check if sufficient stock is available
+            if ($inventoryItem->package_quantity < $quantity) {
+                $insufficientItems[] = [
+                    'item_code' => $service['code'],
+                    'item_name' => $service['name'] ?? $inventoryItem->item_name,
+                    'available_quantity' => $inventoryItem->package_quantity,
+                    'requested_quantity' => $quantity,
+                    'shortage' => $quantity - $inventoryItem->package_quantity,
+                ];
+
+                Log::warning('Insufficient inventory stock detected', [
+                    'item_code' => $service['code'],
+                    'available' => $inventoryItem->package_quantity,
+                    'requested' => $quantity,
+                    'shortage' => $quantity - $inventoryItem->package_quantity,
+                    'staff_id' => $staffId,
+                ]);
+            }
+        }
+
+        // Return detailed error response if validation fails
+        if (!empty($insufficientItems) || !empty($unavailableItems)) {
+            $errorMessages = [];
+            
+            if (!empty($insufficientItems)) {
+                $itemsList = collect($insufficientItems)->map(function ($item) {
+                    return "• {$item['item_name']} (Code: {$item['item_code']}): "
+                         . "Requested {$item['requested_quantity']}, Available {$item['available_quantity']}, "
+                         . "Short by {$item['shortage']}";
+                })->implode("\n");
+
+                $errorMessages[] = "Insufficient stock for the following items:\n{$itemsList}";
+            }
+
+            if (!empty($unavailableItems)) {
+                $itemsList = collect($unavailableItems)->map(function ($item) {
+                    return "• {$item['item_name']} (Code: {$item['item_code']}): "
+                         . "Status is '{$item['status']}' (Requested: {$item['requested_quantity']})";
+                })->implode("\n");
+
+                $errorMessages[] = "The following items are not available:\n{$itemsList}";
+            }
+
+            return [
+                'success' => false,
+                'message' => 'Cannot process billing due to inventory constraints.',
+                'errors' => [
+                    'inventory' => $errorMessages,
+                ],
+                'details' => [
+                    'insufficient_items' => $insufficientItems,
+                    'unavailable_items' => $unavailableItems,
+                ],
+            ];
+        }
+
+        Log::info('Inventory availability validation passed', [
+            'total_items_checked' => count($chargeItems),
+            'staff_id' => $staffId,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'All inventory items are available.',
+        ];
+    }
+
+    /**
+     * Deduct inventory stock for billed inventory items with proper locking
+     *
+     * @param array $chargeItems Charge items from billing payload
+     * @param int $staffId Staff performing the action
+     * @return void
+     * @throws \Exception
+     */
+    protected function deductInventoryStock(array $chargeItems, int $staffId): void
+    {
+        foreach ($chargeItems as $chargeItem) {
+            try {
+                $service = $chargeItem['service'];
+                $quantity = (int) $chargeItem['quantity'];
+
+                if ($quantity <= 0) {
+                    continue;
+                }
+
+                // Only process items that have a service code (inventory items will match)
+                $inventoryItem = InventoryItem::query()
+                    ->where('item_code', $service['code'])
+                    ->where('status', 'active')
+                    ->lockForUpdate() // Prevent race conditions
+                    ->first();
+
+                if (!$inventoryItem) {
+                    // It's a service (no inventory record) — skip silently
+                    continue;
+                }
+
+                // Double-check stock availability (race condition safety)
+                if ($inventoryItem->package_quantity < $quantity) {
+                    Log::error('Race condition detected: Insufficient stock during deduction', [
+                        'item_code' => $service['code'],
+                        'available' => $inventoryItem->package_quantity,
+                        'requested' => $quantity,
+                        'staff_id' => $staffId,
+                    ]);
+
+                    throw new \Exception(
+                        "Insufficient stock for item '{$service['name']}' (Code: {$service['code']}). "
+                        . "Available: {$inventoryItem->package_quantity}, Requested: {$quantity}. "
+                        . "This may be due to concurrent transactions. Please try again."
+                    );
+                }
+
+                // Calculate new quantity
+                $previousQuantity = $inventoryItem->package_quantity;
+                $unitsToDeduct = $quantity;
+                $newPackageQuantity = max(0, $previousQuantity - $unitsToDeduct);
+
+                $inventoryItem->package_quantity = $newPackageQuantity;
+                $inventoryItem->updated_by_staff_id = $staffId;
+
+
+                // Append deduction to metadata audit trail
+                $metadata = is_array($inventoryItem->metadata) 
+                    ? $inventoryItem->metadata 
+                    : (json_decode($inventoryItem->metadata ?? '{}', true) ?? []);
+
+                if (!isset($metadata['stock_deductions'])) {
+                    $metadata['stock_deductions'] = [];
+                }
+
+                $metadata['stock_deductions'][] = [
+                    'deducted_at' => now()->toIso8601String(),
+                    'deducted_by_staff_id' => $staffId,
+                    'units_deducted' => $unitsToDeduct,
+                    'previous_quantity' => $previousQuantity,
+                    'new_quantity' => $newPackageQuantity,
+                    'service_code' => $service['code'],
+                    'service_name' => $service['name'] ?? 'Unknown',
+                    'reason' => 'billing_finalization',
+                ];
+
+                // Track last deduction for quick reference
+                $metadata['last_stock_deduction'] = [
+                    'deducted_at' => now()->toIso8601String(),
+                    'deducted_by_staff_id' => $staffId,
+                    'units_deducted' => $unitsToDeduct,
+                    'new_quantity' => $newPackageQuantity,
+                ];
+
+                $inventoryItem->metadata = $metadata;
+                $inventoryItem->save();
+
+                Log::info('Inventory stock deducted successfully', [
+                    'item_code' => $service['code'],
+                    'item_name' => $service['name'] ?? 'Unknown',
+                    'units_deducted' => $unitsToDeduct,
+                    'previous_quantity' => $previousQuantity,
+                    'new_quantity' => $newPackageQuantity,
+                    'status' => $inventoryItem->status,
+                    'staff_id' => $staffId,
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error('Failed to deduct inventory stock', [
+                    'item_code' => $service['code'] ?? 'unknown',
+                    'item_name' => $service['name'] ?? 'unknown',
+                    'error_message' => $e->getMessage(),
+                    'staff_id' => $staffId,
+                ]);
+
+                throw $e; // Re-throw to trigger transaction rollback
+            }
         }
     }
 
@@ -349,112 +605,111 @@ class BillingService
     }
 
     /**
- * Update visit with billing information
- *
- * @param Visit $visit
- * @param array $data
- * @param BillingCycle $billingCycle
- * @param int $staffId
- * @return void
- */
-protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCycle $billingCycle, int $staffId): void
-{
-    // Calculate balance
-    $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
-    $isFullyPaid = $balance <= 0;
+     * Update visit with billing information
+     *
+     * @param Visit $visit
+     * @param array $data
+     * @param BillingCycle $billingCycle
+     * @param int $staffId
+     * @return void
+     */
+    protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCycle $billingCycle, int $staffId): void
+    {
+        // Calculate balance
+        $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
+        $isFullyPaid = $balance <= 0;
 
-    // Update visit to completed when payment is in full
-    if ($isFullyPaid) {
-        $visit->current_phase = 'discharged'; 
-        $visit->status = 'completed'; 
-        $visit->clinical_care_ended_at = now();
-        $visit->discharged_at = now();
-    } else {
-        // For partial payments, update to billing phase if not in terminal phase
-        if (!in_array($visit->current_phase, ['discharged', 'completed', 'expired', 'transferred'])) {
-            $visit->current_phase = 'billing'; 
+        // Update visit to completed when payment is in full
+        if ($isFullyPaid) {
+            $visit->current_phase = 'discharged'; 
+            $visit->status = 'completed'; 
+            $visit->clinical_care_ended_at = now();
+            $visit->discharged_at = now();
+        } else {
+            // For partial payments, update to billing phase if not in terminal phase
+            if (!in_array($visit->current_phase, ['discharged', 'completed', 'expired', 'transferred'])) {
+                $visit->current_phase = 'billing'; 
+            }
         }
-    }
 
-    // Update payment status based on balance
-    if ($isFullyPaid) {
-        $visit->payment_status = 'paid_in_full'; 
-    } elseif ($data['billing_data']['totalPaid'] > 0) {
-        $visit->payment_status = 'partially_paid'; 
-    } else {
-        $visit->payment_status = 'pending'; 
-    }
+        // Update payment status based on balance
+        if ($isFullyPaid) {
+            $visit->payment_status = 'paid_in_full'; 
+        } elseif ($data['billing_data']['totalPaid'] > 0) {
+            $visit->payment_status = 'partially_paid'; 
+        } else {
+            $visit->payment_status = 'pending'; 
+        }
 
-    // Update financial snapshot
-    $visit->estimated_total_charges = $data['billing_data']['grandTotal'];
-    $visit->patient_estimated_responsibility = $data['billing_data']['totalPaid'];
+        // Update financial snapshot
+        $visit->estimated_total_charges = $data['billing_data']['grandTotal'];
+        $visit->patient_estimated_responsibility = $data['billing_data']['totalPaid'];
 
-    // Update audit trail
-    $visit->updated_by_staff_id = $staffId;
+        // Update audit trail
+        $visit->updated_by_staff_id = $staffId;
 
-    // Add billing metadata
-    $metadata = $visit->metadata ?? [];
-    
-    // Initialize billing array if not exists
-    if (!isset($metadata['billing'])) {
-        $metadata['billing'] = [];
-    }
-    
-    // Add this billing transaction
-    $metadata['billing'][] = [
-        'billing_cycle_id' => $billingCycle->id,
-        'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
-        'completed_at' => now()->toIso8601String(),
-        'completed_by_staff_id' => $staffId,
-        'receipt_number' => "REC-{$billingCycle->id}",
-        'grand_total' => $data['billing_data']['grandTotal'],
-        'total_paid' => $data['billing_data']['totalPaid'],
-        'balance' => $balance,
-        'is_fully_paid' => $isFullyPaid,
-        'payment_methods' => $data['payment_methods'],
-        'discount' => [
-            'type' => $data['discount']['type'],
-            'value' => $data['discount']['value'],
-            'reason' => $data['discount']['reason'] ?? null,
-        ],
-    ];
-
-    // Store latest billing summary at root level for quick access
-    $metadata['latest_billing'] = [
-        'billing_cycle_id' => $billingCycle->id,
-        'receipt_number' => "REC-{$billingCycle->id}",
-        'completed_at' => now()->toIso8601String(),
-        'grand_total' => $data['billing_data']['grandTotal'],
-        'balance' => $balance,
-        'payment_status' => $visit->payment_status,
-    ];
-
-    // If visit is completed, add completion metadata
-    if ($isFullyPaid) {
-        $metadata['visit_completion'] = [
+        // Add billing metadata
+        $metadata = is_array($visit->metadata) ? $visit->metadata : (json_decode($visit->metadata ?? '{}', true) ?? []);
+        
+        // Initialize billing array if not exists
+        if (!isset($metadata['billing'])) {
+            $metadata['billing'] = [];
+        }
+        
+        // Add this billing transaction
+        $metadata['billing'][] = [
+            'billing_cycle_id' => $billingCycle->id,
+            'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
             'completed_at' => now()->toIso8601String(),
             'completed_by_staff_id' => $staffId,
-            'completion_reason' => 'billing_finalized',
-            'final_balance' => $balance,
+            'receipt_number' => "REC-{$billingCycle->id}",
+            'grand_total' => $data['billing_data']['grandTotal'],
+            'total_paid' => $data['billing_data']['totalPaid'],
+            'balance' => $balance,
+            'is_fully_paid' => $isFullyPaid,
+            'payment_methods' => $data['payment_methods'],
+            'discount' => [
+                'type' => $data['discount']['type'],
+                'value' => $data['discount']['value'],
+                'reason' => $data['discount']['reason'] ?? null,
+            ],
+        ];
+
+        // Store latest billing summary at root level for quick access
+        $metadata['latest_billing'] = [
             'billing_cycle_id' => $billingCycle->id,
             'receipt_number' => "REC-{$billingCycle->id}",
+            'completed_at' => now()->toIso8601String(),
+            'grand_total' => $data['billing_data']['grandTotal'],
+            'balance' => $balance,
+            'payment_status' => $visit->payment_status,
         ];
+
+        // If visit is completed, add completion metadata
+        if ($isFullyPaid) {
+            $metadata['visit_completion'] = [
+                'completed_at' => now()->toIso8601String(),
+                'completed_by_staff_id' => $staffId,
+                'completion_reason' => 'billing_finalized',
+                'final_balance' => $balance,
+                'billing_cycle_id' => $billingCycle->id,
+                'receipt_number' => "REC-{$billingCycle->id}",
+            ];
+        }
+
+        $visit->metadata = $metadata;
+        $visit->save();
+        
+        Log::info('Visit billing status updated', [
+            'visit_id' => $visit->id,
+            'payment_status' => $visit->payment_status,
+            'current_phase' => $visit->current_phase,
+            'visit_status' => $visit->status,
+            'balance' => $balance,
+            'is_fully_paid' => $isFullyPaid,
+            'billing_cycle_id' => $billingCycle->id,
+        ]);
     }
-
-    $visit->metadata = $metadata;
-
-    $visit->save();
-    
-    Log::info('Visit billing status updated', [
-        'visit_id' => $visit->id,
-        'payment_status' => $visit->payment_status,
-        'current_phase' => $visit->current_phase,
-        'visit_status' => $visit->status,
-        'balance' => $balance,
-        'is_fully_paid' => $isFullyPaid,
-        'billing_cycle_id' => $billingCycle->id,
-    ]);
-}
 
     /**
      * Create BillingCycle record
@@ -565,7 +820,7 @@ protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCy
                 'visit_id' => $data['visit_id'],
                 
                 // Service snapshot (frozen at time of billing)
-                // 'service_version_id' => $service['id'],//TODO: To be uncommented in the feature after integrating with service version.
+                // 'service_version_id' => $service['id'], // TODO: To be uncommented after integrating with service version
                 'service_version_snapshot' => json_encode($service),
                 'service_code' => $service['code'],
                 'service_description' => $service['name'],
@@ -667,22 +922,33 @@ protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCy
             // Parse and transform billing data
             $billingData = $this->transformBillingData($billingCycle, $visit);
 
+            Log::info('Billing data retrieved successfully', [
+                'visit_id' => $visitId,
+                'billing_cycle_id' => $billingCycle->id,
+            ]);
+
             return [
                 'success' => true,
                 'message' => 'Billing data retrieved successfully.',
                 'data' => $billingData,
             ];
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve billing data in service', [
+
+        } catch (Throwable $e) {
+            Log::error('Failed to retrieve billing data', [
                 'visit_id' => $visitId,
-                'error' => $e->getMessage(),
+                'facility_id' => $facilityId,
+                'error_message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
             return [
                 'success' => false,
-                'message' => 'An error occurred while retrieving billing data.',
-                'error' => $e->getMessage(),
+                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support.',
+                'errors' => ['system' => ['Failed to retrieve billing information.']],
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }
@@ -746,7 +1012,7 @@ protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCy
                     try {
                         $ts = $date->timestamp;
                         return is_numeric($ts) ? ((int) $ts * 1000) : 0;
-                    } catch (\Throwable $e) {
+                    } catch (Throwable $e) {
                         return 0;
                     }
                 }

@@ -376,7 +376,6 @@ class PatientController extends Controller
                         // minimal required visit fields
                         'visit_type' => 'outpatient',
                         'acuity_score' => 3,
-                        'chief_complaints' => ['Reason for visit not yet specified'],
                         'arrived_at' => now(),
                         'waiting_since' => now(),
 

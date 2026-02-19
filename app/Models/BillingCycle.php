@@ -157,6 +157,15 @@ class BillingCycle extends Model
     }
 
     /**
+     * Billing cycle having many invoice line items.
+     */
+       public function lineItems()
+    {
+        
+        return $this->hasMany(InvoiceLineItem::class, 'billing_cycle_id');
+    }
+
+    /**
      * Relationship with Patient model
      *
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo

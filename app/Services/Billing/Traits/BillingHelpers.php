@@ -122,22 +122,49 @@ trait BillingHelpers
 
     /**
      * Calculate insurance and patient payments
+     * 
+     * FIXED: Properly calculate payment split by summing actual payment methods
+     * instead of relying on totalPaid which might be inconsistent
      *
      * @param array $paymentMethods Payment methods array
-     * @param float $totalPaid Total amount paid
+     * @param float $totalPaid Total amount paid (for validation)
      * @return array Insurance and patient payment amounts
      */
     public function calculatePaymentSplit(array $paymentMethods, float $totalPaid): array
     {
+        // Calculate insurance payment by summing all insurance payment methods
         $insurancePayment = collect($paymentMethods)
             ->where('type', 'insurance')
             ->sum('amount');
         
-        $patientPayment = $totalPaid - $insurancePayment;
+        // Calculate patient payment by summing all non-insurance payment methods
+        $patientPayment = collect($paymentMethods)
+            ->where('type', '!=', 'insurance')
+            ->sum('amount');
+        
+        // Calculate total from payment methods for validation
+        $calculatedTotal = $insurancePayment + $patientPayment;
+        
+        // If there's a mismatch, log it and use the calculated total
+        if (abs($calculatedTotal - $totalPaid) > 0.01) {
+            Log::warning('Payment total mismatch detected in calculatePaymentSplit', [
+                'provided_total_paid' => $totalPaid,
+                'calculated_total' => $calculatedTotal,
+                'insurance_payment' => $insurancePayment,
+                'patient_payment' => $patientPayment,
+                'payment_methods' => $paymentMethods,
+                'difference' => $calculatedTotal - $totalPaid,
+            ]);
+            
+            // Use the calculated total from payment methods for consistency
+            // This ensures we store what was actually paid according to payment methods
+            $totalPaid = $calculatedTotal;
+        }
 
         return [
             'insurance_payment' => $insurancePayment,
             'patient_payment' => $patientPayment,
+            'total_paid' => $calculatedTotal, // Add the validated total
         ];
     }
 

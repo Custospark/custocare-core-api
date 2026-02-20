@@ -14,6 +14,11 @@ use App\Http\Controllers\Api\FacilityController;
 */
 
 Route::middleware(['auth:sanctum'])->group(function () {
+     
+   //Get Facility Identity.
+
+    Route::get('facility/identity', [FacilityController::class, 'getFacilityDetails']);
+
     
     // Facility resource routes
     Route::apiResource('facilities', FacilityController::class)
@@ -24,6 +29,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('facilities/{facility:facility_uuid}', [FacilityController::class, 'destroy'])
         ->name('facilities.destroy')
         ->middleware('can:delete,facility');
+
     
     // Force delete facility (permanent)
     Route::delete('facilities/{facility:facility_uuid}/force', [FacilityController::class, 'forceDelete'])

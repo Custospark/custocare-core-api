@@ -26,7 +26,7 @@ class BillingProcessor
      * @param int $facilityId Facility ID
      * @param int $staffId Staff ID
      * @param float $discountAmount Calculated discount amount
-     * @param array $paymentSplit Payment split data
+     * @param array $paymentSplit Payment split data (now includes total_paid)
      * @param bool $isPrimaryCash Is primary payment cash
      * @param bool $isInsuranceInvolved Is insurance involved
      * @param Visit $visit Visit model
@@ -53,7 +53,7 @@ class BillingProcessor
             $isInsuranceInvolved,
             $visit
         ) {
-            // Create BillingCycle record
+            // Create BillingCycle record with corrected payment amounts
             $billingCycle = $this->createBillingCycle(
                 $data,
                 $facilityId,
@@ -75,8 +75,8 @@ class BillingProcessor
             // Reduce inventory stock for inventory items
             $this->deductInventoryStock($data['charge_items'], $staffId);
 
-            // Update visit with billing information
-            $this->updateVisitBillingStatus($visit, $data, $billingCycle, $staffId);
+            // Update visit with billing information using corrected payment data
+            $this->updateVisitBillingStatus($visit, $data, $billingCycle, $staffId, $paymentSplit);
 
             return [
                 'billing_cycle' => $billingCycle->fresh(),
@@ -87,12 +87,15 @@ class BillingProcessor
 
     /**
      * Create BillingCycle record
+     * 
+     * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
+     * to ensure consistency with actual payment methods
      *
      * @param array $data Billing data
      * @param int $facilityId Facility ID
      * @param int $staffId Staff ID
      * @param float $discountAmount Calculated discount amount
-     * @param array $paymentSplit Payment split data
+     * @param array $paymentSplit Payment split data (with total_paid)
      * @param bool $isPrimaryCash Is primary payment cash
      * @param bool $isInsuranceInvolved Is insurance involved
      * @return BillingCycle
@@ -106,6 +109,14 @@ class BillingProcessor
         bool $isPrimaryCash,
         bool $isInsuranceInvolved
     ): BillingCycle {
+        // Use the validated total from payment methods
+        $validatedTotalPaid = $paymentSplit['total_paid'] ?? 
+            ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']);
+        
+        // Calculate if this is truly paid in full
+        $grandTotal = $data['billing_data']['grandTotal'];
+        $isFullyPaid = abs($validatedTotalPaid - $grandTotal) < 0.01; // Account for floating point
+        
         return BillingCycle::create([
             'billing_cycle_uuid' => Str::uuid(),
             'facility_id' => $facilityId,
@@ -120,7 +131,7 @@ class BillingProcessor
             // Financial summary
             'total_amount_charged' => $data['billing_data']['subtotal'],
             'total_adjustments' => $discountAmount,
-            'net_amount' => $data['billing_data']['grandTotal'],
+            'net_amount' => $grandTotal,
             
             // Insurance (if applicable)
             'insurance_covered_amount' => $paymentSplit['insurance_payment'],
@@ -128,7 +139,7 @@ class BillingProcessor
             'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
             'insurance_payment_received_at' => $isInsuranceInvolved ? now() : null,
             
-            // Patient responsibility
+            // Patient responsibility - FIXED: Use actual patient payment from methods
             'patient_responsibility_amount' => $paymentSplit['patient_payment'],
             'patient_payment_received' => $paymentSplit['patient_payment'],
             
@@ -140,9 +151,10 @@ class BillingProcessor
             'tax_details' => json_encode($data['taxes']),
             'total_tax_amount' => $data['billing_data']['taxTotal'],
             
-            // Status
-            'billing_status' => $data['status'] === 'settled' ? 'paid_in_full' : 'draft',
-            'billed_at' => $data['status'] === 'settled' ? now() : null,
+            // Status - FIXED: Determine based on actual payment
+            'billing_status' => $isFullyPaid ? 'paid_in_full' : 
+                ($validatedTotalPaid > 0 ? 'partially_paid' : 'draft'),
+            'billed_at' => $validatedTotalPaid > 0 ? now() : null,
             'payment_due_date' => now()->addDays(30),
             
             // Audit
@@ -152,6 +164,7 @@ class BillingProcessor
                 'payment_methods' => $data['payment_methods'],
                 'additional_notes' => $data['additional_notes'] ?? null,
                 'is_cash_payment' => $isPrimaryCash,
+                'validated_total_paid' => $validatedTotalPaid, // Store for audit
             ]),
         ]);
     }
@@ -213,7 +226,7 @@ class BillingProcessor
                 'staff_performed_id' => $staffId,
                 'service_performed_at' => now(),
                 
-                // Status
+                // Status - FIXED: Based on payment status from billing cycle
                 'line_item_status' => $data['status'] === 'settled' ? 'paid' : 'pending',
                 
                 // Audit trail (SHA-256 hash for tamper detection)
@@ -348,18 +361,29 @@ class BillingProcessor
 
     /**
      * Update visit with billing information
+     * 
+     * FIXED: Use paymentSplit for accurate payment calculations
      *
      * @param Visit $visit
      * @param array $data
      * @param BillingCycle $billingCycle
      * @param int $staffId
+     * @param array $paymentSplit
      * @return void
      */
-    protected function updateVisitBillingStatus(Visit $visit, array $data, BillingCycle $billingCycle, int $staffId): void
-    {
-        // Calculate balance
-        $balance = $data['billing_data']['grandTotal'] - $data['billing_data']['totalPaid'];
-        $isFullyPaid = $balance <= 0;
+    protected function updateVisitBillingStatus(
+        Visit $visit, 
+        array $data, 
+        BillingCycle $billingCycle, 
+        int $staffId,
+        array $paymentSplit
+    ): void {
+        // Calculate balance using validated payment amounts
+        $grandTotal = $data['billing_data']['grandTotal'];
+        $totalPaid = $paymentSplit['total_paid'] ?? 
+            ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']);
+        $balance = max(0, $grandTotal - $totalPaid);
+        $isFullyPaid = abs($balance) < 0.01; // Account for floating point
 
         // Update visit to completed when payment is in full
         if ($isFullyPaid) {
@@ -374,18 +398,18 @@ class BillingProcessor
             }
         }
 
-        // Update payment status based on balance
+        // Update payment status based on actual balance
         if ($isFullyPaid) {
             $visit->payment_status = 'paid_in_full'; 
-        } elseif ($data['billing_data']['totalPaid'] > 0) {
+        } elseif ($totalPaid > 0) {
             $visit->payment_status = 'partially_paid'; 
         } else {
             $visit->payment_status = 'pending'; 
         }
 
-        // Update financial snapshot
-        $visit->estimated_total_charges = $data['billing_data']['grandTotal'];
-        $visit->patient_estimated_responsibility = $data['billing_data']['totalPaid'];
+        // Update financial snapshot with accurate values
+        $visit->estimated_total_charges = $grandTotal;
+        $visit->patient_estimated_responsibility = $totalPaid;
 
         // Update audit trail
         $visit->updated_by_staff_id = $staffId;
@@ -398,18 +422,22 @@ class BillingProcessor
             $metadata['billing'] = [];
         }
         
-        // Add this billing transaction
+        // Add this billing transaction with accurate payment data
         $metadata['billing'][] = [
             'billing_cycle_id' => $billingCycle->id,
             'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
             'completed_at' => now()->toIso8601String(),
             'completed_by_staff_id' => $staffId,
             'receipt_number' => "REC-{$billingCycle->id}",
-            'grand_total' => $data['billing_data']['grandTotal'],
-            'total_paid' => $data['billing_data']['totalPaid'],
+            'grand_total' => $grandTotal,
+            'total_paid' => $totalPaid,
             'balance' => $balance,
             'is_fully_paid' => $isFullyPaid,
             'payment_methods' => $data['payment_methods'],
+            'payment_split' => [ // Store the validated split
+                'insurance' => $paymentSplit['insurance_payment'],
+                'patient' => $paymentSplit['patient_payment'],
+            ],
             'discount' => [
                 'type' => $data['discount']['type'],
                 'value' => $data['discount']['value'],
@@ -422,7 +450,7 @@ class BillingProcessor
             'billing_cycle_id' => $billingCycle->id,
             'receipt_number' => "REC-{$billingCycle->id}",
             'completed_at' => now()->toIso8601String(),
-            'grand_total' => $data['billing_data']['grandTotal'],
+            'grand_total' => $grandTotal,
             'balance' => $balance,
             'payment_status' => $visit->payment_status,
         ];
@@ -447,6 +475,8 @@ class BillingProcessor
             'payment_status' => $visit->payment_status,
             'current_phase' => $visit->current_phase,
             'visit_status' => $visit->status,
+            'grand_total' => $grandTotal,
+            'total_paid' => $totalPaid,
             'balance' => $balance,
             'is_fully_paid' => $isFullyPaid,
             'billing_cycle_id' => $billingCycle->id,

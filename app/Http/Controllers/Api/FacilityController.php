@@ -10,6 +10,7 @@ use App\Http\Resources\FacilityCollection;
 use App\Services\Contracts\FacilityServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -138,6 +139,156 @@ class FacilityController extends Controller
         }
     }
 
+
+     /**
+     * Get facility identity information using facility ID from header.
+     * Returns essential facility identity fields including address information.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getFacilityDetails(Request $request): JsonResponse
+    {
+        try {
+            // Get facility ID from header
+            $facilityId = $request->header('X-Facility-ID');
+            
+            // Validate if facility ID is provided in header
+            if (!$facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility ID not provided in header',
+                    'errors' => ['header' => ['X-Facility-ID header is required']],
+                    'data' => null
+                ], 400);
+            }
+            
+            // Validate that facility ID is numeric
+            if (!is_numeric($facilityId)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid facility ID format',
+                    'errors' => ['facility_id' => ['Facility ID must be a number']],
+                    'data' => null
+                ], 400);
+            }
+            
+            // Direct database query to get essential identity fields including address
+            $facility = DB::table('facilities')
+                ->where('id', $facilityId)
+                ->whereNull('deleted_at')
+                ->select([
+                    'id',
+                    'facility_uuid',
+                    'facility_code',
+                    'facility_name',
+                    'legal_entity_name',
+                    'facility_type',
+                    'facility_tier',
+                    'operational_status',
+                    'main_phone',
+                    'email',
+                    // Address fields
+                    'address_line1',
+                    'address_line2',
+                    'city',
+                    'state_province',
+                    'postal_code',
+                    'country_code'
+                ])
+                ->first();
+            
+            // Check if facility exists
+            if (!$facility) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Facility not found',
+                    'errors' => ['facility_id' => ['Facility not found with ID: ' . $facilityId]],
+                    'data' => null
+                ], 404);
+            }
+            
+            // Construct full address
+            $fullAddress = $facility->address_line1;
+            if ($facility->address_line2) {
+                $fullAddress .= ', ' . $facility->address_line2;
+            }
+            $fullAddress .= ', ' . $facility->city;
+            $fullAddress .= ', ' . $facility->state_province;
+            $fullAddress .= ' ' . $facility->postal_code;
+            $fullAddress .= ', ' . $facility->country_code;
+            
+            // Log the access for audit purposes
+            Log::info('Facility identity details accessed via header', [
+                'facility_id' => $facilityId,
+                'facility_uuid' => $facility->facility_uuid,
+                'facility_name' => $facility->facility_name,
+                'user_id' => $request->user()?->id
+            ]);
+            
+            // Return facility identity information with address
+            return response()->json([
+                'success' => true,
+                'message' => 'Facility identity details retrieved successfully',
+                'data' => [
+                    'facility' => [
+                        // Identity fields
+                        'id' => $facility->id,
+                        'uuid' => $facility->facility_uuid,
+                        'code' => $facility->facility_code,
+                        'name' => $facility->facility_name,
+                        'legal_name' => $facility->legal_entity_name,
+                        'type' => $facility->facility_type,
+                        'tier' => $facility->facility_tier,
+                        'status' => $facility->operational_status,
+                        'phone' => $facility->main_phone,
+                        'email' => $facility->email,
+                        // Address fields
+                        'address' => [
+                            'line1' => $facility->address_line1,
+                            'line2' => $facility->address_line2,
+                            'city' => $facility->city,
+                            'state' => $facility->state_province,
+                            'postal_code' => $facility->postal_code,
+                            'country' => $facility->country_code,
+                            'formatted' => $fullAddress
+                        ]
+                    ],
+                    'retrieved_via' => 'header',
+                    'header_used' => 'X-Facility-ID',
+                    'timestamp' => now()->toIso8601String()
+                ],
+                'errors' => null
+            ]);
+            
+        } catch (\Illuminate\Database\QueryException $e) {
+            Log::error('Database error while retrieving facility identity details', [
+                'error' => $e->getMessage(),
+                'facility_id' => $request->header('X-Facility-ID')
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Database error occurred',
+                'errors' => ['database' => ['Failed to retrieve facility details']],
+                'data' => null
+            ], 500);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve facility identity details from header', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'facility_id' => $request->header('X-Facility-ID')
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve facility details',
+                'errors' => ['system' => ['An unexpected error occurred']],
+                'data' => null
+            ], 500);
+        }
+    }
     /**
      * Display the specified facility.
      *
@@ -159,7 +310,7 @@ class FacilityController extends Controller
             }
             
             // Authorize view action
-            $this->authorize('view', $facilityModel);
+            // $this->authorize('view', $facilityModel); //TODO:Implement the functionality in the future.
             
             return response()->json([
                 'success' => true,

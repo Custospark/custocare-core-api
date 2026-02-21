@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class BillingCycle extends Model
@@ -176,6 +177,12 @@ class BillingCycle extends Model
     {
         
         return $this->hasMany(InvoiceLineItem::class, 'billing_cycle_id');
+    }
+
+    // BillingCycle.php
+    public function adjustments(): HasMany
+    {
+        return $this->hasMany(FinancialAdjustment::class, 'billing_cycle_id');
     }
 
     /**

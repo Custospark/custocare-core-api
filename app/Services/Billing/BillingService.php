@@ -486,6 +486,7 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
 
         // Billing cycle info
         'billing_cycle_id'   => $billingCycle->id,
+        'billing_status'   => $billingCycle->billing_status,
         'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
         'receipt_number'     => "REC-{$billingCycle->id}",
         
@@ -540,9 +541,11 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
             // Build the base query with eager loading
             $query = BillingCycle::query()
                 ->where('facility_id', $facilityId)
+                ->withTrashed() // ← include soft-deleted (voided) records
                 ->with([
+                    'visit' => fn($q) => $q->withTrashed(),
                     'visit.patient.user',
-                    'lineItems'
+                    'lineItems' => fn($q) => $q->withTrashed(),
                 ])
                 ->orderByDesc('created_at');
 

@@ -151,9 +151,8 @@ class BillingProcessor
             'tax_details' => json_encode($data['taxes']),
             'total_tax_amount' => $data['billing_data']['taxTotal'],
             
-            // Status - FIXED: Determine based on actual payment
-            'billing_status' => $isFullyPaid ? 'paid_in_full' : 
-                ($validatedTotalPaid > 0 ? 'partially_paid' : 'draft'),
+            // Status - Note:Currently processing only full payments.
+            'billing_status' => 'paid_in_full', 
             'billed_at' => $validatedTotalPaid > 0 ? now() : null,
             'payment_due_date' => now()->addDays(30),
             

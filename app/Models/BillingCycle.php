@@ -155,6 +155,19 @@ class BillingCycle extends Model
     {
         return $this->belongsTo(Visit::class);
     }
+    public function financialAdjustments()
+    {
+        return $this->hasMany(FinancialAdjustment::class);
+    }
+
+    public function getEffectiveNetAmountAttribute()
+    {
+        $totalAdjustments = $this->financialAdjustments()
+            ->where('status', 'completed')
+            ->sum('adjustment_amount');
+        
+        return max(0, $this->net_amount - $totalAdjustments);
+    }
 
     /**
      * Billing cycle having many invoice line items.

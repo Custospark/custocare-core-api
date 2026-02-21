@@ -164,6 +164,10 @@ class Staff extends Model
     {
         return $this->hasMany(Staff::class, 'reports_to_staff_id');
     }
+      public function requestedAdjustments(): HasMany
+    {
+        return $this->hasMany(FinancialAdjustment::class, 'requested_by_staff_id', 'id');
+    }
 
     /**
      * Get the staff member who created this record.

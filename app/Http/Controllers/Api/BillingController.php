@@ -33,258 +33,258 @@ class BillingController extends Controller
      * @param Request $request
      * @return JsonResponse
      */
-  public function finalize(Request $request): JsonResponse
-{
-    // Log full incoming request for debugging
-    Log::info('Billing finalization request received', [
-        'method' => $request->method(),
-        'url' => $request->fullUrl(),
-        'headers' => [
-            'x-facility-id' => $request->header('X-Facility-Id'),
-            'x-staff-id' => $request->header('X-Staff-Id'),
-            'content-type' => $request->header('Content-Type'),
-            'user-agent' => $request->header('User-Agent'),
-        ],
-        'payload' => $request->all(),
-    ]);
-
-    try {
-        // Get facility and staff IDs from headers/context
-        $facilityId = (int) $request->header('X-Facility-Id');
-        $staffId = (int) $request->header('X-Staff-Id');
-
-        // Validate headers first
-        $headerErrors = [];
-        
-        if (!$facilityId) {
-            $headerErrors['facility_id'] = ['X-Facility-Id header is required.'];
-            Log::error('Missing X-Facility-Id header', [
-                'headers' => $request->headers->all(),
-            ]);
-        }
-
-        if (!$staffId) {
-            $headerErrors['staff_id'] = ['X-Staff-Id header is required.'];
-            Log::error('Missing X-Staff-Id header', [
-                'headers' => $request->headers->all(),
-            ]);
-        }
-
-        if (!empty($headerErrors)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Missing required headers.',
-                'errors' => $headerErrors,
-            ], 422);
-        }
-
-        // Get all request data
-        $data = $request->all();
-        
-        // Log raw data structure for validation comparison
-        Log::debug('Raw request data structure', [
-            'has_visit_id' => isset($data['visit_id']),
-            'has_patient_id' => isset($data['patient_id']),
-            'has_charge_items' => isset($data['charge_items']),
-            'charge_items_count' => isset($data['charge_items']) ? count($data['charge_items']) : 0,
-            'has_discount' => isset($data['discount']),
-            'has_taxes' => isset($data['taxes']),
-            'taxes_count' => isset($data['taxes']) ? count($data['taxes']) : 0,
-            'has_payment_methods' => isset($data['payment_methods']),
-            'payment_methods_count' => isset($data['payment_methods']) ? count($data['payment_methods']) : 0,
-            'has_billing_data' => isset($data['billing_data']),
-            'has_status' => isset($data['status']),
-            'status_value' => $data['status'] ?? null,
+    public function finalize(Request $request): JsonResponse
+    {
+        // Log full incoming request for debugging
+        Log::info('Billing finalization request received', [
+            'method' => $request->method(),
+            'url' => $request->fullUrl(),
+            'headers' => [
+                'x-facility-id' => $request->header('X-Facility-Id'),
+                'x-staff-id' => $request->header('X-Staff-Id'),
+                'content-type' => $request->header('Content-Type'),
+                'user-agent' => $request->header('User-Agent'),
+            ],
+            'payload' => $request->all(),
         ]);
-
-        // Transform status from 'ready' to 'settled' BEFORE validation
-        $originalStatus = $data['status'] ?? null;
-        if (isset($data['status']) && $data['status'] === 'ready') {
-            $data['status'] = 'settled';
-            Log::info('Status transformed', [
-                'original' => $originalStatus,
-                'transformed' => 'settled'
-            ]);
-        }
-        
-        // Create new request with transformed data for validation
-        $request->replace($data);
-
-        // Define validation rules for reference
-        $rules = [
-            'visit_id' => 'required|integer|exists:visits,id',
-            'patient_id' => 'required|integer|exists:patients,id',
-            'charge_items' => 'required|array|min:1',
-            'charge_items.*.service_key' => 'required|string',
-            'charge_items.*.service' => 'required|array',
-            'charge_items.*.service.id' => 'required|integer',
-            'charge_items.*.service.code' => 'required|string',
-            'charge_items.*.service.name' => 'required|string',
-            'charge_items.*.service.unitPrice' => 'required|numeric|min:0',
-            'charge_items.*.service.category' => 'required|string',
-            'charge_items.*.quantity' => 'required|integer|min:1',
-            'charge_items.*.totalAmount' => 'required|numeric|min:0',
-            'discount' => 'required|array',
-            'discount.type' => 'required|in:percentage,fixed',
-            'discount.value' => 'required|numeric|min:0',
-            'discount.reason' => 'nullable|string|max:255',
-            'taxes' => 'required|array',
-            'taxes.*.name' => 'required|string',
-            'taxes.*.rate' => 'required|numeric|min:0|max:100',
-            'taxes.*.amount' => 'required|numeric|min:0',
-            'payment_methods' => 'required|array|min:1',
-            'payment_methods.*.type' => 'required|in:cash,card,insurance,mobile,bank_transfer,cheque,mixed,other',
-            'payment_methods.*.amount' => 'required|numeric|min:0',
-            'payment_methods.*.reference' => 'nullable|string',
-            'payment_methods.*.details' => 'nullable',
-            'billing_data' => 'required|array',
-            'billing_data.subtotal' => 'required|numeric|min:0',
-            'billing_data.discountAmount' => 'required|numeric|min:0',
-            'billing_data.taxableAmount' => 'required|numeric|min:0',
-            'billing_data.taxTotal' => 'required|numeric|min:0',
-            'billing_data.grandTotal' => 'required|numeric|min:0',
-            'billing_data.totalPaid' => 'required|numeric|min:0',
-            'billing_data.balance' => 'required|numeric|min:0',
-            'additional_notes' => 'nullable|string',
-            'status' => 'required|in:draft,settled',
-        ];
 
         try {
-            // Validate request data
-            $validated = $request->validate($rules);
+            // Get facility and staff IDs from headers/context
+            $facilityId = (int) $request->header('X-Facility-Id');
+            $staffId = (int) $request->header('X-Staff-Id');
+
+            // Validate headers first
+            $headerErrors = [];
             
+            if (!$facilityId) {
+                $headerErrors['facility_id'] = ['X-Facility-Id header is required.'];
+                Log::error('Missing X-Facility-Id header', [
+                    'headers' => $request->headers->all(),
+                ]);
+            }
+
+            if (!$staffId) {
+                $headerErrors['staff_id'] = ['X-Staff-Id header is required.'];
+                Log::error('Missing X-Staff-Id header', [
+                    'headers' => $request->headers->all(),
+                ]);
+            }
+
+            if (!empty($headerErrors)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing required headers.',
+                    'errors' => $headerErrors,
+                ], 422);
+            }
+
+            // Get all request data
+            $data = $request->all();
+            
+            // Log raw data structure for validation comparison
+            Log::debug('Raw request data structure', [
+                'has_visit_id' => isset($data['visit_id']),
+                'has_patient_id' => isset($data['patient_id']),
+                'has_charge_items' => isset($data['charge_items']),
+                'charge_items_count' => isset($data['charge_items']) ? count($data['charge_items']) : 0,
+                'has_discount' => isset($data['discount']),
+                'has_taxes' => isset($data['taxes']),
+                'taxes_count' => isset($data['taxes']) ? count($data['taxes']) : 0,
+                'has_payment_methods' => isset($data['payment_methods']),
+                'payment_methods_count' => isset($data['payment_methods']) ? count($data['payment_methods']) : 0,
+                'has_billing_data' => isset($data['billing_data']),
+                'has_status' => isset($data['status']),
+                'status_value' => $data['status'] ?? null,
+            ]);
+
+            // Transform status from 'ready' to 'settled' BEFORE validation
+            $originalStatus = $data['status'] ?? null;
+            if (isset($data['status']) && $data['status'] === 'ready') {
+                $data['status'] = 'settled';
+                Log::info('Status transformed', [
+                    'original' => $originalStatus,
+                    'transformed' => 'settled'
+                ]);
+            }
+            
+            // Create new request with transformed data for validation
+            $request->replace($data);
+
+            // Define validation rules for reference
+            $rules = [
+                'visit_id' => 'required|integer|exists:visits,id',
+                'patient_id' => 'required|integer|exists:patients,id',
+                'charge_items' => 'required|array|min:1',
+                'charge_items.*.service_key' => 'required|string',
+                'charge_items.*.service' => 'required|array',
+                'charge_items.*.service.id' => 'required|integer',
+                'charge_items.*.service.code' => 'required|string',
+                'charge_items.*.service.name' => 'required|string',
+                'charge_items.*.service.unitPrice' => 'required|numeric|min:0',
+                'charge_items.*.service.category' => 'required|string',
+                'charge_items.*.quantity' => 'required|integer|min:1',
+                'charge_items.*.totalAmount' => 'required|numeric|min:0',
+                'discount' => 'required|array',
+                'discount.type' => 'required|in:percentage,fixed',
+                'discount.value' => 'required|numeric|min:0',
+                'discount.reason' => 'nullable|string|max:255',
+                'taxes' => 'required|array',
+                'taxes.*.name' => 'required|string',
+                'taxes.*.rate' => 'required|numeric|min:0|max:100',
+                'taxes.*.amount' => 'required|numeric|min:0',
+                'payment_methods' => 'required|array|min:1',
+                'payment_methods.*.type' => 'required|in:cash,card,insurance,mobile,bank_transfer,cheque,mixed,other',
+                'payment_methods.*.amount' => 'required|numeric|min:0',
+                'payment_methods.*.reference' => 'nullable|string',
+                'payment_methods.*.details' => 'nullable',
+                'billing_data' => 'required|array',
+                'billing_data.subtotal' => 'required|numeric|min:0',
+                'billing_data.discountAmount' => 'required|numeric|min:0',
+                'billing_data.taxableAmount' => 'required|numeric|min:0',
+                'billing_data.taxTotal' => 'required|numeric|min:0',
+                'billing_data.grandTotal' => 'required|numeric|min:0',
+                'billing_data.totalPaid' => 'required|numeric|min:0',
+                'billing_data.balance' => 'required|numeric|min:0',
+                'additional_notes' => 'nullable|string',
+                'status' => 'required|in:draft,settled',
+            ];
+
+            try {
+                // Validate request data
+                $validated = $request->validate($rules);
+                
+            } catch (ValidationException $e) {
+                // Log detailed validation errors for debugging
+                Log::error('Validation failed for billing finalization', [
+                    'errors' => $e->errors(),
+                    'received_data' => [
+                        'visit_id' => $data['visit_id'] ?? null,
+                        'patient_id' => $data['patient_id'] ?? null,
+                        'charge_items_count' => count($data['charge_items'] ?? []),
+                        'payment_methods_count' => count($data['payment_methods'] ?? []),
+                        'taxes_count' => count($data['taxes'] ?? []),
+                        'has_discount' => isset($data['discount']),
+                        'has_billing_data' => isset($data['billing_data']),
+                        'status' => $data['status'] ?? null,
+                    ],
+                    'sample_charge_item' => isset($data['charge_items'][0]) ? [
+                        'has_service_key' => isset($data['charge_items'][0]['service_key']),
+                        'has_service' => isset($data['charge_items'][0]['service']),
+                        'service_fields' => isset($data['charge_items'][0]['service']) ? 
+                            array_keys($data['charge_items'][0]['service']) : [],
+                        'has_quantity' => isset($data['charge_items'][0]['quantity']),
+                        'has_totalAmount' => isset($data['charge_items'][0]['totalAmount']),
+                    ] : null,
+                    'sample_payment_method' => isset($data['payment_methods'][0]) ? [
+                        'has_type' => isset($data['payment_methods'][0]['type']),
+                        'has_amount' => isset($data['payment_methods'][0]['amount']),
+                        'has_reference' => isset($data['payment_methods'][0]['reference']),
+                        'type_value' => $data['payment_methods'][0]['type'] ?? null,
+                    ] : null,
+                    'billing_data_fields' => isset($data['billing_data']) ? 
+                        array_keys($data['billing_data']) : [],
+                    'required_fields_present' => [
+                        'visit_id' => isset($data['visit_id']),
+                        'patient_id' => isset($data['patient_id']),
+                        'charge_items' => isset($data['charge_items']) && is_array($data['charge_items']),
+                        'discount' => isset($data['discount']) && is_array($data['discount']),
+                        'taxes' => isset($data['taxes']) && is_array($data['taxes']),
+                        'payment_methods' => isset($data['payment_methods']) && is_array($data['payment_methods']),
+                        'billing_data' => isset($data['billing_data']) && is_array($data['billing_data']),
+                        'status' => isset($data['status']),
+                    ],
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed. Please check the request payload structure.',
+                    'errors' => $e->errors(),
+                    'debug' => config('app.debug') ? [
+                        'received_structure' => [
+                            'keys' => array_keys($data),
+                            'charge_items_keys' => isset($data['charge_items'][0]) ? 
+                                array_keys($data['charge_items'][0]) : [],
+                            'payment_methods_keys' => isset($data['payment_methods'][0]) ? 
+                                array_keys($data['payment_methods'][0]) : [],
+                            'billing_data_keys' => isset($data['billing_data']) ? 
+                                array_keys($data['billing_data']) : [],
+                        ],
+                    ] : null,
+                ], 422);
+            }
+
+            // Log successful validation
+            Log::info('Billing validation passed', [
+                'facility_id' => $facilityId,
+                'staff_id' => $staffId,
+                'visit_id' => $validated['visit_id'],
+                'patient_id' => $validated['patient_id'],
+                'original_status' => $originalStatus,
+                'final_status' => $validated['status'],
+                'grand_total' => $validated['billing_data']['grandTotal'],
+                'total_paid' => $validated['billing_data']['totalPaid'],
+                'balance' => $validated['billing_data']['balance'],
+                'payment_methods_count' => count($validated['payment_methods']),
+                'charge_items_count' => count($validated['charge_items']),
+            ]);
+
+            // Process billing
+            $result = $this->billingService->finalizeBilling($validated, $facilityId, $staffId);
+
+            if (!$result['success']) {
+                Log::warning('Billing service returned error', [
+                    'visit_id' => $validated['visit_id'],
+                    'errors' => $result['errors'] ?? null,
+                    'message' => $result['message'] ?? null,
+                ]);
+                
+                return response()->json($result, 422);
+            }
+
+            Log::info('Billing finalized successfully', [
+                'visit_id' => $validated['visit_id'],
+                'receipt_number' => $result['data']['receipt_number'] ?? null,
+                'transaction_id' => $result['data']['transaction_id'] ?? null,
+            ]);
+
+            return response()->json($result, 201);
+
         } catch (ValidationException $e) {
-            // Log detailed validation errors for debugging
-            Log::error('Validation failed for billing finalization', [
+            // This should not happen as we're catching ValidationException above,
+            // but kept for safety
+            Log::error('Unexpected validation exception', [
                 'errors' => $e->errors(),
-                'received_data' => [
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+            
+        } catch (\Exception $e) {
+            Log::error('Billing finalization failed with exception', [
+                'error' => $e->getMessage(),
+                'error_class' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => [
                     'visit_id' => $data['visit_id'] ?? null,
                     'patient_id' => $data['patient_id'] ?? null,
-                    'charge_items_count' => count($data['charge_items'] ?? []),
-                    'payment_methods_count' => count($data['payment_methods'] ?? []),
-                    'taxes_count' => count($data['taxes'] ?? []),
-                    'has_discount' => isset($data['discount']),
-                    'has_billing_data' => isset($data['billing_data']),
-                    'status' => $data['status'] ?? null,
-                ],
-                'sample_charge_item' => isset($data['charge_items'][0]) ? [
-                    'has_service_key' => isset($data['charge_items'][0]['service_key']),
-                    'has_service' => isset($data['charge_items'][0]['service']),
-                    'service_fields' => isset($data['charge_items'][0]['service']) ? 
-                        array_keys($data['charge_items'][0]['service']) : [],
-                    'has_quantity' => isset($data['charge_items'][0]['quantity']),
-                    'has_totalAmount' => isset($data['charge_items'][0]['totalAmount']),
-                ] : null,
-                'sample_payment_method' => isset($data['payment_methods'][0]) ? [
-                    'has_type' => isset($data['payment_methods'][0]['type']),
-                    'has_amount' => isset($data['payment_methods'][0]['amount']),
-                    'has_reference' => isset($data['payment_methods'][0]['reference']),
-                    'type_value' => $data['payment_methods'][0]['type'] ?? null,
-                ] : null,
-                'billing_data_fields' => isset($data['billing_data']) ? 
-                    array_keys($data['billing_data']) : [],
-                'required_fields_present' => [
-                    'visit_id' => isset($data['visit_id']),
-                    'patient_id' => isset($data['patient_id']),
-                    'charge_items' => isset($data['charge_items']) && is_array($data['charge_items']),
-                    'discount' => isset($data['discount']) && is_array($data['discount']),
-                    'taxes' => isset($data['taxes']) && is_array($data['taxes']),
-                    'payment_methods' => isset($data['payment_methods']) && is_array($data['payment_methods']),
-                    'billing_data' => isset($data['billing_data']) && is_array($data['billing_data']),
-                    'status' => isset($data['status']),
+                    'has_charge_items' => isset($data['charge_items']),
                 ],
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed. Please check the request payload structure.',
-                'errors' => $e->errors(),
-                'debug' => config('app.debug') ? [
-                    'received_structure' => [
-                        'keys' => array_keys($data),
-                        'charge_items_keys' => isset($data['charge_items'][0]) ? 
-                            array_keys($data['charge_items'][0]) : [],
-                        'payment_methods_keys' => isset($data['payment_methods'][0]) ? 
-                            array_keys($data['payment_methods'][0]) : [],
-                        'billing_data_keys' => isset($data['billing_data']) ? 
-                            array_keys($data['billing_data']) : [],
-                    ],
-                ] : null,
-            ], 422);
+                'message' => 'An unexpected error occurred while processing the billing.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+                'error_type' => config('app.debug') ? get_class($e) : null,
+            ], 500);
         }
-
-        // Log successful validation
-        Log::info('Billing validation passed', [
-            'facility_id' => $facilityId,
-            'staff_id' => $staffId,
-            'visit_id' => $validated['visit_id'],
-            'patient_id' => $validated['patient_id'],
-            'original_status' => $originalStatus,
-            'final_status' => $validated['status'],
-            'grand_total' => $validated['billing_data']['grandTotal'],
-            'total_paid' => $validated['billing_data']['totalPaid'],
-            'balance' => $validated['billing_data']['balance'],
-            'payment_methods_count' => count($validated['payment_methods']),
-            'charge_items_count' => count($validated['charge_items']),
-        ]);
-
-        // Process billing
-        $result = $this->billingService->finalizeBilling($validated, $facilityId, $staffId);
-
-        if (!$result['success']) {
-            Log::warning('Billing service returned error', [
-                'visit_id' => $validated['visit_id'],
-                'errors' => $result['errors'] ?? null,
-                'message' => $result['message'] ?? null,
-            ]);
-            
-            return response()->json($result, 422);
-        }
-
-        Log::info('Billing finalized successfully', [
-            'visit_id' => $validated['visit_id'],
-            'receipt_number' => $result['data']['receipt_number'] ?? null,
-            'transaction_id' => $result['data']['transaction_id'] ?? null,
-        ]);
-
-        return response()->json($result, 201);
-
-    } catch (ValidationException $e) {
-        // This should not happen as we're catching ValidationException above,
-        // but kept for safety
-        Log::error('Unexpected validation exception', [
-            'errors' => $e->errors(),
-            'trace' => $e->getTraceAsString(),
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed.',
-            'errors' => $e->errors(),
-        ], 422);
-        
-    } catch (\Exception $e) {
-        Log::error('Billing finalization failed with exception', [
-            'error' => $e->getMessage(),
-            'error_class' => get_class($e),
-            'file' => $e->getFile(),
-            'line' => $e->getLine(),
-            'trace' => $e->getTraceAsString(),
-            'request_data' => [
-                'visit_id' => $data['visit_id'] ?? null,
-                'patient_id' => $data['patient_id'] ?? null,
-                'has_charge_items' => isset($data['charge_items']),
-            ],
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'An unexpected error occurred while processing the billing.',
-            'error' => config('app.debug') ? $e->getMessage() : null,
-            'error_type' => config('app.debug') ? get_class($e) : null,
-        ], 500);
     }
-}
 
     /**
      * Get billing data for a specific visit

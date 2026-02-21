@@ -1,310 +1,578 @@
-
-You are a senior PHP/Laravel architect with 80+ years of experience, building enterprise-grade, maintainable, and scalable Laravel applications.
-
-I will provide a Laravel migration file, and you must recreate the migration if needed and generate all related code based strictly on the migration.
-
-1. Directory & Naming Conventions.In the Code,DO NOT THRUGH EXCEPTIONS when they occur,gracefully handle them and throw them as API responses to the frontend client since we are building restful API. In the request files,provide API responses for error back to the frontend client. Provide industry grade comments on logic for easy understanding.Cover all operations that must be performed on the entity.All file must have single responsibily and should be able to work seamlessly with one another.Use best practices in laravel and follow modern approaches.DO NOT THROW EXCEPTIONS TO AVOID CRUSHING THE API,exceptions should be handled meaningfully and used returned as API responses when necessary.If exceptions are very sensitive,simply log them.FORM REQUESTS SHOULD meaningfully RETURN API VALIDATION ERRORS IN FRIENDLY WAYS TO THE API CLIENT.
-
-All generated files must follow this modular structure:IF THE ENTITY HAS RELATIONSHIP WITH OTHER MODELS,RETURN THE MODELS AS WELL USING THEIR RRESOURCES IN API RESPONSES.
-app/
-├── Models/
-│   └── [EntityName].php
-│
-├── Services/
-│   └── [EntityName]/
-│       ├── [EntityName]Service.php
-│       └── Contracts/
-│           └── [EntityName]ServiceInterface.php
-│
-├── Repositories/
-│   └── [EntityName]/
-│       ├── [EntityName]Repository.php
-│       └── Contracts/
-│           └── [EntityName]RepositoryInterface.php
-│
-├── Http/
-│   ├── Controllers/Api/
-│   │   └── [EntityName]Controller.php
-│   │
-│   ├── Requests/[EntityName]/ 
-│   │   ├── Store[EntityName]Request.php
-│   │   └── Update[EntityName]Request.php
-│   │
-│   └── Resources/
-│       ├── [EntityName]Resource.php
-│       └── Related[OtherEntity]Resource.php
-│
-├── Policies/
-│   └── [EntityName]Policy.php
-│
-├── Providers/
-│   └── [EntityName]ServiceProvider.php
-├── Tests/
-│   ├── Feature/[EntityName]ControllerTest.php
-│   └── Unit/[EntityName]ServiceTest.php
-database/
-└── migrations/
-    └── create_[entity_name]_table.php
-
-
-Ensures easy imports, modularity, scalability, and testability.
-
-2. Artisan Commands
-
-First, provide all Artisan commands to generate:
-
-Migration: php artisan make:migration create_[entity_name]_table --create=[entity_name]
-
-Model: php artisan make:model [EntityName]
-
-Controller: php artisan make:controller Api/[EntityName]Controller --api
-
-Policy: php artisan make:policy [EntityName]Policy --model=[EntityName]
-
-Form Requests:
-
-php artisan make:request [EntityName]/Store[EntityName]Request
-
-php artisan make:request [EntityName]/Update[EntityName]Request
-
-Service Provider: php artisan make:provider [EntityName]ServiceProvider
-
-Test scaffolds (optional --unit or --feature)
-
-Include exact file paths for each generated file.
-
-3. Migration Recreation
-
-Recreate the migration according to the provided schema.
-
-Include proper column types, indexes, foreign keys, and constraints.
-
-Use Laravel conventions (timestamps, soft deletes if needed).
-
-Ensure the migration matches the structure required for Service, Repository, and Model logic.
-
-4. Service Provider
-
-Bind Repository and Service interfaces to implementations.
-
-Enable constructor dependency injection and module extraction.
-
-$this->app->bind(
-    \App\Repositories\Contracts\[EntityName]RepositoryInterface::class,
-    \App\Repositories\[EntityName]\[EntityName]Repository::class
-);
-$this->app->bind(
-    \App\Services\Contracts\[EntityName]ServiceInterface::class,
-    \App\Services\[EntityName]\[EntityName]Service::class
-);
-
-
-Register in config/app.php.
-
-5. Layers & Responsibilities
-Layer	Responsibility
-Controller	Thin orchestration layer; calls Service methods; uses Form Requests and Resources
-Service	All business logic; coordinates Repositories; handles transactions
-Repository	Handles database interactions only; no business logic
-Form Requests	Validation and authorization of incoming requests
-Policy	Authorization rules for sensitive actions
-API Resource	Format and transform JSON responses; use nested/related resources when returning multiple pieces of info
-Tests	Unit tests for Services; Feature tests for Controllers and API responses
-
-Nested Resources: When a model has relationships (belongsTo, hasMany), use additional API Resources instead of embedding raw arrays.
-
-6. Form Requests
-
-Generate Store[EntityName]Request.php and Update[EntityName]Request.php.
-
-Must handle:
-
-Validation rules
-
-Authorization ($this->authorize(...))
-
-Pass $request->validated() to Services to keep Controllers thin.
-
-7. API Routes
-
-Use routes/api.php.
-
-RESTful routes: index, show, store, update, destroy.
-
-Apply middleware and policies.
-
-8. Testing Requirements
-
-Unit Tests (Service Layer):
-
-Test all public Service methods.
-
-Mock Repositories to isolate Service logic.
-
-Verify business rules, transactions, and error handling.
-
-Feature Tests (Controller/API):
-
-Test all endpoints: index, show, store, update, destroy.
-
-Verify authorization using Policies.
-
-Check nested resources and relationships.
-
-Form Request Tests (optional):
-
-Validate request rules for create/update operations.
-
-Verify authorization logic.
-
-9. Code Quality Standards
-
-PHP 8+ strict typing
-
-Constructor-based dependency injection
-
-Explicit return types
-
-Production-grade PHPDoc for classes and methods
-
-Handle edge cases and errors gracefully
-
-Follow Laravel best practices (latest stable version)
-
-Use nested resources for related data
-
-Include Unit and Feature tests for all layers
-
-No invented fields outside the migration
-
-10. Deliverables
-
-Artisan commands
-
-Recreated migration file
-
-Full implementation of all files
-
-Service Provider bindings
-
-API routes
-
-Unit & Feature tests
-
-Brief explanation of architectural decisions
-
-11. Constraints
-
-Do NOT skip any layer
-
-Do NOT invent fields
-
-Assume real-world production usage
-
-Code must be maintainable by large teams
-
-Follow Clean Architecture / Layered Architecture principles
-
-✅ Outcome
-
-Controllers remain thin
-
-Services contain business logic
-
-Repositories handle database interactions
-
-Policies protect actions
-
-Form Requests handle validation and authorization
-
-Resources return consistent API responses and use nested resources for related data
-
-Unit and Feature tests ensure robustness and correctness
-
-Migration fully reflects the entity schema
-          /**
-         * ------------------------------------------------------------
-         * MESSAGE ATTACHMENTS
-         * ------------------------------------------------------------
-         */
-        Schema::create('message_attachments', function (Blueprint $table) {
-            $table->id();
-            $table->uuid('attachment_uuid')->unique()->index();
-
-            $table->foreignId('message_id')
-                ->constrained('messages')
-                ->cascadeOnDelete();
-
-            $table->enum('attachment_type', [
-                'image',
-                'pdf',
-                'lab_result',
-                'radiology_image',
-                'audio',
-                'video',
-                'other'
-            ])->index();
-
-            $table->string('file_name', 255);
-            $table->string('mime_type', 100);
-            $table->unsignedBigInteger('file_size_bytes');
-            $table->string('storage_disk', 50);
-            $table->string('storage_path', 512);
-
-            $table->boolean('contains_phi')->default(true);
-            $table->string('checksum', 64)->index();
-
-            $table->timestamps();
-        });
-
-
-
-        import { useMutation } from '@tanstack/react-query';
-import { axiosInstance } from '../../../../app/api/axiosConfig';
-import { useToast } from '../../../../app/store/contexts/toast/useToast';
-import type { RegisterStaffRequest, RegisterStaffResponse } from './registerStaffTypes';
-import type { AxiosError } from 'axios';
-
-interface ApiErrorResponse {
-  message?: string;
-  errors?: Record<string, string[]>;
+<?php
+
+namespace App\Services\Billing;
+
+use App\Models\BillingCycle;
+use App\Models\BillingTransaction;
+use App\Models\RefundItem;
+use App\Models\InvoiceLineItem;
+use App\Models\InventoryItem;
+use App\Models\Visit;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Throwable;
+
+/**
+ * Billing Transaction Service
+ *
+ * Handles voiding transactions and processing refunds with full audit trails
+ */
+class BillingTransactionService
+{
+    /**
+     * Void an entire billing cycle (complete void)
+     *
+     * @param int $billingCycleId
+     * @param int $staffId
+     * @param string $reason
+     * @param int $facilityId
+     * @return array
+     */
+    public function voidBillingCycle(int $billingCycleId, int $staffId, string $reason, int $facilityId): array
+    {
+        try {
+            return DB::transaction(function () use ($billingCycleId, $staffId, $reason, $facilityId) {
+                // Load billing cycle with relationships
+                $billingCycle = BillingCycle::where('id', $billingCycleId)
+                    ->where('facility_id', $facilityId)
+                    ->with(['lineItems', 'transactions' => function($q) {
+                        $q->where('status', 'completed');
+                    }])
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$billingCycle) {
+                    return [
+                        'success' => false,
+                        'message' => 'Billing cycle not found.',
+                        'errors' => ['billing_cycle_id' => ['Invalid billing cycle for this facility.']],
+                    ];
+                }
+
+                // Check if already voided
+                if ($billingCycle->billing_status === 'voided') {
+                    return [
+                        'success' => false,
+                        'message' => 'This billing cycle has already been voided.',
+                        'errors' => ['billing_cycle' => ['Cannot void an already voided billing cycle.']],
+                    ];
+                }
+
+                // Check if too late to void (e.g., beyond policy period)
+                if ($billingCycle->created_at->diffInDays(now()) > 30) {
+                    return [
+                        'success' => false,
+                        'message' => 'Cannot void billing cycles older than 30 days. Please process a refund instead.',
+                        'errors' => ['billing_cycle' => ['Billing cycle is too old to void.']],
+                    ];
+                }
+
+                // Create void transaction record
+                $voidTransaction = BillingTransaction::create([
+                    'transaction_uuid' => Str::uuid(),
+                    'billing_cycle_id' => $billingCycle->id,
+                    'transaction_type' => 'void',
+                    'amount' => $billingCycle->net_amount,
+                    'payment_method_type' => 'system',
+                    'payment_method_details' => json_encode(['void_type' => 'full_cycle']),
+                    'reference_number' => "VOID-{$billingCycle->id}-" . time(),
+                    'reason' => $reason,
+                    'status' => 'completed',
+                    'voided_at' => now(),
+                    'voided_by_staff_id' => $staffId,
+                    'void_reason' => $reason,
+                    'metadata' => json_encode([
+                        'original_billing_status' => $billingCycle->billing_status,
+                        'original_net_amount' => $billingCycle->net_amount,
+                        'original_payments' => [
+                            'patient' => $billingCycle->patient_payment_received,
+                            'insurance' => $billingCycle->insurance_payment_received,
+                        ],
+                    ]),
+                    'created_by_staff_id' => $staffId,
+                    'facility_id' => $facilityId,
+                ]);
+
+                // Restore inventory for inventory items
+                $this->restoreInventoryForVoid($billingCycle->lineItems, $staffId);
+
+                // Mark all line items as voided
+                foreach ($billingCycle->lineItems as $lineItem) {
+                    $lineItem->line_item_status = 'voided';
+                    $lineItem->metadata = array_merge(
+                        json_decode($lineItem->metadata ?? '{}', true) ?: [],
+                        [
+                            'voided_at' => now()->toISOString(),
+                            'voided_by_staff_id' => $staffId,
+                            'void_reason' => $reason,
+                            'void_transaction_id' => $voidTransaction->id,
+                        ]
+                    );
+                    $lineItem->save();
+                }
+
+                // Update billing cycle
+                $billingCycle->billing_status = 'voided';
+                $billingCycle->metadata = array_merge(
+                    json_decode($billingCycle->metadata ?? '{}', true) ?: [],
+                    [
+                        'voided_at' => now()->toISOString(),
+                        'voided_by_staff_id' => $staffId,
+                        'void_reason' => $reason,
+                        'void_transaction_id' => $voidTransaction->id,
+                        'original_status' => $billingCycle->billing_status,
+                    ]
+                );
+                $billingCycle->save();
+
+                // Update visit status
+                $this->updateVisitAfterVoid($billingCycle->visit_id, $staffId);
+
+                Log::info('Billing cycle voided successfully', [
+                    'billing_cycle_id' => $billingCycle->id,
+                    'staff_id' => $staffId,
+                    'void_transaction_id' => $voidTransaction->id,
+                    'amount' => $billingCycle->net_amount,
+                ]);
+
+                return [
+                    'success' => true,
+                    'message' => 'Billing cycle voided successfully.',
+                    'data' => [
+                        'void_transaction_id' => $voidTransaction->id,
+                        'void_transaction_uuid' => $voidTransaction->transaction_uuid,
+                        'billing_cycle_id' => $billingCycle->id,
+                        'amount_voided' => $billingCycle->net_amount,
+                        'voided_at' => $voidTransaction->voided_at->toISOString(),
+                    ],
+                ];
+            });
+        } catch (Throwable $e) {
+            Log::error('Failed to void billing cycle', [
+                'billing_cycle_id' => $billingCycleId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to void billing cycle. All changes have been rolled back.',
+                'errors' => ['system' => [$e->getMessage()]],
+            ];
+        }
+    }
+
+    /**
+     * Process a refund (partial or full)
+     *
+     * @param array $data Refund data
+     * @param int $staffId
+     * @param int $facilityId
+     * @return array
+     */
+    public function processRefund(array $data, int $staffId, int $facilityId): array
+    {
+        try {
+            return DB::transaction(function () use ($data, $staffId, $facilityId) {
+                // Load billing cycle
+                $billingCycle = BillingCycle::where('id', $data['billing_cycle_id'])
+                    ->where('facility_id', $facilityId)
+                    ->with(['lineItems'])
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$billingCycle) {
+                    return [
+                        'success' => false,
+                        'message' => 'Billing cycle not found.',
+                    ];
+                }
+
+                // Calculate refund totals and validate items
+                $refundValidation = $this->validateRefundItems($data['items'], $billingCycle);
+                if (!$refundValidation['success']) {
+                    return $refundValidation;
+                }
+
+                // Create refund transaction
+                $refundTransaction = BillingTransaction::create([
+                    'transaction_uuid' => Str::uuid(),
+                    'billing_cycle_id' => $billingCycle->id,
+                    'transaction_type' => 'refund',
+                    'amount' => $refundValidation['total_refund'],
+                    'payment_method_type' => $data['refund_method'] ?? 'original',
+                    'payment_method_details' => json_encode($data['refund_details'] ?? []),
+                    'reference_number' => $data['reference_number'] ?? "REF-{$billingCycle->id}-" . time(),
+                    'reason' => $data['reason'],
+                    'status' => 'completed',
+                    'metadata' => json_encode([
+                        'refund_type' => $data['type'] ?? 'partial', // 'full' or 'partial'
+                        'original_billing_status' => $billingCycle->billing_status,
+                    ]),
+                    'created_by_staff_id' => $staffId,
+                    'facility_id' => $facilityId,
+                ]);
+
+                // Create refund items and process each
+                $refundedItems = [];
+                foreach ($data['items'] as $itemData) {
+                    $lineItem = InvoiceLineItem::find($itemData['line_item_id']);
+                    
+                    // Create refund item record
+                    $refundItem = RefundItem::create([
+                        'refund_transaction_id' => $refundTransaction->id,
+                        'line_item_id' => $lineItem->id,
+                        'quantity_refunded' => $itemData['quantity'],
+                        'unit_price_at_time' => $lineItem->unit_price_at_time,
+                        'subtotal_refunded' => $itemData['subtotal'] ?? ($lineItem->unit_price_at_time * $itemData['quantity']),
+                        'discount_refunded' => $itemData['discount'] ?? 0,
+                        'tax_refunded' => $itemData['tax'] ?? 0,
+                        'total_refunded' => $itemData['total'],
+                        'reason' => $itemData['reason'] ?? $data['reason'],
+                        'requires_restock' => $itemData['requires_restock'] ?? false,
+                        'metadata' => json_encode($itemData['metadata'] ?? []),
+                    ]);
+
+                    // Restock inventory if required
+                    if ($refundItem->requires_restock) {
+                        $this->restockInventoryItem($lineItem, $itemData['quantity'], $staffId);
+                        
+                        $refundItem->restocked_at = now();
+                        $refundItem->restocked_by_staff_id = $staffId;
+                        $refundItem->save();
+                    }
+
+                    // Update line item with refund information
+                    $lineItemMetadata = json_decode($lineItem->metadata ?? '{}', true) ?: [];
+                    $lineItemMetadata['refunds'][] = [
+                        'refund_transaction_id' => $refundTransaction->id,
+                        'refund_item_id' => $refundItem->id,
+                        'quantity_refunded' => $itemData['quantity'],
+                        'refunded_at' => now()->toISOString(),
+                        'refunded_by_staff_id' => $staffId,
+                        'reason' => $itemData['reason'] ?? $data['reason'],
+                    ];
+                    
+                    // Update line item status if fully refunded
+                    $totalRefundedQuantity = collect($lineItemMetadata['refunds'] ?? [])->sum('quantity_refunded');
+                    if ($totalRefundedQuantity >= $lineItem->quantity) {
+                        $lineItem->line_item_status = 'refunded';
+                    } elseif ($totalRefundedQuantity > 0) {
+                        $lineItem->line_item_status = 'partially_refunded';
+                    }
+                    
+                    $lineItem->metadata = $lineItemMetadata;
+                    $lineItem->save();
+
+                    $refundedItems[] = $refundItem;
+                }
+
+                // Update billing cycle with refund amounts
+                $this->updateBillingCycleAfterRefund($billingCycle, $refundValidation, $refundTransaction, $staffId);
+
+                Log::info('Refund processed successfully', [
+                    'billing_cycle_id' => $billingCycle->id,
+                    'refund_transaction_id' => $refundTransaction->id,
+                    'amount' => $refundValidation['total_refund'],
+                    'items_refunded' => count($refundedItems),
+                    'staff_id' => $staffId,
+                ]);
+
+                return [
+                    'success' => true,
+                    'message' => 'Refund processed successfully.',
+                    'data' => [
+                        'refund_transaction_id' => $refundTransaction->id,
+                        'refund_transaction_uuid' => $refundTransaction->transaction_uuid,
+                        'reference_number' => $refundTransaction->reference_number,
+                        'amount_refunded' => $refundValidation['total_refund'],
+                        'items_refunded' => $refundedItems,
+                        'refunded_at' => $refundTransaction->created_at->toISOString(),
+                    ],
+                ];
+            });
+        } catch (Throwable $e) {
+            Log::error('Failed to process refund', [
+                'billing_cycle_id' => $data['billing_cycle_id'] ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to process refund. All changes have been rolled back.',
+                'errors' => ['system' => [$e->getMessage()]],
+            ];
+        }
+    }
+
+    /**
+     * Validate refund items
+     *
+     * @param array $items
+     * @param BillingCycle $billingCycle
+     * @return array
+     */
+    protected function validateRefundItems(array $items, BillingCycle $billingCycle): array
+    {
+        $totalRefund = 0;
+        $validatedItems = [];
+
+        foreach ($items as $item) {
+            $lineItem = $billingCycle->lineItems->firstWhere('id', $item['line_item_id']);
+            
+            if (!$lineItem) {
+                return [
+                    'success' => false,
+                    'message' => "Line item ID {$item['line_item_id']} not found in this billing cycle.",
+                ];
+            }
+
+            // Check if already refunded
+            $metadata = json_decode($lineItem->metadata ?? '{}', true) ?: [];
+            $alreadyRefunded = collect($metadata['refunds'] ?? [])->sum('quantity_refunded');
+            $availableToRefund = $lineItem->quantity - $alreadyRefunded;
+
+            if ($item['quantity'] > $availableToRefund) {
+                return [
+                    'success' => false,
+                    'message' => "Cannot refund {$item['quantity']} of item '{$lineItem->service_description}'. Only {$availableToRefund} available to refund.",
+                ];
+            }
+
+            // Calculate proportional amounts
+            $refundRatio = $item['quantity'] / $lineItem->quantity;
+            $subtotalRefund = $lineItem->line_total_amount * $refundRatio;
+            $discountRefund = ($lineItem->discount_amount ?? 0) * $refundRatio;
+            $taxRefund = 0; // Calculate based on your tax logic
+            $totalRefundItem = $subtotalRefund - $discountRefund + $taxRefund;
+
+            $validatedItems[] = [
+                'line_item_id' => $lineItem->id,
+                'quantity' => $item['quantity'],
+                'subtotal' => $subtotalRefund,
+                'discount' => $discountRefund,
+                'tax' => $taxRefund,
+                'total' => $totalRefundItem,
+                'reason' => $item['reason'] ?? null,
+                'requires_restock' => $item['requires_restock'] ?? false,
+            ];
+
+            $totalRefund += $totalRefundItem;
+        }
+
+        return [
+            'success' => true,
+            'items' => $validatedItems,
+            'total_refund' => $totalRefund,
+        ];
+    }
+
+    /**
+     * Restore inventory for voided billing cycle
+     *
+     * @param \Illuminate\Support\Collection $lineItems
+     * @param int $staffId
+     * @return void
+     */
+    protected function restoreInventoryForVoid($lineItems, int $staffId): void
+    {
+        foreach ($lineItems as $lineItem) {
+            $serviceSnapshot = json_decode($lineItem->service_version_snapshot ?? '{}', true);
+            
+            $inventoryItem = InventoryItem::where('item_code', $serviceSnapshot['code'] ?? $lineItem->service_code)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$inventoryItem) {
+                continue;
+            }
+
+            $previousQuantity = $inventoryItem->package_quantity;
+            $inventoryItem->package_quantity += $lineItem->quantity;
+            $inventoryItem->updated_by_staff_id = $staffId;
+
+            $metadata = json_decode($inventoryItem->metadata ?? '{}', true) ?: [];
+            $metadata['stock_restorations'][] = [
+                'restored_at' => now()->toISOString(),
+                'restored_by_staff_id' => $staffId,
+                'units_restored' => $lineItem->quantity,
+                'previous_quantity' => $previousQuantity,
+                'new_quantity' => $inventoryItem->package_quantity,
+                'reason' => 'billing_cycle_voided',
+                'billing_cycle_id' => $lineItem->billing_cycle_id,
+                'line_item_id' => $lineItem->id,
+            ];
+
+            $inventoryItem->metadata = $metadata;
+            $inventoryItem->save();
+
+            Log::info('Inventory restored for voided billing', [
+                'item_code' => $inventoryItem->item_code,
+                'units_restored' => $lineItem->quantity,
+                'billing_cycle_id' => $lineItem->billing_cycle_id,
+            ]);
+        }
+    }
+
+    /**
+     * Restock inventory for refunded item
+     *
+     * @param InvoiceLineItem $lineItem
+     * @param float $quantity
+     * @param int $staffId
+     * @return void
+     */
+    protected function restockInventoryItem(InvoiceLineItem $lineItem, float $quantity, int $staffId): void
+    {
+        $serviceSnapshot = json_decode($lineItem->service_version_snapshot ?? '{}', true);
+        
+        $inventoryItem = InventoryItem::where('item_code', $serviceSnapshot['code'] ?? $lineItem->service_code)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$inventoryItem) {
+            Log::warning('Attempted to restock non-inventory item', [
+                'line_item_id' => $lineItem->id,
+                'service_code' => $serviceSnapshot['code'] ?? $lineItem->service_code,
+            ]);
+            return;
+        }
+
+        $previousQuantity = $inventoryItem->package_quantity;
+        $inventoryItem->package_quantity += $quantity;
+        $inventoryItem->updated_by_staff_id = $staffId;
+
+        $metadata = json_decode($inventoryItem->metadata ?? '{}', true) ?: [];
+        $metadata['stock_restorations'][] = [
+            'restored_at' => now()->toISOString(),
+            'restored_by_staff_id' => $staffId,
+            'units_restored' => $quantity,
+            'previous_quantity' => $previousQuantity,
+            'new_quantity' => $inventoryItem->package_quantity,
+            'reason' => 'refund',
+            'line_item_id' => $lineItem->id,
+        ];
+
+        $inventoryItem->metadata = $metadata;
+        $inventoryItem->save();
+    }
+
+    /**
+     * Update billing cycle after refund
+     *
+     * @param BillingCycle $billingCycle
+     * @param array $refundValidation
+     * @param BillingTransaction $refundTransaction
+     * @param int $staffId
+     * @return void
+     */
+    protected function updateBillingCycleAfterRefund(
+        BillingCycle $billingCycle,
+        array $refundValidation,
+        BillingTransaction $refundTransaction,
+        int $staffId
+    ): void {
+        // Recalculate totals
+        $newPatientPayment = max(0, $billingCycle->patient_payment_received - $refundValidation['total_refund']);
+        $newNetAmount = $billingCycle->net_amount - $refundValidation['total_refund'];
+
+        // Determine new status
+        if ($newPatientPayment <= 0) {
+            $newStatus = 'refunded';
+        } elseif ($newPatientPayment < $billingCycle->patient_responsibility_amount) {
+            $newStatus = 'partially_refunded';
+        } else {
+            $newStatus = $billingCycle->billing_status; // Keep original if fully paid still
+        }
+
+        // Update billing cycle
+        $billingCycle->patient_payment_received = $newPatientPayment;
+        $billingCycle->net_amount = $newNetAmount;
+        $billingCycle->billing_status = $newStatus;
+        
+        $metadata = json_decode($billingCycle->metadata ?? '{}', true) ?: [];
+        $metadata['refunds'][] = [
+            'refund_transaction_id' => $refundTransaction->id,
+            'refund_amount' => $refundValidation['total_refund'],
+            'refunded_at' => now()->toISOString(),
+            'refunded_by_staff_id' => $staffId,
+            'reason' => $refundTransaction->reason,
+        ];
+        
+        $billingCycle->metadata = $metadata;
+        $billingCycle->save();
+
+        // Update visit
+        $visit = Visit::find($billingCycle->visit_id);
+        if ($visit) {
+            $visit->patient_estimated_responsibility = $newPatientPayment;
+            $visit->payment_status = $newPatientPayment <= 0 ? 'refunded' : 
+                ($newPatientPayment < $billingCycle->patient_responsibility_amount ? 'partially_refunded' : $visit->payment_status);
+            $visit->save();
+        }
+    }
+
+    /**
+     * Update visit after void
+     *
+     * @param int $visitId
+     * @param int $staffId
+     * @return void
+     */
+    protected function updateVisitAfterVoid(int $visitId, int $staffId): void
+    {
+        $visit = Visit::find($visitId);
+        if ($visit) {
+            $visit->current_phase = 'billing';
+            $visit->payment_status = 'voided';
+            $visit->estimated_total_charges = 0;
+            $visit->patient_estimated_responsibility = 0;
+            
+            $metadata = json_decode($visit->metadata ?? '{}', true) ?: [];
+            $metadata['voided_billing'][] = [
+                'voided_at' => now()->toISOString(),
+                'voided_by_staff_id' => $staffId,
+            ];
+            $visit->metadata = $metadata;
+            
+            $visit->save();
+        }
+    }
+
+    /**
+     * Get transaction history for a billing cycle
+     *
+     * @param int $billingCycleId
+     * @return array
+     */
+    public function getTransactionHistory(int $billingCycleId): array
+    {
+        $transactions = BillingTransaction::where('billing_cycle_id', $billingCycleId)
+            ->with(['createdByStaff.user', 'voidedByStaff.user', 'refunds'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return [
+            'success' => true,
+            'data' => $transactions->map(function ($transaction) {
+                return [
+                    'id' => $transaction->id,
+                    'uuid' => $transaction->transaction_uuid,
+                    'type' => $transaction->transaction_type,
+                    'amount' => $transaction->amount,
+                    'payment_method' => $transaction->payment_method_type,
+                    'reference' => $transaction->reference_number,
+                    'reason' => $transaction->reason,
+                    'status' => $transaction->status,
+                    'created_at' => $transaction->created_at->toISOString(),
+                    'created_by' => $transaction->createdByStaff?->user?->display_name,
+                    'voided_at' => $transaction->voided_at?->toISOString(),
+                    'voided_by' => $transaction->voidedByStaff?->user?->display_name,
+                    'void_reason' => $transaction->void_reason,
+                ];
+            }),
+        ];
+    }
 }
-
-interface UseRegisterStaffOptions {
-  onSuccess?: (data: RegisterStaffResponse) => void;
-  onError?: (error: AxiosError<ApiErrorResponse>) => void;
-}
-
-export const useRegisterStaff = (options: UseRegisterStaffOptions = {}) => {
-  const { showToast } = useToast();
-
-  return useMutation<RegisterStaffResponse, AxiosError<ApiErrorResponse>, RegisterStaffRequest>({
-    mutationFn: async (data: RegisterStaffRequest) => {
-      const response = await axiosInstance.post<RegisterStaffResponse>('/staff', data);
-      return response.data;
-    },
-    onSuccess: (data) => {
-      showToast('success', data.message || 'Staff registration successful!', 8000);
-      options.onSuccess?.(data);
-    },
-    onError: (error: AxiosError<ApiErrorResponse>) => {
-      const apiMessage = error.response?.data?.message || error.message || 'Staff registration failed!';
-
-      let errorDetails = '';
-      if (error.response?.data?.errors) {
-        // Convert the errors object into a readable string
-        errorDetails = Object.entries(error.response.data.errors)
-          .map(([field, msgs]) => `${field}: ${msgs.join(', ')}`)
-          .join(' | ');
-      }
-
-      showToast(
-        'error',
-        errorDetails ? `${apiMessage} (${errorDetails})` : apiMessage,
-        8000
-      );
-
-      options.onError?.(error);
-    },
-  });
-};

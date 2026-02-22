@@ -104,6 +104,7 @@ class RefundService
         try {
             return DB::transaction(function () use ($billingCycleId, $voidData, $facilityId, $staffId) {
 
+
                 // 1. Fetch and lock the billing cycle scoped to the facility
                 $billingCycle = BillingCycle::where('id', $billingCycleId)
                     ->where('facility_id', $facilityId)
@@ -307,7 +308,7 @@ class RefundService
                 ]);
 
                 // 5. Mutate the billing cycle
-                $billingCycle->billing_status      = 'written_off';
+                $billingCycle->billing_status      = 'fully_refunded';
                 $billingCycle->bad_debt_adjustment = $totalPaid;
                 $billingCycle->updated_by_staff_id = $staffId;
                 $billingCycle->metadata            = $this->mergeMetadata(
@@ -522,7 +523,7 @@ class RefundService
                                + (float) $billingCycle->insurance_payment_received;
 
                 if ($remainingPaid <= 0) {
-                    $billingCycle->billing_status = 'written_off';
+                    $billingCycle->billing_status = 'partially_refunded';
                 } elseif ($remainingPaid < (float) $billingCycle->net_amount) {
                     $billingCycle->billing_status = 'partially_paid';
                 }

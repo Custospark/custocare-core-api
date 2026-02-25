@@ -141,6 +141,11 @@ class AuthController extends Controller
      */
     public function verifyEmail(VerifyEmailRequest $request): JsonResponse
     {
+        Log::alert('Verify email attempt', [
+            'user_id' => $request->user_id,
+            'code_provided' => $request->code
+            // Don't log the entire object or model with relationships
+        ]);
         try {
             $validated = $request->validated();
             

@@ -84,17 +84,16 @@ class AccountRecoveryService
         });
     }
     
-    /**
-     * Verify email with token or OTP.
-     *
-     * @param int $userId
-     * @param string $code
-     * @param bool $isToken
-     * @return bool
-     * @throws \Exception
-     */
-    public function verifyEmail(int $userId, string $code, bool $isToken = false): bool
-    {
+   /**
+ * Verify email with token or OTP.
+ *
+ * @param int $userId
+ * @param int $code  // Make sure this is int, not string
+ * @param bool $isToken
+ * @return bool
+ */
+public function verifyEmail(int $userId, int $code, bool $isToken = false): bool
+{
         return DB::transaction(function () use ($userId, $code, $isToken) {
             $user = $this->userService->getUserById($userId);
             

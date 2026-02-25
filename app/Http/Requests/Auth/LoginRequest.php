@@ -7,24 +7,15 @@ namespace App\Http\Requests\Auth;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 
 class LoginRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     *
-     * @return bool
-     */
     public function authorize(): bool
     {
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, mixed>
-     */
     public function rules(): array
     {
         return [
@@ -35,23 +26,6 @@ class LoginRequest extends FormRequest
         ];
     }
 
-    /**
-     * Prepare the data for validation.
-     *
-     * @return void
-     */
-    protected function prepareForValidation(): void
-    {
-        $this->merge([
-            'email' => strtolower(trim($this->email))
-        ]);
-    }
-
-    /**
-     * Get custom messages for validator errors.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
@@ -63,26 +37,43 @@ class LoginRequest extends FormRequest
         ];
     }
 
-    /**
-     * Handle a failed validation attempt.
-     *
-     * @param  \Illuminate\Contracts\Validation\Validator  $validator
-     * @return void
-     *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException
-     */
     protected function failedValidation(Validator $validator): void
     {
-        $response = response()->json([
-            'success' => false,
-            'code' => 'VALIDATION_ERROR',
-            'message' => 'Validation failed',
-            'errors' => $validator->errors(),
-            'requires_mfa' => false,
-            'user' => null,
-            'token' => null,
-        ], 422);
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'code' => 'VALIDATION_ERROR',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+                'requires_mfa' => false,
+                'user' => null,
+                'token' => null,
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
+        );
+    }
 
-        throw new HttpResponseException($response);
+    protected function failedAuthorization(): void
+    {
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'You are not authorized to login.'
+            ], JsonResponse::HTTP_FORBIDDEN)
+        );
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email')) {
+            $this->merge([
+                'email' => strtolower(trim($this->email))
+            ]);
+        }
+
+        if ($this->has('mfa_code')) {
+            $this->merge([
+                'mfa_code' => preg_replace('/[^0-9]/', '', $this->mfa_code)
+            ]);
+        }
     }
 }

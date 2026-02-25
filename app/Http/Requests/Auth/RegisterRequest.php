@@ -8,24 +8,15 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
 
 class RegisterRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     *
-     * @return bool
-     */
     public function authorize(): bool
     {
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, mixed>
-     */
     public function rules(): array
     {
         return [
@@ -45,35 +36,62 @@ class RegisterRequest extends FormRequest
         ];
     }
 
-    /**
-     * Prepare the data for validation.
-     *
-     * @return void
-     */
-    protected function prepareForValidation(): void
-    {
-        $this->merge(['email' => strtolower($this->email)]);
-    }
-
-    /**
-     * Get custom messages for validator errors.
-     *
-     * @return array<string, string>
-     */
     public function messages(): array
     {
         return [
             'national_id.unique' => 'This national ID is already registered.',
+            'email.required' => 'The email address is required.',
+            'email.email' => 'Please provide a valid email address.',
             'email.unique' => 'This email is already registered.',
+            'phone.required' => 'The phone number is required.',
+            'first_name.required' => 'First name is required.',
+            'last_name.required' => 'Last name is required.',
+            'password.required' => 'Password is required.',
+            'password.min' => 'Password must be at least :min characters.',
+            'password.confirmed' => 'Password confirmation does not match.',
+            'data_residency_region.in' => 'Invalid data residency region.',
         ];
     }
-     protected function failedValidation(Validator $validator): void
+
+    protected function failedValidation(Validator $validator): void
     {
         throw new HttpResponseException(
             response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422)
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
+    }
+
+    protected function failedAuthorization(): void
+    {
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'You are not authorized to register.'
+            ], JsonResponse::HTTP_FORBIDDEN)
+        );
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email')) {
+            $this->merge([
+                'email' => strtolower(trim($this->email)),
+            ]);
+        }
+
+        if ($this->has('phone')) {
+            $this->merge([
+                'phone' => preg_replace('/[^0-9+]/', '', $this->phone),
+            ]);
+        }
+
+        if ($this->has('national_id_country_code')) {
+            $this->merge([
+                'national_id_country_code' => strtoupper(trim($this->national_id_country_code)),
+            ]);
+        }
     }
 }

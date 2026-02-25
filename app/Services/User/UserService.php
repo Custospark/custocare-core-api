@@ -33,9 +33,14 @@ class UserService implements Contracts\UserServiceInterface
      *
      * @param UserRepositoryInterface $userRepository
      */
+        protected AccountRecoveryService $accountRecoveryService;
+
     public function __construct(
-        private readonly UserRepositoryInterface $userRepository
-    ) {}
+        private readonly UserRepositoryInterface $userRepository,
+            AccountRecoveryService $accountRecoveryService
+    ) {
+                $this->accountRecoveryService = $accountRecoveryService;
+    }
 
     /**
      * Register a new user.
@@ -195,6 +200,8 @@ class UserService implements Contracts\UserServiceInterface
         $requiresMfa = $user->mfa_enabled;
 
         if ($requiresMfa && !isset($credentials['mfa_code'])) {
+        $this->accountRecoveryService->sendEmailVerification($user->id, 'email');
+
             return [
                 'success' => true,
                 'code' => 'MFA_REQUIRED',

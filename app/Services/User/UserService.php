@@ -166,7 +166,7 @@ class UserService implements Contracts\UserServiceInterface
                 'success' => false,
                 'code' => 'INVALID_CREDENTIALS',
                 'message' => 'Invalid credentials',
-                'requires_mfa' => false,
+                'requires_mfa' => true,
                 'user' => null,
                 'token' => null,
             ];

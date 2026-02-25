@@ -202,4 +202,15 @@ class User extends Authenticatable
 
         return $this->display_name;
     }
+
+      public function notifications()
+    {
+        return $this->hasMany(Notification::class);
+    }
+        public function readNotifications()
+    {
+        return $this->belongsToMany(Notification::class, 'notification_user')
+                    ->withPivot('read_at')
+                    ->withTimestamps();
+    }
 }

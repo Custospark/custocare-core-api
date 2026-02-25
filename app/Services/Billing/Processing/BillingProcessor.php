@@ -168,86 +168,110 @@ class BillingProcessor
         ]);
     }
 
-    /**
-     * Create InvoiceLineItem records
-     *
-     * @param array $data Billing data
-     * @param int $billingCycleId Billing cycle ID
-     * @param int $staffId Staff ID
-     * @param float $discountAmount Total discount amount
-     * @return array Created line items
-     */
-    protected function createLineItems(
-        array $data,
-        int $billingCycleId,
-        int $staffId,
-        float $discountAmount
-    ): array {
-        $lineItems = [];
+            /**
+         * Create InvoiceLineItem records
+         *
+         * @param array $data Billing data
+         * @param int $billingCycleId Billing cycle ID
+         * @param int $staffId Staff ID
+         * @param float $discountAmount Total discount amount
+         * @return array Created line items
+         */ 
+            protected function createLineItems(
+            array $data,
+            int $billingCycleId,
+            int $staffId,
+            float $discountAmount
+        ): array {
+            $lineItems = [];
 
-        foreach ($data['charge_items'] as $chargeItem) {
-            $service = $chargeItem['service'];
-            $quantity = $chargeItem['quantity'];
-            $unitPrice = $service['unitPrice'];
-            $lineTotal = $chargeItem['totalAmount'];
+            // Collect all service codes first
+            $serviceCodes = array_map(function($chargeItem) {
+                return $chargeItem['service']['code'];
+            }, $data['charge_items']);
 
-            // Calculate pro-rated discount for this line item
-            $lineDiscountAmount = $this->calculateLineItemDiscount(
-                $lineTotal,
-                $data['billing_data']['subtotal'],
-                $discountAmount
-            );
+            // Batch load all inventory items and service catalog entries
+            $inventoryItems = \App\Models\InventoryItem::whereIn('item_code', $serviceCodes)
+                ->get()
+                ->keyBy('item_code');
+            
+            $serviceCatalogs = \App\Models\ServiceCatalog::whereIn('service_code', $serviceCodes)
+                ->get()
+                ->keyBy('service_code');
 
-            $netAmount = $lineTotal - $lineDiscountAmount;
+            foreach ($data['charge_items'] as $chargeItem) {
+                $service = $chargeItem['service'];
+                $quantity = $chargeItem['quantity'];
+                $unitPrice = $service['unitPrice'];
+                $lineTotal = $chargeItem['totalAmount'];
+                $serviceCode = $service['code'];
 
-            $lineItem = InvoiceLineItem::create([
-                'line_item_uuid' => Str::uuid(),
-                'billing_cycle_id' => $billingCycleId,
-                'visit_id' => $data['visit_id'],
-                
-                // Service snapshot (frozen at time of billing)
-                // 'service_version_id' => $service['id'], // TODO: To be uncommented after integrating with service version
-                'service_version_snapshot' => json_encode($service),
-                'service_code' => $service['code'],
-                'service_description' => $service['name'],
-                
-                // Quantity & pricing
-                'quantity' => $quantity,
-                'unit_of_measure' => 'each',
-                'unit_price_at_time' => $unitPrice,
-                'line_total_amount' => $lineTotal,
-                
-                // Discount
-                'discount_amount' => $lineDiscountAmount,
-                'net_amount' => $netAmount,
-                
-                // Service delivery
-                'staff_performed_id' => $staffId,
-                'service_performed_at' => now(),
-                
-                // Status - FIXED: Based on payment status from billing cycle
-                'line_item_status' => $data['status'] === 'settled' ? 'paid' : 'pending',
-                
-                // Audit trail (SHA-256 hash for tamper detection)
-                'audit_trail_hash' => hash('sha256', json_encode([
-                    'service_code' => $service['code'],
+                // Get IDs from our pre-loaded collections
+                $inventoryItem = $inventoryItems->get($serviceCode);
+                $serviceCatalog = $serviceCatalogs->get($serviceCode);
+
+                // Calculate pro-rated discount for this line item
+                $lineDiscountAmount = $this->calculateLineItemDiscount(
+                    $lineTotal,
+                    $data['billing_data']['subtotal'],
+                    $discountAmount
+                );
+
+                $netAmount = $lineTotal - $lineDiscountAmount;
+
+                $lineItemData = [
+                    'line_item_uuid' => Str::uuid(),
+                    'billing_cycle_id' => $billingCycleId,
+                    'visit_id' => $data['visit_id'],
+                    
+                    // Service snapshot
+                    'service_version_snapshot' => json_encode($service),
+                    'service_code' => $serviceCode,
+                    'service_description' => $service['name'],
+                    
+                    // Foreign keys
+                    'inventory_item_id' => $inventoryItem?->id,
+                    'service_catalog_id' => $serviceCatalog?->id,
+                    
+                    // Quantity & pricing
                     'quantity' => $quantity,
-                    'unit_price' => $unitPrice,
-                    'timestamp' => now()->toISOString(),
-                ])),
-                
-                'created_by_staff_id' => $staffId,
-                'metadata' => json_encode([
-                    'service_key' => $chargeItem['service_key'],
-                    'category' => $service['category'],
-                ]),
-            ]);
+                    'unit_of_measure' => 'each',
+                    'unit_price_at_time' => $unitPrice,
+                    'line_total_amount' => $lineTotal,
+                    
+                    // Discount
+                    'discount_amount' => $lineDiscountAmount,
+                    'net_amount' => $netAmount,
+                    
+                    // Service delivery
+                    'staff_performed_id' => $staffId,
+                    'service_performed_at' => now(),
+                    
+                    // Status
+                    'line_item_status' => $data['status'] === 'settled' ? 'paid' : 'pending',
+                    
+                    // Audit trail
+                    'audit_trail_hash' => hash('sha256', json_encode([
+                        'service_code' => $serviceCode,
+                        'quantity' => $quantity,
+                        'unit_price' => $unitPrice,
+                        'timestamp' => now()->toISOString(),
+                    ])),
+                    
+                    'created_by_staff_id' => $staffId,
+                    'metadata' => json_encode([
+                        'service_key' => $chargeItem['service_key'],
+                        'category' => $service['category'],
+                        'source_type' => $inventoryItem ? 'inventory' : ($serviceCatalog ? 'service_catalog' : 'unknown'),
+                    ]),
+                ];
 
-            $lineItems[] = $lineItem;
+                $lineItem = InvoiceLineItem::create($lineItemData);
+                $lineItems[] = $lineItem;
+            }
+
+            return $lineItems;
         }
-
-        return $lineItems;
-    }
 
     /**
      * Deduct inventory stock for billed inventory items with proper locking

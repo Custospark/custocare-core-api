@@ -6,6 +6,7 @@ use App\Models\BillingCycle;
 use App\Models\FinancialAdjustment;
 use App\Models\InvoiceLineItem;
 use App\Models\InventoryItem;
+use App\Models\ServiceCatalog;
 use App\Models\Visit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -236,9 +237,12 @@ class RefundService
      */
     private function determineRefundType(array $refundData): string
     {
-        return isset($refundData['line_items']) && !empty($refundData['line_items'])
+        $refundType= isset($refundData['line_items']) && !empty($refundData['line_items'])
             ? 'partial_refund'
             : 'full_refund';
+        Log::info($refundType);
+        Log::info($refundData);
+        return$refundType;
     }
 
     // -------------------------------------------------------------------------
@@ -276,7 +280,7 @@ class RefundService
                 if (!$billingCycle) {
                     return $this->notFound('Billing cycle not found.', 'billing_cycle');
                 }
-
+                Log::alert($billingCycle);
                 // 2. Eligibility check
                 $eligibility = $this->validateRefundEligibility($billingCycle, 'full_refund');
                 if (!$eligibility['success']) {
@@ -401,216 +405,409 @@ class RefundService
      * @param int   $facilityId
      * @param int   $staffId
      * @return array
-     */
-    private function processPartialRefund(
-        int $billingCycleId,
-        array $refundData,
-        int $facilityId,
-        int $staffId
-    ): array {
-        try {
-            return DB::transaction(function () use ($billingCycleId, $refundData, $facilityId, $staffId) {
+     */private function processPartialRefund(
+    int $billingCycleId,
+    array $refundData,
+    int $facilityId,
+    int $staffId
+): array {
+    try {
+        return DB::transaction(function () use ($billingCycleId, $refundData, $facilityId, $staffId) {
 
-                // 1. Fetch and lock
-                $billingCycle = BillingCycle::where('id', $billingCycleId)
-                    ->where('facility_id', $facilityId)
-                    ->with(['lineItems', 'visit'])
-                    ->lockForUpdate()
-                    ->first();
+            // 1. Fetch and lock billing cycle
+            $billingCycle = BillingCycle::where('id', $billingCycleId)
+                ->where('facility_id', $facilityId)
+                ->with(['visit'])
+                ->lockForUpdate()
+                ->first();
 
-                if (!$billingCycle) {
-                    return $this->notFound('Billing cycle not found.', 'billing_cycle');
-                }
+            if (!$billingCycle) {
+                return $this->notFound('Billing cycle not found.', 'billing_cycle');
+            }
 
-                // 2. Eligibility check
-                $eligibility = $this->validateRefundEligibility($billingCycle, 'partial_refund');
-                if (!$eligibility['success']) {
-                    return $eligibility;
-                }
+            // 2. Validate refund eligibility
+            $eligibility = $this->validateRefundEligibility($billingCycle, 'partial_refund');
+            if (!$eligibility['success']) {
+                return $eligibility;
+            }
 
-                // 3. Validate that every submitted line_item_id belongs to this cycle
-                $requestedIds = collect($refundData['line_items'])->pluck('line_item_id')->toArray();
-
-                $lineItems = InvoiceLineItem::whereIn('id', $requestedIds)
-                    ->where('billing_cycle_id', $billingCycle->id)
-                    ->lockForUpdate()
-                    ->get();
-
-                if ($lineItems->count() !== count($requestedIds)) {
-                    return [
-                        'success' => false,
-                        'message' => 'One or more line items were not found on this billing cycle.',
-                        'errors'  => ['line_items' => ['Invalid line item IDs for this billing cycle.']],
-                    ];
-                }
-
-                // 4. Calculate per-line refund amounts and accumulate the total
-                $totalRefundAmount = 0;
-                $affectedLineItems = [];
-
-                foreach ($refundData['line_items'] as $requestedItem) {
-                    $lineItem     = $lineItems->firstWhere('id', $requestedItem['line_item_id']);
-                    // Default to the full net_amount of the line item if not specified
-                    $refundAmount = isset($requestedItem['refund_amount'])
-                        ? (float) $requestedItem['refund_amount']
-                        : (float) $lineItem->net_amount;
-
-                    // Guard: cannot refund more than the line item itself
-                    if ($refundAmount > (float) $lineItem->net_amount) {
-                        return [
-                            'success' => false,
-                            'message' => "Refund amount exceeds the original amount for line item {$lineItem->id}.",
-                            'errors'  => [
-                                'line_items' => [
-                                    "Line item {$lineItem->id}: requested {$refundAmount}, "
-                                    . "max allowed {$lineItem->net_amount}.",
-                                ],
-                            ],
-                        ];
-                    }
-
-                    $totalRefundAmount += $refundAmount;
-                    $affectedLineItems[] = [
-                        'line_item_id'   => $lineItem->id,
-                        'line_item_uuid' => $lineItem->line_item_uuid,
-                        'service_code'   => $lineItem->service_code,
-                        'service_name'   => $lineItem->service_description,
-                        'original_amount'=> (float) $lineItem->net_amount,
-                        'refund_amount'  => $refundAmount,
-                        'quantity'       => (float) $lineItem->quantity,
-                    ];
-                }
-
-                // 5. Split the refund proportionally between patient and insurance
-                $originalTotal  = (float) $billingCycle->patient_payment_received
-                                + (float) $billingCycle->insurance_payment_received;
-                $patientRatio   = $originalTotal > 0
-                    ? (float) $billingCycle->patient_payment_received / $originalTotal
-                    : 0;
-                $patientRefund  = round($totalRefundAmount * $patientRatio, 2);
-                $insuranceRefund= round($totalRefundAmount - $patientRefund, 2);
-
-                // 6. Persist the adjustment
-                $adjustment = $this->createFinancialAdjustment([
-                    'facility_id'               => $facilityId,
-                    'billing_cycle_id'          => $billingCycle->id,
-                    'visit_id'                  => $billingCycle->visit_id,
-                    'patient_id'                => $billingCycle->patient_id,
-                    'adjustment_type'           => 'partial_refund',
-                    'adjustment_reason'         => $refundData['reason'],
-                    'reason_notes'              => $refundData['reason_notes'] ?? null,
-                    'original_amount'           => $billingCycle->net_amount,
-                    'adjustment_amount'         => $totalRefundAmount,
-                    'remaining_amount'          => (float) $billingCycle->net_amount - $totalRefundAmount,
-                    'patient_refund_amount'     => $patientRefund,
-                    'insurance_refund_amount'   => $insuranceRefund,
-                    'refund_methods'            => $refundData['refund_methods'] ?? [],
-                    'affected_line_items'       => $affectedLineItems,
-                    'restore_inventory'         => $refundData['restore_inventory'] ?? false,
-                    'requested_by_staff_id'     => $staffId,
-                    'original_billing_snapshot' => $this->createBillingSnapshot($billingCycle),
-                ]);
-
-                // 7. Update billing cycle financials
-                $billingCycle->patient_payment_received  -= $patientRefund;
-                $billingCycle->insurance_payment_received -= $insuranceRefund;
-                $billingCycle->bad_debt_adjustment        = (float) $billingCycle->bad_debt_adjustment
-                                                           + $totalRefundAmount;
-                $billingCycle->updated_by_staff_id        = $staffId;
-
-                // Re-evaluate billing status based on remaining payments
-                $remainingPaid = (float) $billingCycle->patient_payment_received
-                               + (float) $billingCycle->insurance_payment_received;
-
-                if ($remainingPaid <= 0) {
-                    $billingCycle->billing_status = 'partially_refunded';
-                } elseif ($remainingPaid < (float) $billingCycle->net_amount) {
-                    $billingCycle->billing_status = 'partially_paid';
-                }
-
-                $billingCycle->metadata = $this->mergeMetadata(
-                    $billingCycle->metadata,
-                    [
-                        'refunded' => [
-                            'refunded_at'          => now()->toIso8601String(),
-                            'refunded_by_staff_id' => $staffId,
-                            'adjustment_id'        => $adjustment->id,
-                            'reference_number'     => $adjustment->reference_number,
-                            'refund_amount'        => $totalRefundAmount,
-                            'refund_type'          => 'partial_refund',
-                        ],
-                    ]
-                );
-                $billingCycle->save();
-
-                // 8. Update each affected line item's status and record the adjustment
-                foreach ($affectedLineItems as $affected) {
-                    $lineItem = $lineItems->firstWhere('id', $affected['line_item_id']);
-                    $lineItem->line_item_status  = 'adjusted';
-                    $lineItem->adjustment_amount = $affected['refund_amount'];
-                    $lineItem->adjustment_reason = "Partial refund — {$refundData['reason']}";
-                    $lineItem->save();
-                }
-
-                // 9. Restore inventory for the refunded line items
-                if ($refundData['restore_inventory'] ?? true) {
-                    $itemsToRestore = $lineItems->whereIn('id', $requestedIds);
-                    $restored = $this->restoreInventory(
-                        $itemsToRestore,
-                        $staffId,
-                        $adjustment->reference_number
-                    );
-                    $adjustment->inventory_restored = $restored;
-                    $adjustment->save();
-                }
-
-                // 10. Recalculate visit payment state
-                $this->updateVisitAfterRefund($billingCycle->visit, $billingCycle, $adjustment, $staffId);
-
-                // 11. Seal the adjustment
-                $this->completeAdjustment($adjustment, $staffId);
-
-                Log::info('Partial refund processed successfully', [
-                    'billing_cycle_id'         => $billingCycle->id,
-                    'adjustment_id'            => $adjustment->id,
-                    'refund_amount'            => $totalRefundAmount,
-                    'affected_line_items_count' => count($affectedLineItems),
-                    'staff_id'                 => $staffId,
-                ]);
-
+            // 3. Extract requested reference IDs (these are either service_catalog_id OR inventory_item_id)
+            if (!isset($refundData['line_items']) || !is_array($refundData['line_items'])) {
                 return [
-                    'success' => true,
-                    'message' => 'Partial refund processed successfully.',
-                    'data'    => [
-                        'refund_type'         => 'partial_refund',
-                        'adjustment_id'       => $adjustment->id,
-                        'reference_number'    => $adjustment->reference_number,
-                        'refund_amount'       => $totalRefundAmount,
-                        'patient_refund'      => $patientRefund,
-                        'insurance_refund'    => $insuranceRefund,
-                        'affected_line_items' => count($affectedLineItems),
-                        'remaining_balance'   => $adjustment->remaining_amount,
-                        'inventory_restored'  => $adjustment->restore_inventory,
-                        'completed_at'        => now()->toIso8601String(),
+                    'success' => false,
+                    'message' => 'Line items are required for partial refund.',
+                    'errors' => ['line_items' => ['Line items array is required']],
+                ];
+            }
+
+            $requestedRefunds = $refundData['line_items'];
+            $requestedRefIds = array_column($requestedRefunds, 'line_item_id'); // These are service_catalog_id or inventory_item_id
+            
+            Log::info('Processing partial refund', [
+                'billing_cycle_id' => $billingCycleId,
+                'requested_reference_ids' => $requestedRefIds,
+                'requested_refunds' => $requestedRefunds,
+            ]);
+
+            // 4. Fetch line items that match either service_catalog_id OR inventory_item_id
+            $lineItems = InvoiceLineItem::where('billing_cycle_id', $billingCycle->id)
+                ->where(function($query) use ($requestedRefIds) {
+                    $query->whereIn('service_catalog_id', $requestedRefIds)
+                          ->orWhereIn('inventory_item_id', $requestedRefIds);
+                })
+                ->lockForUpdate()
+                ->get();
+
+            // 5. Verify all requested reference IDs were found
+            $foundServiceIds = $lineItems->pluck('service_catalog_id')->filter()->toArray();
+            $foundInventoryIds = $lineItems->pluck('inventory_item_id')->filter()->toArray();
+            $foundRefIds = array_merge($foundServiceIds, $foundInventoryIds);
+            
+            $missingRefIds = array_diff($requestedRefIds, $foundRefIds);
+            
+            if (!empty($missingRefIds)) {
+                return [
+                    'success' => false,
+                    'message' => 'Some service/inventory items do not belong to this billing cycle or do not exist.',
+                    'errors' => [
+                        'line_items' => ['Missing or invalid reference IDs: ' . implode(', ', $missingRefIds)]
                     ],
                 ];
-            });
+            }
 
-        } catch (Throwable $e) {
-            Log::error('Partial refund processing failed — all changes rolled back', [
-                'billing_cycle_id' => $billingCycleId,
-                'error'            => $e->getMessage(),
-                'trace'            => $e->getTraceAsString(),
+            // 6. Validate that referenced inventory and service catalog items still exist in their source tables
+            $inventoryIds = $lineItems->pluck('inventory_item_id')->filter()->unique()->toArray();
+            $serviceCatalogIds = $lineItems->pluck('service_catalog_id')->filter()->unique()->toArray();
+
+            // Check inventory items exist
+            if (!empty($inventoryIds)) {
+                $validInventoryIds = InventoryItem::whereIn('id', $inventoryIds)->pluck('id')->toArray();
+                $invalidInventoryIds = array_diff($inventoryIds, $validInventoryIds);
+                
+                if (!empty($invalidInventoryIds)) {
+                    return [
+                        'success' => false,
+                        'message' => 'Referenced inventory items no longer exist.',
+                        'errors' => [
+                            'inventory_item_id' => ['Invalid inventory IDs: ' . implode(', ', $invalidInventoryIds)]
+                        ],
+                    ];
+                }
+            }
+
+            // Check service catalog items exist
+            if (!empty($serviceCatalogIds)) {
+                $validServiceIds = ServiceCatalog::whereIn('id', $serviceCatalogIds)->pluck('id')->toArray();
+                $invalidServiceIds = array_diff($serviceCatalogIds, $validServiceIds);
+                
+                if (!empty($invalidServiceIds)) {
+                    return [
+                        'success' => false,
+                        'message' => 'Referenced service catalog items no longer exist.',
+                        'errors' => [
+                            'service_catalog_id' => ['Invalid service catalog IDs: ' . implode(', ', $invalidServiceIds)]
+                        ],
+                    ];
+                }
+            }
+
+            // 7. Parse tax details from billing cycle
+            $taxDetails = json_decode($billingCycle->tax_details, true);
+            $totalTaxAmount = isset($taxDetails[28]) ? (float) $taxDetails[28] : 0;
+            $billingSubtotal = (float) $billingCycle->subtotal;
+
+            // 8. Calculate per-line refund amounts with tax
+            $totalRefundSubtotal = 0;
+            $totalRefundTax = 0;
+            $totalRefundAmount = 0;
+            $affectedLineItems = [];
+
+            foreach ($requestedRefunds as $requestedItem) {
+                // Find the line item by matching either service_catalog_id or inventory_item_id
+                $lineItem = $lineItems->first(function($item) use ($requestedItem) {
+                    return ($item->service_catalog_id == $requestedItem['line_item_id'] || 
+                            $item->inventory_item_id == $requestedItem['line_item_id']);
+                });
+
+                if (!$lineItem) {
+                    return [
+                        'success' => false,
+                        'message' => "Line item with reference ID {$requestedItem['line_item_id']} not found.",
+                        'errors' => ['line_items' => ["Invalid reference ID: {$requestedItem['line_item_id']}"]],
+                    ];
+                }
+
+                // Calculate tax attributable to this line item
+                $lineItemProportion = $billingSubtotal > 0 
+                    ? (float) $lineItem->line_total_amount / $billingSubtotal 
+                    : 0;
+                $lineItemTaxAmount = round($totalTaxAmount * $lineItemProportion, 2);
+                $lineItemTotalWithTax = (float) $lineItem->line_total_amount + $lineItemTaxAmount;
+
+                // Determine refund amount
+                $refundSubtotal = isset($requestedItem['refund_amount'])
+                    ? (float) $requestedItem['refund_amount']
+                    : (float) $lineItem->line_total_amount;
+
+                // Calculate proportional tax refund
+                $lineItemSubtotal = (float) $lineItem->line_total_amount;
+                $refundTax = $lineItemSubtotal > 0 
+                    ? round($refundSubtotal * ($lineItemTaxAmount / $lineItemSubtotal), 2) 
+                    : 0;
+                $refundTotal = $refundSubtotal + $refundTax;
+
+                // Validate refund subtotal
+                if ($refundSubtotal <= 0) {
+                    return [
+                        'success' => false,
+                        'message' => "Refund amount must be greater than zero.",
+                        'errors' => ['line_items' => ["Invalid refund amount: {$refundSubtotal}"]],
+                    ];
+                }
+
+                if ($lineItem->total_amount_charged > (float) $lineItem->line_total_amount) {
+                    return [
+                        'success' => false,
+                        'message' => "Refund amount exceeds original amount.",
+                        'errors' => [
+                            'line_items' => [
+                                "Requested {$refundSubtotal}, max allowed {$lineItem->line_total_amount}"
+                            ],
+                        ],
+                    ];
+                }
+
+                // Validate quantity
+                $refundQuantity = $requestedItem['quantity'] ?? (float) $lineItem->quantity;
+                if ($refundQuantity <= 0) {
+                    return [
+                        'success' => false,
+                        'message' => "Refund quantity must be greater than zero.",
+                        'errors' => ['line_items' => ["Invalid refund quantity: {$refundQuantity}"]],
+                    ];
+                }
+
+                if ($refundQuantity > (float) $lineItem->quantity) {
+                    return [
+                        'success' => false,
+                        'message' => "Refund quantity exceeds original quantity.",
+                        'errors' => [
+                            'line_items' => [
+                                "Requested quantity {$refundQuantity}, max allowed {$lineItem->quantity}"
+                            ],
+                        ],
+                    ];
+                }
+
+                $totalRefundSubtotal += $refundSubtotal;
+                $totalRefundTax += $refundTax;
+                $totalRefundAmount += $refundTotal;
+                
+                $affectedLineItems[] = [
+                    'line_item_id' => $lineItem->id,
+                    'reference_id' => $requestedItem['line_item_id'], // The service_catalog_id or inventory_item_id
+                    'reference_type' => $lineItem->service_catalog_id ? 'service' : 'inventory',
+                    'line_item_uuid' => $lineItem->uuid ?? $lineItem->line_item_uuid,
+                    'service_code' => $lineItem->service_code,
+                    'service_name' => $lineItem->description ?? $lineItem->service_description,
+                    'original_subtotal' => (float) $lineItem->line_total_amount,
+                    'original_tax' => $lineItemTaxAmount,
+                    'original_total' => $lineItemTotalWithTax,
+                    'refund_subtotal' => $refundSubtotal,
+                    'refund_tax' => $refundTax,
+                    'refund_total' => $refundTotal,
+                    'original_quantity' => (float) $lineItem->quantity,
+                    'refund_quantity' => $refundQuantity,
+                    'service_catalog_id' => $lineItem->service_catalog_id,
+                    'inventory_item_id' => $lineItem->inventory_item_id,
+                ];
+            }
+
+            // 9. Validate total refund against payments received
+            // $totalPaymentsReceived = (float) $billingCycle->patient_payment_received 
+            //                        + (float) $billingCycle->insurance_payment_received;
+            
+            // if ($totalRefundAmount > $totalPaymentsReceived) {
+            //     return [
+            //         'success' => false,
+            //         'message' => 'Refund amount exceeds total payments received.',
+            //         'errors' => [
+            //             'refund_amount' => [
+            //                 "Requested refund: {$totalRefundAmount}, "
+            //                 . "Available payments: {$totalPaymentsReceived}"
+            //             ],
+            //         ],
+            //     ];
+            // }
+
+            // 10. Split refund proportionally between patient and insurance
+            $originalTotal = (float) $billingCycle->patient_payment_received
+                           + (float) $billingCycle->insurance_payment_received;
+            
+            $patientRatio = $originalTotal > 0
+                ? (float) $billingCycle->patient_payment_received / $originalTotal
+                : 0;
+            
+            $patientRefund = round($totalRefundAmount * $patientRatio, 2);
+            $insuranceRefund = round($totalRefundAmount - $patientRefund, 2);
+            
+            $patientRefundSubtotal = round($totalRefundSubtotal * $patientRatio, 2);
+            $patientRefundTax = round($totalRefundTax * $patientRatio, 2);
+            $insuranceRefundSubtotal = $totalRefundSubtotal - $patientRefundSubtotal;
+            $insuranceRefundTax = $totalRefundTax - $patientRefundTax;
+
+            // 11. Persist the financial adjustment
+            $adjustment = $this->createFinancialAdjustment([
+                'facility_id' => $facilityId,
+                'billing_cycle_id' => $billingCycle->id,
+                'visit_id' => $billingCycle->visit_id,
+                'patient_id' => $billingCycle->patient_id,
+                'adjustment_type' => 'partial_refund',
+                'adjustment_reason' => $refundData['reason'],
+                'reason_notes' => $refundData['reason_notes'] ?? null,
+                'original_amount' => (float) $billingCycle->net_amount,
+                'adjustment_amount' => $totalRefundAmount,
+                'remaining_amount' => (float) $billingCycle->net_amount - $totalRefundSubtotal,
+                'patient_refund_amount' => $patientRefund,
+                'insurance_refund_amount' => $insuranceRefund,
+                'refund_methods' => $refundData['refund_methods'] ?? [],
+                'affected_line_items' => $affectedLineItems,
+                'restore_inventory' => $refundData['restore_inventory'] ?? false,
+                'requested_by_staff_id' => $staffId,
+                'original_billing_snapshot' => $this->createBillingSnapshot($billingCycle),
+                'tax_details' => json_encode([
+                    'total_tax_refunded' => $totalRefundTax,
+                    'patient_tax_refund' => $patientRefundTax,
+                    'insurance_tax_refund' => $insuranceRefundTax,
+                    'original_tax_details' => $taxDetails,
+                ]),
+            ]);
+
+            // 12. Update billing cycle financials
+            $billingCycle->patient_payment_received -= $patientRefund;
+            $billingCycle->insurance_payment_received -= $insuranceRefund;
+            $billingCycle->bad_debt_adjustment = (float) $billingCycle->bad_debt_adjustment + $totalRefundSubtotal;
+            $billingCycle->updated_by_staff_id = $staffId;
+
+            // Recalculate billing status
+            $remainingPaid = (float) $billingCycle->patient_payment_received
+                           + (float) $billingCycle->insurance_payment_received;
+
+            if ($remainingPaid <= 0) {
+                $billingCycle->billing_status = 'partially_refunded';
+            } elseif ($remainingPaid < (float) $billingCycle->net_amount) {
+                $billingCycle->billing_status = 'partially_paid';
+            }
+
+            // Update metadata
+            $billingCycle->metadata = $this->mergeMetadata($billingCycle->metadata, [
+                'refunds' => array_merge(
+                    $billingCycle->metadata['refunds'] ?? [],
+                    [[
+                        'refunded_at' => now()->toIso8601String(),
+                        'refunded_by_staff_id' => $staffId,
+                        'adjustment_id' => $adjustment->id,
+                        'reference_number' => $adjustment->reference_number,
+                        'refund_amount' => $totalRefundAmount,
+                        'refund_subtotal' => $totalRefundSubtotal,
+                        'refund_tax' => $totalRefundTax,
+                        'refund_type' => 'partial_refund',
+                        'patient_refund' => $patientRefund,
+                        'insurance_refund' => $insuranceRefund,
+                        'affected_reference_ids' => array_column($affectedLineItems, 'reference_id'),
+                    ]]
+                ),
+            ]);
+            
+            $billingCycle->save();
+
+            // 13. Update affected line items - store extra data in metadata
+            foreach ($affectedLineItems as $affected) {
+                $lineItem = $lineItems->firstWhere('id', $affected['line_item_id']);
+                
+                // Get existing metadata or create new
+                $metadata = $lineItem->metadata ? json_decode($lineItem->metadata, true) : [];
+                $metadata['refund_details'] = [
+                    'tax_amount' => $affected['refund_tax'],
+                    'total_amount' => $affected['refund_total'],
+                    'adjusted_at' => now()->toIso8601String(),
+                    'adjusted_by_staff_id' => $staffId,
+                    'reference_id' => $affected['reference_id'] ?? null,
+                    'reference_type' => $affected['reference_type'] ?? null,
+                ];
+                
+                $lineItem->line_item_status = 'adjusted';
+                $lineItem->adjustment_amount = $affected['refund_subtotal'];
+                $lineItem->adjustment_reason = "Partial refund — {$refundData['reason']}";
+                $lineItem->metadata = json_encode($metadata);
+                
+                $lineItem->save();
+            }
+
+            // 14. Restore inventory if requested
+            if ($refundData['restore_inventory'] ?? false) {
+                $itemsToRestore = $lineItems->whereIn('id', array_column($affectedLineItems, 'line_item_id'));
+                $restored = $this->restoreInventory(
+                    $itemsToRestore,
+                    $staffId,
+                    $adjustment->reference_number
+                );
+                
+                $adjustment->inventory_restored = $restored['success'] ?? false;
+                $adjustment->save();
+            }
+
+            // 15. Update visit payment state
+            $this->updateVisitAfterRefund($billingCycle->visit, $billingCycle, $adjustment, $staffId);
+
+            // 16. Seal the adjustment
+            $this->completeAdjustment($adjustment, $staffId);
+
+            Log::info('Partial refund processed successfully', [
+                'billing_cycle_id' => $billingCycle->id,
+                'adjustment_id' => $adjustment->id,
+                'reference_number' => $adjustment->reference_number,
+                'refund_amount' => $totalRefundAmount,
+                'patient_refund' => $patientRefund,
+                'insurance_refund' => $insuranceRefund,
+                'affected_reference_ids' => array_column($affectedLineItems, 'reference_id'),
+                'staff_id' => $staffId,
             ]);
 
             return [
-                'success' => false,
-                'message' => 'Failed to process partial refund. All changes have been rolled back.',
-                'error'   => config('app.debug') ? $e->getMessage() : null,
+                'success' => true,
+                'message' => 'Partial refund processed successfully.',
+                'data' => [
+                    'refund_type' => 'partial_refund',
+                    'adjustment_id' => $adjustment->id,
+                    'reference_number' => $adjustment->reference_number,
+                    'refund_amount' => $totalRefundAmount,
+                    'refund_subtotal' => $totalRefundSubtotal,
+                    'refund_tax' => $totalRefundTax,
+                    'patient_refund' => $patientRefund,
+                    'insurance_refund' => $insuranceRefund,
+                    'affected_reference_ids' => array_column($affectedLineItems, 'reference_id'),
+                    'remaining_balance' => (float) $adjustment->remaining_amount,
+                    'inventory_restored' => $adjustment->restore_inventory ?? false,
+                    'completed_at' => now()->toIso8601String(),
+                ],
             ];
-        }
-    }
+        });
 
+    } catch (Throwable $e) {
+        Log::error('Partial refund processing failed — all changes rolled back', [
+            'billing_cycle_id' => $billingCycleId,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to process partial refund. All changes have been rolled back.',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ];
+    }
+}
     // =========================================================================
     // PRIVATE MODULE / HELPER METHODS
     // =========================================================================

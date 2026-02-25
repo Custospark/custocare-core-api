@@ -61,6 +61,8 @@ class InvoiceLineItem extends Model
     protected $fillable = [
         'line_item_uuid',
         'billing_cycle_id',
+        'inventory_item_id',
+        'service_catalog_id',
         'visit_id',
         'service_version_id',
         'service_version_snapshot',

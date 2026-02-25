@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Refund\RefundTransactionRequest;
 use App\Services\Billing\RefundService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -135,61 +136,42 @@ class RefundController extends Controller
      * @param int     $billingCycleId
      * @return JsonResponse
      */
-    public function refundTransaction(Request $request, int $billingCycleId): JsonResponse
-    {
-        try {
-            // --- Header extraction & guard -----------------------------------
-            [$facilityId, $staffId, $headerError] = $this->extractHeaders($request);
 
-            if ($headerError) {
-                return $headerError;
-            }
 
-            // --- Unified validation for both refund types -------------------
-            // line_items is nullable; its presence signals a partial refund.
-            $validated = $request->validate([
-                'reason'       => 'required|in:billing_error,service_not_rendered,duplicate_charge,patient_request,insurance_denial,administrative_correction,pricing_error,cancelled_service,other',
-                'reason_notes' => 'required_if:reason,other|string|max:500',
+public function refundTransaction(RefundTransactionRequest $request, int $billingCycleId): JsonResponse
+{
+    Log::info($request);
+    
+    try {
+        // --- Header extraction & guard -----------------------------------
+        [$facilityId, $staffId, $headerError] = $this->extractHeaders($request);
 
-                // Optional — omit entirely for a full refund
-                'line_items'                      => 'nullable|array|min:1',
-                'line_items.*.line_item_id'       => 'required_with:line_items|integer|exists:invoice_line_items,id',
-                'line_items.*.refund_amount'      => 'nullable|numeric|min:0',
-
-                'refund_methods'           => 'required|array|min:1',
-                'refund_methods.*.type'    => 'required|in:cash,card,insurance,mobile,bank_transfer,cheque,other',
-                'refund_methods.*.amount'  => 'required|numeric|min:0',
-                'refund_methods.*.reference' => 'nullable|string',
-
-                'restore_inventory' => 'boolean',
-            ]);
-
-            // --- Delegate to service (type auto-detected inside) -------------
-            $result     = $this->refundService->refundTransaction($billingCycleId, $validated, $facilityId, $staffId);
-            $statusCode = $result['success'] ? 200 : 422;
-
-            return response()->json($result, $statusCode);
-
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed.',
-                'errors'  => $e->errors(),
-            ], 422);
-
-        } catch (\Exception $e) {
-            Log::error('Refund transaction request failed', [
-                'billing_cycle_id' => $billingCycleId,
-                'error'            => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to process refund.',
-                'error'   => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+        if ($headerError) {
+            return $headerError;
         }
+
+        // Get the validated data from the form request
+        $validated = $request->validated();
+
+        // --- Delegate to service (type auto-detected inside) -------------
+        $result     = $this->refundService->refundTransaction($billingCycleId, $validated, $facilityId, $staffId);
+        $statusCode = $result['success'] ? 200 : 422;
+
+        return response()->json($result, $statusCode);
+
+    } catch (\Exception $e) {
+        Log::error('Refund transaction request failed', [
+            'billing_cycle_id' => $billingCycleId,
+            'error'            => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to process refund.',
+            'error'   => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
     }
+}
 
     // -------------------------------------------------------------------------
     // Internal helper

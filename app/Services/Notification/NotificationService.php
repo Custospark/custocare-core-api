@@ -7,7 +7,7 @@ use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use App\Mail\StandardEmail;;
+use App\Mail\StandardEmail;
 
 class NotificationService
 {
@@ -81,17 +81,21 @@ class NotificationService
     protected function sendEmail($userId, $title, $mailBody)
     {
         $user = User::find($userId);
-
+        
         if (!$user) {
             Log::warning("Attempted to send email to non-existent user ID: {$userId}");
             return;
         }
 
         try {
-            Mail::to($user->email)->send(new StandardEmail($title, $mailBody));
-            Log::info("Email successfully sent to {$user->email}.");
+            $email = decrypt($user->email_encrypted);
+            
+            // Pass isHtml = true since mailBody contains HTML
+            Mail::to($email)->send(new StandardEmail($title, $mailBody, null, null, null, null, true));
+            
+            Log::info("Email successfully sent to {$email}.");
         } catch (\Exception $e) {
-            Log::error("Failed to send email to {$user->email}. Error: " . $e->getMessage());
+            Log::error("Failed to send email to user ID: {$userId}. Error: " . $e->getMessage());
         }
     }
 
@@ -102,10 +106,14 @@ class NotificationService
     {
         User::all()->each(function ($user) use ($title, $mailBody) {
             try {
-                Mail::to($user->email)->send(new StandardEmail($title, $mailBody));
-                Log::info("Email successfully sent to {$user->email}.");
+                $email = decrypt($user->email_encrypted);
+                
+                // Pass isHtml = true since mailBody contains HTML
+                Mail::to($email)->send(new StandardEmail($title, $mailBody, null, null, null, null, true));
+                
+                Log::info("Email successfully sent to {$email}.");
             } catch (\Exception $e) {
-                Log::error("Failed to send email to {$user->email}. Error: " . $e->getMessage());
+                Log::error("Failed to send email to user ID: {$user->id}. Error: " . $e->getMessage());
             }
         });
     }

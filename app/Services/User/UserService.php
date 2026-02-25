@@ -1,4 +1,5 @@
 <?php
+// app/Services/User/UserService.php (updated version)
 
 declare(strict_types=1);
 
@@ -44,72 +45,72 @@ class UserService implements Contracts\UserServiceInterface
      * @throws \Exception
      */
     public function register(array $data): User
-{
-    return DB::transaction(function () use ($data) {
-        try {
-            $email = strtolower($data['email']);
-            Log::info("Email: ".$email);
-            $emailHash = hash('sha256', $email);
-            Log::info("Email hash: ".$emailHash);
+    {
+        return DB::transaction(function () use ($data) {
+            try {
+                $email = strtolower($data['email']);
+                $emailHash = hash('sha256', $email);
 
-
-            // Check for duplicate email
-            if ($this->userRepository->findByEmailHash($emailHash)) {
-                throw new \Exception('A user with this email already exists.');
-            }
-            
-
-            // Check for duplicate national ID if provided
-            if (!empty($data['national_id'])) {
-                $nationalIdHash = hash('sha256', $data['national_id']);
-                if ($this->userRepository->findByNationalIdHash($nationalIdHash)) {
-                    throw new \Exception('A user with this national ID already exists.');
+                // Check for duplicate email
+                if ($this->userRepository->findByEmailHash($emailHash)) {
+                    throw new \Exception('A user with this email already exists.');
                 }
-                $data['national_id_hash'] = $nationalIdHash;
-                $data['national_id_encrypted'] = encrypt($data['national_id']);
-                unset($data['national_id']);
+                
+                // Check for duplicate national ID if provided
+                if (!empty($data['national_id'])) {
+                    $nationalIdHash = hash('sha256', $data['national_id']);
+                    if ($this->userRepository->findByNationalIdHash($nationalIdHash)) {
+                        throw new \Exception('A user with this national ID already exists.');
+                    }
+                    $data['national_id_hash'] = $nationalIdHash;
+                    $data['national_id_encrypted'] = encrypt($data['national_id']);
+                    unset($data['national_id']);
+                }
+                
+                if (empty($data['password'])) {
+                    $data['password'] = HealthcareIdGenerator::generateRandomCode();
+                }
+
+                // Generate global UUID
+                $data['global_user_uuid'] = Str::uuid()->toString();
+
+                // Encrypt email & phone
+                $data['email_hash'] = $emailHash;
+                $data['email_encrypted'] = encrypt($email);
+                $data['email_verified_at'] = null; // Email not verified initially
+                unset($data['email']);
+
+                $phone = $data['phone'] ?? null;
+                if ($phone) {
+                    $data['phone_hash'] = hash('sha256', $phone);
+                    $data['phone_encrypted'] = encrypt($phone);
+                    unset($data['phone']);
+                }
+
+                // Hash password
+                $data['password_hash'] = Hash::make($data['password']);
+                $data['password_changed_at'] = now();
+                unset($data['password']);
+
+                // Set defaults
+                $data['identity_state'] = $data['identity_state'] ?? 'pending';
+                $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
+                $data['failed_login_attempts'] = 0;
+
+                return $this->userRepository->create($data);
+
+            } catch (\Exception $e) {
+                Log::warning('User registration failed', [
+                    'error' => $e->getMessage(),
+                    'email' => $email ?? null,
+                ]);
+                throw $e;
             }
-            if(empty($data['password'])){
-                $data['password']=HealthcareIdGenerator::generateRandomCode();
-            }
-
-            // Generate global UUID
-            $data['global_user_uuid'] = Str::uuid()->toString();
-
-            // Encrypt email & phone
-            $data['email_hash'] = $emailHash;
-            $data['email_encrypted'] = encrypt($email);
-            unset($data['email']);
-
-            $phone = $data['phone'];
-            $data['phone_hash'] = hash('sha256', $phone);
-            $data['phone_encrypted'] = encrypt($phone);
-            unset($data['phone']);
-
-            // Hash password
-            $data['password_hash'] = Hash::make($data['password']);
-            $data['password_changed_at'] = now();
-            unset($data['password']);
-
-            // Set defaults
-            $data['identity_state'] = $data['identity_state'] ?? 'pending';
-            $data['data_residency_region'] = $data['data_residency_region'] ?? 'US';
-
-            return $this->userRepository->create($data);
-
-        } catch (\Exception $e) {
-            Log::warning('User registration failed', [
-                'error' => $e->getMessage(),
-                'email' => $email,
-            ]);
-            throw $e; // ensures transaction rollback
-        }
-    });
-}
-
+        });
+    }
 
     /**
-     * Authenticate user login.
+     * Authenticate user login with email verification check.
      *
      * @param array $credentials
      * @param string $ip
@@ -132,6 +133,7 @@ class UserService implements Contracts\UserServiceInterface
             ];
         }
 
+        // Check if account is locked
         if ($user->isAccountLocked()) {
             return [
                 'success' => false,
@@ -143,6 +145,7 @@ class UserService implements Contracts\UserServiceInterface
             ];
         }
 
+        // Verify password
         if (!Hash::check($credentials['password'], $user->password_hash)) {
             $this->userRepository->incrementFailedAttempts($user);
 
@@ -166,13 +169,25 @@ class UserService implements Contracts\UserServiceInterface
                 'success' => false,
                 'code' => 'INVALID_CREDENTIALS',
                 'message' => 'Invalid credentials',
+                'requires_mfa' => false,
+                'user' => null,
+                'token' => null,
+            ];
+        }
+
+        // Check if email is verified
+        if (!$user->hasVerifiedEmail()) {
+            return [
+                'success' => false,
+                'code' => 'EMAIL_NOT_VERIFIED',
+                'message' => 'Please verify your email address before logging in',
                 'requires_mfa' => true,
                 'user' => null,
                 'token' => null,
             ];
         }
 
-        // Success path
+        // Success path - reset failed attempts
         $this->userRepository->resetFailedAttempts($user);
         $this->userRepository->updateLastLogin($user, $ip, $userAgent);
 
@@ -204,8 +219,8 @@ class UserService implements Contracts\UserServiceInterface
             }
         }
 
-        // Generate token for successful login
-        $token = $user->createToken('auth-token')->plainTextToken;
+        // Generate token with single session enforcement
+        $token = $user->generateAuthToken();
 
         return [
             'success' => true,
@@ -218,14 +233,14 @@ class UserService implements Contracts\UserServiceInterface
     }
 
     /**
-     * Logout user.
+     * Logout user - delete all tokens.
      *
      * @param User $user
      * @return bool
      */
     public function logout(User $user): bool
     {
-        $user->tokens()->delete();
+        $user->deleteAllTokens();
         return true;
     }
 
@@ -304,6 +319,7 @@ class UserService implements Contracts\UserServiceInterface
         if (isset($data['email'])) {
             $data['email_hash'] = hash('sha256', strtolower($data['email']));
             $data['email_encrypted'] = encrypt($data['email']);
+            $data['email_verified_at'] = null; // Reset verification on email change
             unset($data['email']);
         }
 
@@ -330,6 +346,12 @@ class UserService implements Contracts\UserServiceInterface
     {
         $user = $this->getUserById($id);
         return $this->userRepository->delete($user);
+    }
+
+
+        public function findByEmailHash(string $emailHash)
+    {
+        return $this->userRepository->findByEmailHash($emailHash);
     }
 
     /**

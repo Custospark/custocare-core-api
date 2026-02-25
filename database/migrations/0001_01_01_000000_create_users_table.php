@@ -65,7 +65,7 @@ return new class extends Migration
             $table->string('password_hash', 255)->nullable()->comment('For patient portal access');
             $table->timestamp('password_changed_at')->nullable();
             $table->boolean('requires_password_change')->default(false);
-            $table->boolean('mfa_enabled')->default(false);
+            $table->boolean('mfa_enabled')->default(true);
             $table->string('mfa_secret_encrypted', 512)->nullable();
             
             // Session & security tracking

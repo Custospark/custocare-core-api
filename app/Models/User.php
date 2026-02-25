@@ -70,6 +70,8 @@ class User extends Authenticatable
      *
      * @var array<string>
      */
+    public const TOKEN_EXPIRATION_MINUTES = 15;
+    public const OTP_EXPIRATION_MINUTES = 10;
 
     protected $primaryKey = 'id';
     public $incrementing = true;
@@ -163,8 +165,44 @@ class User extends Authenticatable
     public function getAuthPassword(): string
     {
         return $this->password_hash ?? '';
+    }  
+
+    /**
+     * Delete all existing tokens for this user.
+     */
+    public function deleteAllTokens(): void
+    {
+        $this->tokens()->delete();
     }
 
+    /**
+     * Generate a new token with single session enforcement.
+     */
+    public function generateAuthToken(string $deviceName = 'auth-token'): string
+    {
+        // Delete all existing tokens to enforce single session
+        $this->deleteAllTokens();
+        
+        // Create new token with expiration
+        return $this->createToken($deviceName, ['*'], now()->addDays(7))->plainTextToken;
+    }
+
+    /**
+     * Verify email address.
+     */
+    public function markEmailAsVerified(): void
+    {
+        $this->email_verified_at = now();
+        $this->save();
+    }
+
+    /**
+     * Check if email is verified.
+     */
+    public function hasVerifiedEmail(): bool
+    {
+        return $this->email_verified_at !== null;
+    }
     /**
      * Check if user's identity is verified.
      *

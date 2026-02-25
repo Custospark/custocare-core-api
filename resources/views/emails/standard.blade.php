@@ -24,7 +24,8 @@
         }
 
         .email-header {
-            background: linear-gradient(135deg, #1e3a8a 0%, #2451ce 100%);
+            /* Left-to-right gradient: blue-600 to emerald-600 */
+            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
             color: #ffffff;
             padding: 32px 24px 24px;
             text-align: center;
@@ -90,31 +91,37 @@
             display: inline-block;
             margin: 24px 0;
             padding: 14px 32px;
-            background-color: #2451ce;
+            /* Button gradient matching header */
+            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
             color: #ffffff !important;
             text-decoration: none;
             font-weight: 600;
             border-radius: 30px;
-            transition: background-color 0.2s;
-            box-shadow: 0 4px 6px rgba(36, 81, 206, 0.2);
+            transition: opacity 0.2s;
+            box-shadow: 0 4px 6px rgba(5, 150, 105, 0.2);
         }
 
         .cta-button:hover {
-            background-color: #1e3a8a;
+            opacity: 0.9;
         }
 
         .email-tip {
-            background-color: #f0f9ff;
-            border-left: 4px solid #2451ce;
+            background: linear-gradient(90deg, #eff6ff 0%, #ecfdf5 100%);
+            border-left: 4px solid #059669;
             padding: 20px;
             margin: 24px 0;
             border-radius: 8px;
             font-size: 15px;
-            color: #1e3a8a;
+            color: #065f46;
+        }
+
+        .email-tip strong {
+            color: #2563eb;
         }
 
         .email-footer {
-            background: linear-gradient(135deg, #1e3a8a 0%, #2451ce 100%);
+            /* Left-to-right gradient: blue-600 to emerald-600 */
+            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
             padding: 28px 24px;
             text-align: center;
             font-size: 14px;
@@ -127,10 +134,31 @@
             opacity: 0.9;
         }
 
+        .footer-message strong {
+            color: white;
+            font-weight: 700;
+        }
+
         .copyright {
             font-size: 12px;
             opacity: 0.7;
             margin-top: 12px;
+        }
+
+        /* Optional: Add a subtle gradient border to the container */
+        .email-container {
+            position: relative;
+        }
+
+        .email-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
+            z-index: 1;
         }
 
         @media only screen and (max-width: 620px) {
@@ -154,7 +182,7 @@
 </head>
 <body>
     <div class="email-container">
-        <!-- Header -->
+        <!-- Header with left-to-right gradient -->
         <div class="email-header">
             <img src="{{ $message->embed($logoPath) }}" alt="Custospark" class="logo-rounded">
             
@@ -169,7 +197,11 @@
 
         <!-- Body -->
         <div class="email-body">
-            <p>{!! nl2br(e($mailBody)) !!}</p>
+            @if($isHtml)
+                {!! $mailBody !!}
+            @else
+                <p>{!! nl2br(e($mailBody)) !!}</p>
+            @endif
 
             @isset($tip)
                 <div class="email-tip">
@@ -186,7 +218,7 @@
             @endisset
         </div>
 
-        <!-- Footer -->
+        <!-- Footer with matching left-to-right gradient -->
         <div class="email-footer">
             <div class="footer-message">
                 You're receiving this because you use <strong>Custocare AI</strong>,<br>

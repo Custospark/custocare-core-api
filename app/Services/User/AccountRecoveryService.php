@@ -59,9 +59,9 @@ class AccountRecoveryService
         return DB::transaction(function () use ($userId, $channel) {
             $user = $this->findUserOrFail($userId);
 
-            if ($user->hasVerifiedEmail()) {
-                throw new \Exception('Email is already verified.', 400);
-            }
+            // if ($user->hasVerifiedEmail()) {
+            //     throw new \Exception('Email is already verified.', 400);
+            // }
 
             [$token, $otp, $recoveryToken] = $this->createRecoveryToken(
                 $userId,

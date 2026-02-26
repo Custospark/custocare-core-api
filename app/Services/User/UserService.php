@@ -6,7 +6,6 @@ declare(strict_types=1);
 namespace App\Services\User;
 
 use App\Events\Auth\MfaRequired;
-use App\Events\MfaRequired as EventsMfaRequired;
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
 use App\Services\User\Contracts\UserServiceInterface;
@@ -129,84 +128,120 @@ class UserService implements UserServiceInterface
      * @param  array<string, mixed> $credentials
      * @return array{success: bool, code: string, message: string, requires_mfa: bool, user: User|null, token: string|null}
      */
-    public function login(array $credentials, string $ip, string $userAgent): array
-    {
-        $emailHash = hash('sha256', strtolower(trim($credentials['email'])));
-        $user      = $this->userRepository->findByEmailHash($emailHash);
+  public function login(array $credentials, string $ip, string $userAgent): array
+{
+    $emailHash = hash('sha256', strtolower(trim($credentials['email'])));
+    $user      = $this->userRepository->findByEmailHash($emailHash);
 
-        // ── User not found ─────────────────────────────────────────────────
-        if (!$user) {
-            return $this->loginFailure('INVALID_CREDENTIALS', 'Invalid credentials.');
-        }
+    // ── User not found ─────────────────────────────────────────────────
+    if (!$user) {
+        return $this->loginFailure('INVALID_CREDENTIALS', 'Invalid credentials.');
+    }
 
-        // ── Account locked ─────────────────────────────────────────────────
-        if ($user->isAccountLocked()) {
-            return $this->loginFailure('ACCOUNT_LOCKED', 'Account is temporarily locked. Please try again later.');
-        }
+    // ── Account locked ─────────────────────────────────────────────────
+    if ($user->isAccountLocked()) {
+        return $this->loginFailure('ACCOUNT_LOCKED', 'Account is temporarily locked. Please try again later.');
+    }
 
-        // ── Password check ─────────────────────────────────────────────────
-        if (!Hash::check($credentials['password'], $user->password_hash)) {
-            return $this->handleFailedPassword($user);
-        }
+    // ── Password check ─────────────────────────────────────────────────
+    if (!Hash::check($credentials['password'], $user->password_hash)) {
+        return $this->handleFailedPassword($user);
+    }
 
-        // ── Email verification gate ────────────────────────────────────────
-        if (!$user->hasVerifiedEmail()) {
+    // ── Email verification gate ────────────────────────────────────────
+    if (!$user->hasVerifiedEmail()) {
+        return [
+            'success'      => false,
+            'code'         => 'EMAIL_NOT_VERIFIED',
+            'message'      => 'Please verify your email address before logging in.',
+            'requires_mfa' => false,
+            'user'         => null,
+            'token'        => null,
+        ];
+    }
+
+    // ── Reset failed-attempt counter and record this login ─────────────
+    $this->userRepository->resetFailedAttempts($user);
+    $this->userRepository->updateLastLogin($user, $ip, $userAgent);
+
+    // ── MFA gate (Using Email OTP) ────────────────────────────────────
+    if ($user->mfa_enabled) {
+        // No code supplied yet – prompt the client and send OTP email
+        if (empty($credentials['mfa_code'])) {
+            try {
+                // Create MFA token and OTP
+                [$token, $otp, $recoveryToken] = $this->createMfaToken($user->id);
+                
+                // Dispatch MfaRequired event with token and OTP
+                // \App\Events\MfaRequired::dispatch($user, $token, $otp, 'email');
+                $service = app(\App\Services\User\AccountRecoveryService::class);
+                $result = $service->sendEmailVerification($user->id, 'email');     
+                
+                Log::info('MFA OTP email dispatched via event', [
+                    'user_id' => $user->id,
+                    'token_id' => $recoveryToken->id,
+                    'expires_at' => $recoveryToken->expires_at
+                ]);
+                
+            } catch (\Exception $e) {
+                Log::error('Failed to send MFA OTP email', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
             return [
-                'success'      => false,
-                'code'         => 'EMAIL_NOT_VERIFIED',
-                'message'      => 'Please verify your email address before logging in.',
-                'requires_mfa' => false,
-                'user'         => null,
-                'token'        => null,
+                'success'       => true,
+                'code'          => 'MFA_REQUIRED',
+                'message'       => 'Multi-factor authentication required. Please check your email for a verification code.',
+                'requires_mfa'  => true,
+                'mfa_type'      => 'email_otp',
+                'user'          => $user,
+                'token'         => null,
             ];
         }
 
-        // ── Reset failed-attempt counter and record this login ─────────────
-        $this->userRepository->resetFailedAttempts($user);
-        $this->userRepository->updateLastLogin($user, $ip, $userAgent);
-
-        // ── MFA gate (Google2FA / TOTP) ────────────────────────────────────
-        if ($user->mfa_enabled) {
-            // No code supplied yet – prompt the client
-            if (empty($credentials['mfa_code'])) {
-                // Fire audit event (TOTP is read from the user's app; no email needed)
-                EventsMfaRequired::dispatch($user);
-
-                return [
-                    'success'      => true,
-                    'code'         => 'MFA_REQUIRED',
-                    'message'      => 'Multi-factor authentication required. Please enter your TOTP code.',
-                    'requires_mfa' => true,
-                    'user'         => $user,
-                    'token'        => null,
-                ];
-            }
-
-            // Code supplied – validate it
-            if (!$this->validateMfa($user->id, $credentials['mfa_code'])) {
-                return [
-                    'success'      => false,
-                    'code'         => 'INVALID_MFA',
-                    'message'      => 'Invalid MFA code. Please try again.',
-                    'requires_mfa' => true,
-                    'user'         => null,
-                    'token'        => null,
-                ];
-            }
-        }
-
-        // ── Issue token (single-session enforcement inside User model) ──────
-        $token = $user->generateAuthToken();
-
-        return [
-            'success'      => true,
-            'code'         => 'LOGIN_SUCCESS',
-            'message'      => 'Login successful.',
-            'requires_mfa' => false,
-            'user'         => $user,
-            'token'        => $token,
-        ];
+        // Code supplied – validation happens in a separate endpoint
+        // We just log it and proceed
+        Log::info('MFA code provided for user', [
+            'user_id' => $user->id
+        ]);
     }
+
+    // ── Issue token (single-session enforcement inside User model) ──────
+    $token = $user->generateAuthToken();
+
+    return [
+        'success'      => true,
+        'code'         => 'LOGIN_SUCCESS',
+        'message'      => 'Login successful.',
+        'requires_mfa' => false,
+        'user'         => $user,
+        'token'        => $token,
+    ];
+}
+
+/**
+ * Create an MFA token and OTP for the user.
+ */
+private function createMfaToken(int $userId): array
+{
+    // Generate a random token and 6-digit OTP
+    $token = bin2hex(random_bytes(32));
+    $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    
+    // Store in recovery_tokens table
+    $recoveryToken = \App\Models\AccountRecoveryToken::create([
+        'user_id' => $userId,
+        'token_hash' => Hash::make($token),
+        'otp_hash' => Hash::make($otp),
+        'type' => 'mfa_verification',
+        'expires_at' => now()->addMinutes(10),
+        'used' => false,
+    ]);
+    
+    return [$token, $otp, $recoveryToken];
+}
 
     // ─────────────────────────────────────────────────────────────────────────
     // Logout

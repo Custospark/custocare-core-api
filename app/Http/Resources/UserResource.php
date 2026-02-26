@@ -6,6 +6,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Log;
 
 /**
  * @property int $id
@@ -29,6 +30,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * @property string|null $state
  * @property string|null $country
  * @property string|null $postal_code
+ * @property string|null $email_encrypted
+ * @property string|null $phone_encrypted
  * @property bool $requires_password_change
  * @property bool $mfa_enabled
  * @property string|null $last_login_at
@@ -65,17 +68,15 @@ class UserResource extends JsonResource
             'profile' => [
                 'first_name' => $this->first_name,
                 'last_name' => $this->last_name,
-                'full_name' => $this->full_name,
+                'full_name' => $this->full_name ?? trim($this->first_name . ' ' . $this->last_name),
                 'title' => $this->title,
                 'display_name' => $this->display_name,
                 'dob' => $this->dob,
                 'gender' => $this->gender,
             ],
             'contact' => [
-                'email' => $this->when($request->user()?->can('viewSensitiveData', $this->resource), 
-                    fn() => decrypt($this->email_encrypted)),
-                'phone' => $this->when($request->user()?->can('viewSensitiveData', $this->resource),
-                    fn() => decrypt($this->phone_encrypted)),
+                'email' => $this->when($this->email_encrypted, $this->decryptField('email_encrypted')),
+                'phone' => $this->when($this->phone_encrypted, $this->decryptField('phone_encrypted')),
             ],
             'address' => [
                 'line1' => $this->address_line1,
@@ -98,5 +99,31 @@ class UserResource extends JsonResource
             ],
             'metadata' => $this->metadata,
         ];
+    }
+
+    /**
+     * Decrypt a field value safely.
+     *
+     * @param string $field
+     * @return string|null
+     */
+    private function decryptField(string $field): ?string
+    {
+        if (empty($this->{$field})) {
+            return null;
+        }
+
+        try {
+            return decrypt($this->{$field});
+        } catch (\Exception $e) {
+            Log::error('Failed to decrypt field', [
+                'user_id' => $this->id,
+                'field' => $field,
+                'error' => $e->getMessage()
+            ]);
+            
+            // Return null or a masked value for security
+            return null;
+        }
     }
 }

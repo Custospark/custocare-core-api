@@ -11,18 +11,22 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Fired when MFA verification is required during login.
- * Since MFA uses TOTP (Google2FA), no code is sent via this event —
- * the user opens their authenticator app. This event exists for
- * audit logging or future extensibility (e.g. push notifications).
+ * Listeners are responsible for sending the OTP code to the user.
  */
 class MfaRequired
 {
     use Dispatchable, SerializesModels;
 
     /**
-     * @param User $user The user who must complete MFA
+     * @param User   $user    The user who needs to complete MFA
+     * @param string $token   The raw (un-hashed) verification token
+     * @param string $otp     The 6-digit OTP for code-based verification
+     * @param string $channel Delivery channel: 'email' | 'sms' | 'both'
      */
     public function __construct(
-        public readonly User $user
+        public readonly User   $user,
+        public readonly string $token,
+        public readonly string $otp,
+        public readonly string $channel = 'email'
     ) {}
 }

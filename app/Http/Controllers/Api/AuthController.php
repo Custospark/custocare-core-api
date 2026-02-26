@@ -140,7 +140,7 @@ class AuthController extends Controller
         return response()->json([
             'success'      => true,
             'code'         => 'EMAIL_VERIFIED',
-            'message' => 'Your email has been successfully verified.',
+            'message' => 'Identity confirmed. Authentication successful.',
             'user'         => new UserResource($user),
             'token'        => $token,
             'requires_mfa' => false,

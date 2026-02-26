@@ -194,7 +194,7 @@ class UserService implements UserServiceInterface
             return [
                 'success'       => true,
                 'code'          => 'MFA_REQUIRED',
-                'message'       => 'Please check your email for a verification code.',
+                'message' => 'Please check your email for an authentication code.',
                 'requires_mfa'  => true,
                 'mfa_type'      => 'email_otp',
                 'user'          => $user,
@@ -215,7 +215,7 @@ class UserService implements UserServiceInterface
     return [
         'success'      => true,
         'code'         => 'LOGIN_SUCCESS',
-        'message'      => 'Login successful.',
+        'message' => 'Authentication complete. Access granted.',
         'requires_mfa' => false,
         'user'         => $user,
         'token'        => $token,

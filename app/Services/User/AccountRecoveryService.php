@@ -74,7 +74,7 @@ class AccountRecoveryService
             return [
                 'token_id'   => $recoveryToken->id,
                 'expires_at' => $recoveryToken->expires_at,
-                'message'    => 'Verification code sent successfully.',
+                'message'    => 'Authentication code sent successfully.',
             ];
         });
     }

@@ -54,9 +54,9 @@ class AccountRecoveryService
      * @return array{token_id: int, expires_at: Carbon, message: string}
      * @throws \Exception If the user is not found or is already verified
      */
-    public function sendEmailVerification(int $userId, string $channel = 'email'): array
+    public function sendEmailVerification(int $userId, string $channel = 'email',$action): array
     {
-        return DB::transaction(function () use ($userId, $channel) {
+        return DB::transaction(function () use ($userId, $channel,$action) {
             $user = $this->findUserOrFail($userId);
             [$token, $otp, $recoveryToken] = $this->createRecoveryToken(
                 $userId,
@@ -64,7 +64,7 @@ class AccountRecoveryService
             );
 
             // Fire event → SendEmailVerificationNotification listener handles delivery
-            EmailVerificationRequested::dispatch($user, $token, $otp, $channel);
+            EmailVerificationRequested::dispatch($user, $token, $otp, $channel,$action);
 
             Log::info('Email verification token created', [
                 'user_id' => $userId,

@@ -1,6 +1,7 @@
 <?php
 // routes/api.php (or relevant route file)
 
+use App\Constants\ActionTypes;
 use App\Http\Controllers\Api\AuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -37,7 +38,7 @@ Route::prefix('auth')->group(function () {
 Route::get('/test-verification-flow/{userId}', function ($userId) {
     try {
         $service = app(\App\Services\User\AccountRecoveryService::class);
-        $result = $service->sendEmailVerification($userId, 'email');
+        $result = $service->sendEmailVerification($userId, 'email',ActionTypes::LOGIN_CONFIRMATION);
         
         return response()->json([
             'success' => true,

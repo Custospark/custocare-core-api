@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Constants\ActionTypes;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\LogoutRequest;
@@ -49,7 +50,7 @@ class AuthController extends Controller
             $user = $this->userService->register($request->validated());
 
             // Trigger email verification (fires EmailVerificationRequested event)
-            $this->accountRecoveryService->sendEmailVerification($user->id, 'email');
+            $this->accountRecoveryService->sendEmailVerification($user->id, 'email',ActionTypes::ACCOUNT_CREATION);
 
             return response()->json([
                 'success'      => true,
@@ -167,7 +168,8 @@ class AuthController extends Controller
         try {
             $result = $this->accountRecoveryService->sendEmailVerification(
                 (int)    $validated['user_id'],
-                (string) ($validated['channel'] ?? 'email')
+                (string) ($validated['channel'] ?? 'email'),
+                ActionTypes::LOGIN_CONFIRMATION,
             );
 
             return response()->json([

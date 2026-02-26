@@ -3,7 +3,7 @@
 
 declare(strict_types=1);
 
-namespace App\Listeners\Auth;
+namespace App\Listeners;
 
 use App\Events\MfaRequired;
 use App\Models\User;

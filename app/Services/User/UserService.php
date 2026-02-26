@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 namespace App\Services\User;
 
+use App\Constants\ActionTypes;
 use App\Events\Auth\MfaRequired;
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
@@ -175,7 +176,7 @@ class UserService implements UserServiceInterface
                 // Dispatch MfaRequired event with token and OTP
                 // \App\Events\MfaRequired::dispatch($user, $token, $otp, 'email');
                 $service = app(\App\Services\User\AccountRecoveryService::class);
-                $service->sendEmailVerification($user->id, 'email');     
+                $service->sendEmailVerification($user->id, 'email',ActionTypes::LOGIN_CONFIRMATION);     
                 
                 Log::info('MFA OTP email dispatched via event', [
                     'user_id' => $user->id,

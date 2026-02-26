@@ -22,11 +22,13 @@ class EmailVerificationRequested
      * @param string $token   The raw (un-hashed) verification token for link-based verification
      * @param string $otp     The 6-digit OTP for code-based verification
      * @param string $channel Delivery channel: 'email' | 'sms' | 'both'
+     * @param string action Verification action types: 'account_creation', 'login_confirmation', or 'password_reset'
      */
     public function __construct(
         public readonly User   $user,
         public readonly string $token,
         public readonly string $otp,
-        public readonly string $channel = 'email'
+        public readonly string $channel = 'email',
+        public readonly string $action
     ) {}
 }

@@ -1,5 +1,5 @@
 <?php
-// app/Http/Controllers/Api/AuthController.php (updated version)
+// app/Http/Controllers/Api/AuthController.php
 
 declare(strict_types=1);
 
@@ -14,325 +14,323 @@ use App\Http\Requests\Auth\ResendVerificationRequest;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Resources\UserResource;
-use App\Services\User\UserService;
 use App\Services\User\AccountRecoveryService;
+use App\Services\User\UserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Handles all authentication-related HTTP endpoints.
+ *
+ * Dependencies:
+ *   UserService            – registration, login, logout, profile
+ *   AccountRecoveryService – email verification, password reset
+ *
+ * Neither service depends on the other, so there is NO circular dependency.
+ */
 class AuthController extends Controller
 {
-    /**
-     * Create a new controller instance.
-     *
-     * @param UserService $userService
-     * @param AccountRecoveryService $accountRecoveryService
-     */
-    protected UserService $userService;
-    protected AccountRecoveryService $accountRecoveryService;
-
     public function __construct(
-        UserService $userService,
-        AccountRecoveryService $accountRecoveryService
-    ) {
-        $this->userService = $userService;
-        $this->accountRecoveryService = $accountRecoveryService;
-    }
+        private readonly UserService            $userService,
+        private readonly AccountRecoveryService $accountRecoveryService
+    ) {}
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Registration
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Register a new user.
-     *
-     * @param RegisterRequest $request
-     * @return JsonResponse
+     * Register a new user and send an email-verification notification.
      */
     public function register(RegisterRequest $request): JsonResponse
     {
         try {
             $user = $this->userService->register($request->validated());
 
-            // Send email verification
+            // Trigger email verification (fires EmailVerificationRequested event)
             $this->accountRecoveryService->sendEmailVerification($user->id, 'email');
 
             return response()->json([
-                'success' => true,
-                'code' => 'REGISTRATION_SUCCESS',
-                'message' => 'Account created successfully! Please verify your email.',
-                'user' => new UserResource($user),
-                'token' => null, // No token until email verified
-                'requires_mfa' => true,
+                'success'      => true,
+                'code'         => 'REGISTRATION_SUCCESS',
+                'message'      => 'Account created successfully! Please verify your email.',
+                'user'         => new UserResource($user),
+                'token'        => null,  // No token until email is verified
+                'requires_mfa' => false,
             ], 201);
 
         } catch (\Exception $e) {
-            // Determine if the error is due to a duplicate email or national ID
-            $duplicateEmail = str_contains($e->getMessage(), 'email already exists');
-            $duplicateNationalId = str_contains($e->getMessage(), 'national ID already exists');
-
-            $status = $duplicateEmail || $duplicateNationalId ? 409 : 500;
-
-            if ($duplicateEmail) {
-                $code = 'EMAIL_ALREADY_REGISTERED';
-                $message = 'A user with this email already exists.';
-            } elseif ($duplicateNationalId) {
-                $code = 'NATIONAL_ID_ALREADY_REGISTERED';
-                $message = 'A user with this national ID already exists.';
-            } else {
-                $code = 'REGISTRATION_FAILED';
-                $message = 'Registration failed. Please try again later.';
-            }
+            [$status, $code, $message] = $this->resolveRegistrationError($e);
 
             return response()->json([
-                'success' => false,
-                'code' => $code,
-                'message' => $message,
-                'user' => null,
-                'token' => null,
+                'success'      => false,
+                'code'         => $code,
+                'message'      => $message,
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
             ], $status);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Login
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Login user.
-     *
-     * @param LoginRequest $request
-     * @return JsonResponse
+     * Authenticate a user.
+     * Returns a token on success, or signals MFA / email-verification requirements.
      */
     public function login(LoginRequest $request): JsonResponse
     {
         $credentials = $request->only(['email', 'password', 'mfa_code']);
 
         Log::info('Login attempt', [
-            'email' => $credentials['email'],
-            'has_mfa_code' => !empty($credentials['mfa_code'])
+            'email'        => $credentials['email'],
+            'has_mfa_code' => !empty($credentials['mfa_code']),
         ]);
 
         $result = $this->userService->login(
             $credentials,
             $request->ip(),
-            $request->userAgent()
+            $request->userAgent() ?? ''
         );
 
-        $responseData = [
-            'success' => $result['success'],
-            'code' => $result['code'],
-            'message' => $result['message'],
-            'requires_mfa' => $result['requires_mfa'],
-            'user' => $result['user'] ? new UserResource($result['user']) : null,
-            'token' => $result['token'],
-        ];
-
-        $statusCode = match($result['code']) {
-            'LOGIN_SUCCESS' => 200,
-            'MFA_REQUIRED' => 200,
-            'EMAIL_NOT_VERIFIED' => 403,
-            'ACCOUNT_LOCKED' => 423,
-            'INVALID_CREDENTIALS', 'INVALID_MFA' => 401,
-            default => 400,
+        $statusCode = match ($result['code']) {
+            'LOGIN_SUCCESS'        => 200,
+            'MFA_REQUIRED'         => 200,
+            'EMAIL_NOT_VERIFIED'   => 403,
+            'ACCOUNT_LOCKED'       => 423,
+            'INVALID_CREDENTIALS',
+            'INVALID_MFA'          => 401,
+            default                => 400,
         };
 
-        return response()->json($responseData, $statusCode);
+        return response()->json([
+            'success'      => $result['success'],
+            'code'         => $result['code'],
+            'message'      => $result['message'],
+            'requires_mfa' => $result['requires_mfa'],
+            'user'         => $result['user'] ? new UserResource($result['user']) : null,
+            'token'        => $result['token'],
+        ], $statusCode);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Email Verification
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Verify email with token or OTP.
-     *
-     * @param VerifyEmailRequest $request
-     * @return JsonResponse
+     * Verify a user's email using a token (link) or OTP (code).
      */
     public function verifyEmail(VerifyEmailRequest $request): JsonResponse
     {
-        Log::alert('Verify email attempt', [
-            'user_id' => $request->user_id,
-            'code_provided' => $request->code
-            // Don't log the entire object or model with relationships
+        $validated = $request->validated();
+
+        Log::info('Email verification attempt', [
+            'user_id'       => $validated['user_id'],
+            'method'        => ($validated['is_token'] ?? false) ? 'token' : 'otp',
         ]);
+
         try {
-            $validated = $request->validated();
-            
-            $result = $this->accountRecoveryService->verifyEmail(
-                $validated['user_id'],
-                $validated['code'],
-                $validated['is_token'] ?? false
+            $this->accountRecoveryService->verifyEmail(
+                (int)  $validated['user_id'],
+                (string) $validated['code'],
+                (bool) ($validated['is_token'] ?? false)
             );
 
             return response()->json([
-                'success' => true,
-                'code' => 'EMAIL_VERIFIED',
-                'message' => 'Email verified successfully. You can now log in.',
-                'user' => null,
-                'token' => null,
+                'success'      => true,
+                'code'         => 'EMAIL_VERIFIED',
+                'message'      => 'Email verified successfully. You can now log in.',
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
             ]);
 
         } catch (\Exception $e) {
-            $statusCode = $e->getCode() ?: 400;
-            
             return response()->json([
-                'success' => false,
-                'code' => 'VERIFICATION_FAILED',
-                'message' => $e->getMessage(),
-                'user' => null,
-                'token' => null,
+                'success'      => false,
+                'code'         => 'VERIFICATION_FAILED',
+                'message'      => $e->getMessage(),
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
-            ], $statusCode);
+            ], $this->safeStatusCode($e->getCode(), 400));
         }
     }
 
     /**
-     * Resend email verification.
-     *
-     * @param ResendVerificationRequest $request
-     * @return JsonResponse
+     * Re-send the email-verification notification.
      */
     public function resendVerification(ResendVerificationRequest $request): JsonResponse
     {
+        $validated = $request->validated();
+
         try {
-            $validated = $request->validated();
-            
             $result = $this->accountRecoveryService->sendEmailVerification(
-                $validated['user_id'],
-                $validated['channel'] ?? 'email'
+                (int)    $validated['user_id'],
+                (string) ($validated['channel'] ?? 'email')
             );
 
             return response()->json([
-                'success' => true,
-                'code' => 'VERIFICATION_SENT',
-                'message' => $result['message'],
-                'expires_at' => $result['expires_at'],
-                'user' => null,
-                'token' => null,
+                'success'      => true,
+                'code'         => 'VERIFICATION_SENT',
+                'message'      => $result['message'],
+                'expires_at'   => $result['expires_at'],
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
             ]);
 
         } catch (\Exception $e) {
-            $statusCode = $e->getCode() ?: 400;
-            
             return response()->json([
-                'success' => false,
-                'code' => 'RESEND_FAILED',
-                'message' => $e->getMessage(),
-                'user' => null,
-                'token' => null,
+                'success'      => false,
+                'code'         => 'RESEND_FAILED',
+                'message'      => $e->getMessage(),
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
-            ], $statusCode);
+            ], $this->safeStatusCode($e->getCode(), 400));
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Password Reset
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Forgot password - initiate reset.
-     *
-     * @param ForgotPasswordRequest $request
-     * @return JsonResponse
+     * Initiate a password reset (always responds with success to prevent enumeration).
      */
     public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
     {
+        $validated = $request->validated();
+
         try {
-            $validated = $request->validated();
-            
-            $result = $this->accountRecoveryService->initiatePasswordReset(
-                $validated['email'],
-                $validated['channel'] ?? 'email'
+            $this->accountRecoveryService->initiatePasswordReset(
+                (string) $validated['email'],
+                (string) ($validated['channel'] ?? 'email')
             );
-
-            return response()->json([
-                'success' => true,
-                'code' => 'RESET_INITIATED',
-                'message' => $result['message'],
-                'expires_at' => $result['expires_at'] ?? null,
-                'user' => null,
-                'token' => null,
-                'requires_mfa' => false,
-            ]);
-
-        } catch (\Exception $e) {
-            // Always return success for security (don't reveal if email exists)
-            return response()->json([
-                'success' => true,
-                'code' => 'RESET_INITIATED',
-                'message' => 'If the email exists, a reset code has been sent',
-                'user' => null,
-                'token' => null,
-                'requires_mfa' => false,
-            ]);
+        } catch (\Exception) {
+            // Intentionally swallow — never reveal whether an email exists
         }
+
+        // Always return the same response for security
+        return response()->json([
+            'success'      => true,
+            'code'         => 'RESET_INITIATED',
+            'message'      => 'If that email address is registered, a reset code has been sent.',
+            'user'         => null,
+            'token'        => null,
+            'requires_mfa' => false,
+        ]);
     }
 
     /**
-     * Reset password with token/OTP.
-     *
-     * @param ResetPasswordRequest $request
-     * @return JsonResponse
+     * Complete the password reset using a token or OTP.
      */
     public function resetPassword(ResetPasswordRequest $request): JsonResponse
     {
+        $validated = $request->validated();
+
         try {
-            $validated = $request->validated();
-            
-            $result = $this->accountRecoveryService->resetPassword(
-                $validated['email'],
-                $validated['code'],
-                $validated['new_password'],
-                $validated['is_token'] ?? false
+            $this->accountRecoveryService->resetPassword(
+                (string) $validated['email'],
+                (string) $validated['code'],
+                (string) $validated['new_password'],
+                (bool)   ($validated['is_token'] ?? false)
             );
 
             return response()->json([
-                'success' => true,
-                'code' => 'PASSWORD_RESET',
-                'message' => 'Password reset successfully. You can now log in with your new password.',
-                'user' => null,
-                'token' => null,
+                'success'      => true,
+                'code'         => 'PASSWORD_RESET',
+                'message'      => 'Password reset successfully. You may now log in with your new password.',
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
             ]);
 
         } catch (\Exception $e) {
-            $statusCode = $e->getCode() ?: 400;
-            
             return response()->json([
-                'success' => false,
-                'code' => 'RESET_FAILED',
-                'message' => $e->getMessage(),
-                'user' => null,
-                'token' => null,
+                'success'      => false,
+                'code'         => 'RESET_FAILED',
+                'message'      => $e->getMessage(),
+                'user'         => null,
+                'token'        => null,
                 'requires_mfa' => false,
-            ], $statusCode);
+            ], $this->safeStatusCode($e->getCode(), 400));
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Session
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Logout user.
-     *
-     * @param LogoutRequest $request
-     * @return JsonResponse
+     * Logout the authenticated user (revoke all tokens).
      */
     public function logout(LogoutRequest $request): JsonResponse
     {
         $this->userService->logout($request->user());
 
         return response()->json([
-            'success' => true,
-            'code' => 'LOGOUT_SUCCESS',
-            'message' => 'Successfully logged out',
+            'success'      => true,
+            'code'         => 'LOGOUT_SUCCESS',
+            'message'      => 'Successfully logged out.',
+            'user'         => null,
+            'token'        => null,
             'requires_mfa' => false,
-            'user' => null,
-            'token' => null,
         ]);
     }
 
     /**
-     * Get authenticated user.
-     *
-     * @param Request $request
-     * @return JsonResponse
+     * Return the currently authenticated user.
      */
     public function me(Request $request): JsonResponse
     {
         return response()->json([
-            'success' => true,
-            'code' => 'USER_RETRIEVED',
-            'message' => 'User retrieved successfully',
+            'success'      => true,
+            'code'         => 'USER_RETRIEVED',
+            'message'      => 'User retrieved successfully.',
+            'user'         => new UserResource($request->user()),
+            'token'        => null,
             'requires_mfa' => false,
-            'user' => new UserResource($request->user()),
-            'token' => null,
         ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Map a registration exception to [httpStatus, errorCode, message].
+     *
+     * @return array{int, string, string}
+     */
+    private function resolveRegistrationError(\Exception $e): array
+    {
+        $msg = $e->getMessage();
+
+        if (str_contains($msg, 'email already exists')) {
+            return [409, 'EMAIL_ALREADY_REGISTERED', 'A user with this email already exists.'];
+        }
+
+        if (str_contains($msg, 'national ID already exists')) {
+            return [409, 'NATIONAL_ID_ALREADY_REGISTERED', 'A user with this national ID already exists.'];
+        }
+
+        Log::error('Unexpected registration error', ['error' => $msg]);
+
+        return [500, 'REGISTRATION_FAILED', 'Registration failed. Please try again later.'];
+    }
+
+    /**
+     * Ensure an exception code maps to a valid HTTP status code.
+     * Falls back to $default if the code is 0 or out of range.
+     */
+    private function safeStatusCode(int $code, int $default = 400): int
+    {
+        return ($code >= 400 && $code < 600) ? $code : $default;
     }
 }

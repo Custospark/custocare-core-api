@@ -1,120 +1,194 @@
 <?php
+// app/Services/Notification/NotificationService.php
+
+declare(strict_types=1);
 
 namespace App\Services\Notification;
 
+use App\Mail\StandardEmail;
 use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use App\Mail\StandardEmail;
 
+/**
+ * Handles in-app notification persistence and transactional email delivery.
+ *
+ * This service is intentionally NOT event-aware — it is a pure delivery
+ * mechanism called by Event Listeners. This keeps concerns cleanly separated:
+ *
+ *   Event → Listener → NotificationService → (DB record + Mail)
+ *
+ * Memory safety: bulk operations use chunk() rather than loading all
+ * User records into memory at once.
+ */
 class NotificationService
 {
+    /** Number of users processed per chunk in broadcast operations. */
+    private const BROADCAST_CHUNK_SIZE = 100;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Send a notification to specific user or all users
+     * Send a notification to a specific user.
+     *
+     * @param User   $user    Fully-loaded User model (avoids extra DB query)
+     * @param string $title   Notification / email subject
+     * @param string $body    HTML or plain-text body
+     * @param string $type    Logical type tag (e.g. 'email_verification', 'security_alert')
+     * @param string $channel 'email' | 'in_app' | 'both'
      */
-    public function sendNotification($title, $mailBody, $targetType, $channel, $userId = null)
-    {
-        $sentAt = Carbon::now();
+    public function sendToUser(
+        User   $user,
+        string $title,
+        string $body,
+        string $type,
+        string $channel = 'email'
+    ): void {
+        if (in_array($channel, ['in_app', 'both'], true)) {
+            $this->persistNotification($user->id, $title, $body, $type, $channel);
+        }
 
-        if ($userId) {
-            // Targeted user notification
-            if ($channel === 'in_app') {
-                $this->createNotification($userId, $title, $mailBody, $targetType, 'in_app', $sentAt);
-
-            } elseif ($channel === 'email') {
-                $this->sendEmail($userId, $title, $mailBody);
-
-            } elseif ($channel === 'both') {
-                $this->createNotification($userId, $title, $mailBody, $targetType, 'both', $sentAt);
-                $this->sendEmail($userId, $title, $mailBody);
-            }
-
-        } else {
-            // System-wide broadcast
-            if ($channel === 'in_app') {
-                $this->createSystemWideNotification($title, $mailBody, 'system', $sentAt, 'in_app');
-
-            } elseif ($channel === 'email') {
-                $this->emailAllUsers($title, $mailBody);
-
-            } elseif ($channel === 'both') {
-                $this->createSystemWideNotification($title, $mailBody, 'system', $sentAt, 'both');
-                $this->emailAllUsers($title, $mailBody);
-            }
+        if (in_array($channel, ['email', 'both'], true)) {
+            $this->dispatchEmail($user, $title, $body);
         }
     }
 
     /**
-     * Save notification for a specific user
+     * Broadcast a notification to ALL users.
+     * Chunks the query to prevent loading the entire users table into memory.
+     *
+     * @param string $title
+     * @param string $body
+     * @param string $type
+     * @param string $channel  'email' | 'in_app' | 'both'
      */
-    protected function createNotification($userId, $title, $mailBody, $targetType, $channel, $sentAt)
-    {
+    public function broadcastToAll(
+        string $title,
+        string $body,
+        string $type,
+        string $channel = 'in_app'
+    ): void {
+        // Persist a single system-wide notification record (no user_id)
+        if (in_array($channel, ['in_app', 'both'], true)) {
+            $this->persistSystemNotification($title, $body, $type, $channel);
+        }
+
+        // Send individual emails — chunked to avoid OOM
+        if (in_array($channel, ['email', 'both'], true)) {
+            User::query()
+                ->whereNotNull('email_encrypted') // Only users with an email on file
+                ->chunk(self::BROADCAST_CHUNK_SIZE, function ($users) use ($title, $body) {
+                    foreach ($users as $user) {
+                        $this->dispatchEmail($user, $title, $body);
+                    }
+                });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Legacy compatibility shim
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @deprecated Use sendToUser() or broadcastToAll() directly.
+     *             Kept for backward compatibility with any existing callers.
+     */
+    public function sendNotification(
+        string  $title,
+        string  $body,
+        string  $type,
+        string  $channel,
+        ?int    $userId = null
+    ): void {
+        if ($userId !== null) {
+            $user = User::find($userId);
+
+            if (!$user) {
+                Log::warning('sendNotification: user not found', ['user_id' => $userId]);
+                return;
+            }
+
+            $this->sendToUser($user, $title, $body, $type, $channel);
+            return;
+        }
+
+        $this->broadcastToAll($title, $body, $type, $channel);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Persist an in-app notification record for a specific user.
+     */
+    private function persistNotification(
+        int    $userId,
+        string $title,
+        string $body,
+        string $type,
+        string $channel
+    ): void {
         Notification::create([
             'user_id'     => $userId,
             'title'       => $title,
-            'message'     => $mailBody,
-            'target_type' => $targetType,
+            'message'     => $body,
+            'target_type' => $type,
             'channel'     => $channel,
-            'sent_at'     => $sentAt,
+            'sent_at'     => Carbon::now(),
         ]);
     }
 
     /**
-     * Save a system-wide notification (no specific user)
+     * Persist a system-wide broadcast notification (no specific user).
      */
-    protected function createSystemWideNotification($title, $mailBody, $targetType, $sentAt, $channel)
-    {
+    private function persistSystemNotification(
+        string $title,
+        string $body,
+        string $type,
+        string $channel
+    ): void {
         Notification::create([
+            'user_id'     => null,
             'title'       => $title,
-            'message'     => $mailBody,
-            'target_type' => $targetType,
+            'message'     => $body,
+            'target_type' => $type,
             'channel'     => $channel,
-            'sent_at'     => $sentAt,
+            'sent_at'     => Carbon::now(),
         ]);
     }
 
     /**
-     * Send email to a specific user with logging
+     * Decrypt the user's email and send a transactional email.
+     * Failures are caught and logged so one bad address never kills a batch.
      */
-    protected function sendEmail($userId, $title, $mailBody)
+    private function dispatchEmail(User $user, string $title, string $body): void
     {
-        $user = User::find($userId);
-        
-        if (!$user) {
-            Log::warning("Attempted to send email to non-existent user ID: {$userId}");
+        if (empty($user->email_encrypted)) {
+            Log::warning('dispatchEmail: user has no encrypted email', ['user_id' => $user->id]);
             return;
         }
 
         try {
             $email = decrypt($user->email_encrypted);
-            
-            // Pass isHtml = true since mailBody contains HTML
-            Mail::to($email)->send(new StandardEmail($title, $mailBody, null, null, null, null, true));
-            
-            Log::info("Email successfully sent to {$email}.");
-        } catch (\Exception $e) {
-            Log::error("Failed to send email to user ID: {$userId}. Error: " . $e->getMessage());
-        }
-    }
 
-    /**
-     * Send email to all users with error logging
-     */
-    protected function emailAllUsers($title, $mailBody)
-    {
-        User::all()->each(function ($user) use ($title, $mailBody) {
-            try {
-                $email = decrypt($user->email_encrypted);
-                
-                // Pass isHtml = true since mailBody contains HTML
-                Mail::to($email)->send(new StandardEmail($title, $mailBody, null, null, null, null, true));
-                
-                Log::info("Email successfully sent to {$email}.");
-            } catch (\Exception $e) {
-                Log::error("Failed to send email to user ID: {$user->id}. Error: " . $e->getMessage());
-            }
-        });
+            Mail::to($email)->send(new StandardEmail(
+                title:    $title,
+                mailBody: $body,
+                isHtml:   true
+            ));
+
+            Log::info('Email dispatched', ['user_id' => $user->id]);
+
+        } catch (\Exception $e) {
+            Log::error('Email dispatch failed', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
     }
 }

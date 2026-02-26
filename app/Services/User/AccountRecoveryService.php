@@ -5,443 +5,316 @@ declare(strict_types=1);
 
 namespace App\Services\User;
 
+use App\Events\PasswordChanged;
+use App\Events\PasswordResetRequested;
+use App\Events\EmailVerificationRequested;
 use App\Models\AccountRecoveryToken;
 use App\Models\User;
-use App\Services\Notification\NotificationService;
+use App\Repositories\User\Contracts\UserRepositoryInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
+/**
+ * Manages account-recovery flows: email verification and password reset.
+ *
+ * ─── Circular-dependency note ────────────────────────────────────────────────
+ * The original code injected UserService here, which itself injected
+ * AccountRecoveryService → circular dependency.
+ *
+ * Solution: this service injects UserRepositoryInterface DIRECTLY.
+ * It never references UserService, eliminating the cycle entirely.
+ *
+ * Notifications are fired as Events and handled by dedicated Listeners,
+ * so there is no NotificationService dependency here either.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
 class AccountRecoveryService
 {
-    private const TOKEN_LENGTH = 64;
-    private const OTP_LENGTH = 6;
-    
+    /** Byte-length of the random token (hex output = TOKEN_BYTES * 2 chars). */
+    private const TOKEN_BYTES = 32; // → 64-char hex string
+
     /**
-     * Create a new service instance.
-     *
-     * @param UserService $userService
-     * @param NotificationService $notificationService
+     * @param UserRepositoryInterface $userRepository  Direct repo; avoids UserService cycle
      */
     public function __construct(
-        private readonly UserService $userService,
-        private readonly NotificationService $notificationService
+        private readonly UserRepositoryInterface $userRepository
     ) {}
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Email Verification
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Send email verification token/OTP.
+     * Create an email-verification token/OTP pair and fire the notification event.
      *
-     * @param int $userId
-     * @param string $channel
-     * @return array
-     * @throws \Exception
+     * @param  int    $userId
+     * @param  string $channel  'email' | 'sms' | 'both'
+     * @return array{token_id: int, expires_at: Carbon, message: string}
+     * @throws \Exception If the user is not found or is already verified
      */
     public function sendEmailVerification(int $userId, string $channel = 'email'): array
     {
         return DB::transaction(function () use ($userId, $channel) {
-            $user = $this->userService->getUserById($userId);
-            
-            // Check if already verified
+            $user = $this->findUserOrFail($userId);
+
             if ($user->hasVerifiedEmail()) {
-                throw new \Exception('Email already verified', 400);
+                throw new \Exception('Email is already verified.', 400);
             }
-            // Generate both token and OTP
-            $token = $this->generateSecureToken();
-            $otp = $this->generateOTP();
-            
-            // Delete any existing unused tokens for this type
-            AccountRecoveryToken::where('user_id', $userId)
-                ->where('type', 'email_verification')
-                ->whereNull('used_at')
-                ->delete();
-            
-            // Create new token record
-            $recoveryToken = AccountRecoveryToken::create([
-                'user_id' => $userId,
-                'token_hash' => Hash::make($token),
-                'otp_code' => $otp,
-                'type' => 'email_verification',
-                'channel' => $channel,
-                'expires_at' => Carbon::now()->addMinutes(User::TOKEN_EXPIRATION_MINUTES),
-            ]);
-            
-            // Send notification based on channel
-            $this->sendVerificationNotification($user, $token, $otp, $channel);
-            
-            Log::info('Email verification sent', [
+
+            [$token, $otp, $recoveryToken] = $this->createRecoveryToken(
+                $userId,
+                'email_verification'
+            );
+
+            // Fire event → SendEmailVerificationNotification listener handles delivery
+            EmailVerificationRequested::dispatch($user, $token, $otp, $channel);
+
+            Log::info('Email verification token created', [
                 'user_id' => $userId,
                 'channel' => $channel,
-                'user'=>$user,
             ]);
-            
+
             return [
-                'token_id' => $recoveryToken->id,
+                'token_id'   => $recoveryToken->id,
                 'expires_at' => $recoveryToken->expires_at,
-                'message' => 'Verification code sent successfully',
+                'message'    => 'Verification code sent successfully.',
             ];
         });
     }
-    
-   /**
- * Verify email with token or OTP.
- *
- * @param int $userId
- * @param int $code  // Make sure this is int, not string
- * @param bool $isToken
- * @return bool
- */
-public function verifyEmail(int $userId, int $code, bool $isToken = false): bool
-{
+
+    /**
+     * Verify a user's email using either a raw token (link) or an OTP code.
+     *
+     * @param  int    $userId
+     * @param  string $code      Raw token string OR 6-digit OTP (always string)
+     * @param  bool   $isToken   true → hash comparison; false → OTP comparison
+     * @throws \Exception On invalid / expired code, or already-verified state
+     */
+    public function verifyEmail(int $userId, string $code, bool $isToken = false): bool
+    {
         return DB::transaction(function () use ($userId, $code, $isToken) {
-            $user = $this->userService->getUserById($userId);
-            
+            $user = $this->findUserOrFail($userId);
+
             if ($user->hasVerifiedEmail()) {
-                throw new \Exception('Email already verified', 400);
+                throw new \Exception('Email is already verified.', 400);
             }
-            
-            // Find valid token
-            $query = AccountRecoveryToken::where('user_id', $userId)
-                ->where('type', 'email_verification')
-                ->whereNull('used_at')
-                ->where('expires_at', '>', Carbon::now());
-            
-            if ($isToken) {
-                // Verify using token (hash check)
-                $tokens = $query->get();
-                $validToken = null;
-                
-                foreach ($tokens as $tokenRecord) {
-                    if (Hash::check($code, $tokenRecord->token_hash)) {
-                        $validToken = $tokenRecord;
-                        break;
-                    }
-                }
-                
-                if (!$validToken) {
-                    throw new \Exception('Invalid or expired token', 401);
-                }
-            } else {
-                // Verify using OTP
-                $validToken = $query->where('otp_code', $code)->first();
-                
-                if (!$validToken) {
-                    throw new \Exception('Invalid or expired OTP', 401);
-                }
-            }
-            
-            // Mark token as used
+
+            $validToken = $this->findValidToken($userId, 'email_verification', $code, $isToken);
+
+            // Mark token as used and email as verified
             $validToken->markAsUsed();
-            
-            // Mark email as verified
             $user->markEmailAsVerified();
-            
-            Log::info('Email verified successfully', [
+
+            Log::info('Email verified', [
                 'user_id' => $userId,
-                'method' => $isToken ? 'token' : 'otp'
+                'method'  => $isToken ? 'token' : 'otp',
             ]);
-            
+
             return true;
         });
     }
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Password Reset
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Initiate password reset.
+     * Initiate a password-reset flow.
+     * Returns a neutral response if the email is not found (prevents enumeration).
      *
-     * @param string $email
-     * @param string $channel
-     * @return array
-     * @throws \Exception
+     * @param  string $email
+     * @param  string $channel
+     * @return array{message: string, expires_at?: Carbon}
      */
     public function initiatePasswordReset(string $email, string $channel = 'email'): array
     {
-        $emailHash = hash('sha256', strtolower($email));
-        $user = $this->userService->findByEmailHash($emailHash);
-        
+        $emailHash = hash('sha256', strtolower(trim($email)));
+        $user      = $this->userRepository->findByEmailHash($emailHash);
+
+        // Silently succeed when the user does not exist (prevents email enumeration)
         if (!$user) {
-            // Return success even if user not found (security)
-            return [
-                'message' => 'If the email exists, a reset code has been sent',
-            ];
+            Log::info('Password reset requested for unknown email hash');
+
+            return ['message' => 'If that email address is registered, a reset code has been sent.'];
         }
-        
+
         return DB::transaction(function () use ($user, $channel) {
-            // Generate token and OTP
-            $token = $this->generateSecureToken();
-            $otp = $this->generateOTP();
-            
-            // Delete any existing unused password reset tokens
-            AccountRecoveryToken::where('user_id', $user->id)
-                ->where('type', 'password_reset')
-                ->whereNull('used_at')
-                ->delete();
-            
-            // Create new token
-            $recoveryToken = AccountRecoveryToken::create([
+            [$token, $otp, $recoveryToken] = $this->createRecoveryToken(
+                $user->id,
+                'password_reset'
+            );
+
+            // Fire event → SendPasswordResetNotification listener handles delivery
+            PasswordResetRequested::dispatch($user, $token, $otp, $channel);
+
+            Log::info('Password reset token created', [
                 'user_id' => $user->id,
-                'token_hash' => Hash::make($token),
-                'otp_code' => $otp,
-                'type' => 'password_reset',
                 'channel' => $channel,
-                'expires_at' => Carbon::now()->addMinutes(User::TOKEN_EXPIRATION_MINUTES),
             ]);
-            
-            // Send password reset notification
-            $this->sendPasswordResetNotification($user, $token, $otp, $channel);
-            
-            Log::info('Password reset initiated', [
-                'user_id' => $user->id,
-                'channel' => $channel
-            ]);
-            
+
             return [
-                'token_id' => $recoveryToken->id,
+                'message'    => 'Password reset code sent successfully.',
                 'expires_at' => $recoveryToken->expires_at,
-                'message' => 'Password reset code sent successfully',
             ];
         });
     }
-    
+
     /**
-     * Reset password using token/OTP.
+     * Complete the password-reset flow.
      *
-     * @param string $email
-     * @param string $code
-     * @param string $newPassword
-     * @param bool $isToken
-     * @return bool
-     * @throws \Exception
+     * @param  string $email
+     * @param  string $code        Raw token or 6-digit OTP
+     * @param  string $newPassword Plain-text new password (hashed inside UserService)
+     * @param  bool   $isToken
+     * @throws \Exception On invalid / expired code or user not found
      */
-    public function resetPassword(string $email, string $code, string $newPassword, bool $isToken = false): bool
-    {
+    public function resetPassword(
+        string $email,
+        string $code,
+        string $newPassword,
+        bool $isToken = false
+    ): bool {
         return DB::transaction(function () use ($email, $code, $newPassword, $isToken) {
-            $emailHash = hash('sha256', strtolower($email));
-            $user = $this->userService->findByEmailHash($emailHash);
-            
+            $emailHash = hash('sha256', strtolower(trim($email)));
+            $user      = $this->userRepository->findByEmailHash($emailHash);
+
             if (!$user) {
-                throw new \Exception('Invalid or expired reset code', 401);
+                throw new \Exception('Invalid or expired reset code.', 401);
             }
-            
-            // Find valid token
-            $query = AccountRecoveryToken::where('user_id', $user->id)
-                ->where('type', 'password_reset')
-                ->whereNull('used_at')
-                ->where('expires_at', '>', Carbon::now());
-            
-            $validToken = null;
-            
-            if ($isToken) {
-                $tokens = $query->get();
-                foreach ($tokens as $tokenRecord) {
-                    if (Hash::check($code, $tokenRecord->token_hash)) {
-                        $validToken = $tokenRecord;
-                        break;
-                    }
-                }
-            } else {
-                $validToken = $query->where('otp_code', $code)->first();
-            }
-            
-            if (!$validToken) {
-                throw new \Exception('Invalid or expired reset code', 401);
-            }
-            
-            // Update password
-            $this->userService->updatePassword($user->id, $newPassword);
-            
+
+            $validToken = $this->findValidToken($user->id, 'password_reset', $code, $isToken);
+
+            // ── Update password directly via repository (avoids UserService dep) ──
+            $this->userRepository->update($user, [
+                'password_hash'            => Hash::make($newPassword),
+                'password_changed_at'      => now(),
+                'requires_password_change' => false,
+            ]);
+
             // Mark token as used
             $validToken->markAsUsed();
-            
-            // Delete all existing sessions/tokens
+
+            // Revoke all active sessions so the compromised session is invalidated
             $user->deleteAllTokens();
-            
-            // Send password changed notification
-            $this->sendPasswordChangedNotification($user);
-            
-            Log::info('Password reset successful', [
-                'user_id' => $user->id
-            ]);
-            
+
+            // Fire event → SendPasswordChangedNotification listener handles alert
+            PasswordChanged::dispatch($user->fresh());
+
+            Log::info('Password reset completed', ['user_id' => $user->id]);
+
             return true;
         });
     }
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Generate secure random token.
+     * Resolve a user by ID or throw a descriptive exception.
      *
-     * @return string
+     * @throws \Exception
+     */
+    private function findUserOrFail(int $userId): User
+    {
+        $user = $this->userRepository->findById($userId);
+
+        if (!$user) {
+            throw new \Exception('User not found.', 404);
+        }
+
+        return $user;
+    }
+
+    /**
+     * Invalidate existing unused tokens of a given type, then create a fresh pair.
+     *
+     * @return array{string, string, AccountRecoveryToken}
+     *         [raw token, otp, Eloquent model]
+     */
+    private function createRecoveryToken(int $userId, string $type): array
+    {
+        // Expire any previous unused tokens of the same type
+        AccountRecoveryToken::where('user_id', $userId)
+            ->where('type', $type)
+            ->whereNull('used_at')
+            ->delete();
+
+        $token = $this->generateSecureToken();
+        $otp   = $this->generateOtp();
+
+        $recoveryToken = AccountRecoveryToken::create([
+            'user_id'    => $userId,
+            'token_hash' => Hash::make($token),
+            'otp_code'   => $otp,
+            'type'       => $type,
+            'expires_at' => Carbon::now()->addMinutes(User::TOKEN_EXPIRATION_MINUTES),
+        ]);
+
+        return [$token, $otp, $recoveryToken];
+    }
+
+    /**
+     * Find a valid (non-expired, non-used) token record.
+     * Performs constant-time hash comparison for token mode to prevent timing attacks.
+     *
+     * @throws \Exception When no valid record is found
+     */
+    private function findValidToken(
+        int    $userId,
+        string $type,
+        string $code,
+        bool   $isToken
+    ): AccountRecoveryToken {
+        $baseQuery = AccountRecoveryToken::where('user_id', $userId)
+            ->where('type', $type)
+            ->whereNull('used_at')
+            ->where('expires_at', '>', Carbon::now());
+
+        if ($isToken) {
+            // Load all candidates and find the one whose hash matches
+            $validToken = null;
+
+            foreach ($baseQuery->get() as $record) {
+                if (Hash::check($code, $record->token_hash)) {
+                    $validToken = $record;
+                    break;
+                }
+            }
+
+            if (!$validToken) {
+                throw new \Exception('Invalid or expired token.', 401);
+            }
+
+            return $validToken;
+        }
+
+        // OTP: direct equality check (OTPs are short-lived numeric strings)
+        $validToken = $baseQuery->where('otp_code', $code)->first();
+
+        if (!$validToken) {
+            throw new \Exception('Invalid or expired OTP code.', 401);
+        }
+
+        return $validToken;
+    }
+
+    /**
+     * Generate a cryptographically secure random hex token.
      */
     private function generateSecureToken(): string
     {
-        return bin2hex(random_bytes(self::TOKEN_LENGTH / 2));
+        return bin2hex(random_bytes(self::TOKEN_BYTES));
     }
-    
+
     /**
-     * Generate numeric OTP.
-     *
-     * @return string
+     * Generate a cryptographically secure 6-digit OTP.
+     * Uses the range 100000–999999 so no leading zeros are possible.
      */
-    private function generateOTP(): string
+    private function generateOtp(): string
     {
         return (string) random_int(100000, 999999);
-    }
-    
-    /**
-     * Send verification notification.
-     *
-     * @param User $user
-     * @param string $token
-     * @param string $otp
-     * @param string $channel
-     * @return void
-     */
-    private function sendVerificationNotification(User $user, string $token, string $otp, string $channel): void
-    {
-        $title = 'Verify Your Email Address';
-        $mailBody = $this->buildVerificationEmailBody($user, $token, $otp);
-        
-        // Decrypt email for notification service
-        $email = decrypt($user->email_encrypted);
-        
-        // Use notification service
-        $this->notificationService->sendNotification(
-            $title,
-            $mailBody,
-            'email_verification',
-            $channel === 'both' ? 'both' : 'email',
-            $user->id
-        );
-
-    }
-    
-    /**
-     * Send password reset notification.
-     *
-     * @param User $user
-     * @param string $token
-     * @param string $otp
-     * @param string $channel
-     * @return void
-     */
-    private function sendPasswordResetNotification(User $user, string $token, string $otp, string $channel): void
-    {
-        $title = 'Reset Your Password';
-        $mailBody = $this->buildPasswordResetEmailBody($user, $token, $otp);
-        
-        $this->notificationService->sendNotification(
-            $title,
-            $mailBody,
-            'password_reset',
-            $channel === 'both' ? 'both' : 'email',
-            $user->id
-        );
-        
-        Log::info('Password reset codes', [
-            'user_id' => $user->id,
-            'token' => $token,
-            'otp' => $otp
-        ]);
-    }
-    
-    /**
-     * Send password changed notification.
-     *
-     * @param User $user
-     * @return void
-     */
-    private function sendPasswordChangedNotification(User $user): void
-    {
-        $title = 'Password Changed Successfully';
-        $mailBody = $this->buildPasswordChangedEmailBody($user);
-        
-        $this->notificationService->sendNotification(
-            $title,
-            $mailBody,
-            'security_alert',
-            'email',
-            $user->id
-        );
-    }
-    
-    /**
-     * Build verification email body.
-     *
-     * @param User $user
-     * @param string $token
-     * @param string $otp
-     * @return string
-     */
-    private function buildVerificationEmailBody(User $user, string $token, string $otp): string
-    {
-        $firstName = $user->first_name ?? 'User';
-        $verificationLink = config('app.frontend_url') . "/verify-email?token={$token}";
-        
-        return "
-            <h2>Hello {$firstName},</h2>
-            <p>Thank you for registering. Please verify your email address using one of the methods below:</p>
-            
-            <h3>Option 1: Click the verification link</h3>
-            <p><a href='{$verificationLink}'>Verify Email Address</a></p>
-            <p>Or copy this link: {$verificationLink}</p>
-            
-            <h3>Option 2: Use OTP code</h3>
-            <p><strong>OTP Code: {$otp}</strong></p>
-            <p>This code will expire in " . User::TOKEN_EXPIRATION_MINUTES . " minutes.</p>
-            
-            <p>If you didn't create an account, please ignore this email.</p>
-            
-            <p>Regards,<br>" . config('app.name') . " Team</p>
-        ";
-    }
-    
-    /**
-     * Build password reset email body.
-     *
-     * @param User $user
-     * @param string $token
-     * @param string $otp
-     * @return string
-     */
-    private function buildPasswordResetEmailBody(User $user, string $token, string $otp): string
-    {
-        $firstName = $user->first_name ?? 'User';
-        $resetLink = config('app.frontend_url') . "/reset-password?token={$token}";
-        
-        return "
-            <h2>Hello {$firstName},</h2>
-            <p>We received a request to reset your password. Use one of the methods below:</p>
-            
-            <h3>Option 1: Click the reset link</h3>
-            <p><a href='{$resetLink}'>Reset Password</a></p>
-            <p>Or copy this link: {$resetLink}</p>
-            
-            <h3>Option 2: Use OTP code</h3>
-            <p><strong>OTP Code: {$otp}</strong></p>
-            <p>This code will expire in " . User::TOKEN_EXPIRATION_MINUTES . " minutes.</p>
-            
-            <p>If you didn't request this, please ignore this email or contact support.</p>
-            
-            <p>Regards,<br>" . config('app.name') . " Team</p>
-        ";
-    }
-    
-    /**
-     * Build password changed email body.
-     *
-     * @param User $user
-     * @return string
-     */
-    private function buildPasswordChangedEmailBody(User $user): string
-    {
-        $firstName = $user->first_name ?? 'User';
-        
-        return "
-            <h2>Hello {$firstName},</h2>
-            <p>Your password has been successfully changed.</p>
-            <p>If you didn't make this change, please contact support immediately.</p>
-            
-            <p>Regards,<br>" . config('app.name') . " Team</p>
-        ";
     }
 }

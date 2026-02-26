@@ -121,45 +121,41 @@ class AuthController extends Controller
     // Email Verification
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Verify a user's email using a token (link) or OTP (code).
-     */
-    public function verifyEmail(VerifyEmailRequest $request): JsonResponse
-    {
-        $validated = $request->validated();
+   public function verifyEmail(VerifyEmailRequest $request): JsonResponse
+{
+    $validated = $request->validated();
 
-        Log::info('Email verification attempt', [
-            'user_id'       => $validated['user_id'],
-            'method'        => ($validated['is_token'] ?? false) ? 'token' : 'otp',
+    try {
+        $this->accountRecoveryService->verifyEmail(
+            (int)  $validated['user_id'],
+            (string) $validated['code'],
+            (bool) ($validated['is_token'] ?? false)
+        );
+
+        // Fetch the now‑verified user and issue a token
+        $user  = $this->userService->getUserById((int) $validated['user_id']);
+        $token = $user->generateAuthToken(); // Uses Laravel Sanctum / Passport
+
+        return response()->json([
+            'success'      => true,
+            'code'         => 'EMAIL_VERIFIED',
+            'message' => 'Your email has been successfully verified.',
+            'user'         => new UserResource($user),
+            'token'        => $token,
+            'requires_mfa' => false,
         ]);
 
-        try {
-            $this->accountRecoveryService->verifyEmail(
-                (int)  $validated['user_id'],
-                (string) $validated['code'],
-                (bool) ($validated['is_token'] ?? false)
-            );
-
-            return response()->json([
-                'success'      => true,
-                'code'         => 'EMAIL_VERIFIED',
-                'message'      => 'Email verified successfully. You can now log in.',
-                'user'         => null,
-                'token'        => null,
-                'requires_mfa' => false,
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success'      => false,
-                'code'         => 'VERIFICATION_FAILED',
-                'message'      => $e->getMessage(),
-                'user'         => null,
-                'token'        => null,
-                'requires_mfa' => false,
-            ], $this->safeStatusCode($e->getCode(), 400));
-        }
+    } catch (\Exception $e) {
+        return response()->json([
+            'success'      => false,
+            'code'         => 'VERIFICATION_FAILED',
+            'message'      => $e->getMessage(),
+            'user'         => null,
+            'token'        => null,
+            'requires_mfa' => false,
+        ], $this->safeStatusCode($e->getCode(), 400));
     }
+}
 
     /**
      * Re-send the email-verification notification.

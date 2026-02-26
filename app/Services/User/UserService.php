@@ -193,7 +193,7 @@ class UserService implements UserServiceInterface
             return [
                 'success'       => true,
                 'code'          => 'MFA_REQUIRED',
-                'message'       => 'Multi-factor authentication required. Please check your email for a verification code.',
+                'message'       => 'Please check your email for a verification code.',
                 'requires_mfa'  => true,
                 'mfa_type'      => 'email_otp',
                 'user'          => $user,

@@ -175,7 +175,7 @@ class UserService implements UserServiceInterface
                 // Dispatch MfaRequired event with token and OTP
                 // \App\Events\MfaRequired::dispatch($user, $token, $otp, 'email');
                 $service = app(\App\Services\User\AccountRecoveryService::class);
-                $result = $service->sendEmailVerification($user->id, 'email');     
+                $service->sendEmailVerification($user->id, 'email');     
                 
                 Log::info('MFA OTP email dispatched via event', [
                     'user_id' => $user->id,

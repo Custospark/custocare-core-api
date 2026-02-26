@@ -58,11 +58,6 @@ class AccountRecoveryService
     {
         return DB::transaction(function () use ($userId, $channel) {
             $user = $this->findUserOrFail($userId);
-
-            // if ($user->hasVerifiedEmail()) {
-            //     throw new \Exception('Email is already verified.', 400);
-            // }
-
             [$token, $otp, $recoveryToken] = $this->createRecoveryToken(
                 $userId,
                 'email_verification'
@@ -84,37 +79,52 @@ class AccountRecoveryService
         });
     }
 
-    /**
-     * Verify a user's email using either a raw token (link) or an OTP code.
-     *
-     * @param  int    $userId
-     * @param  string $code      Raw token string OR 6-digit OTP (always string)
-     * @param  bool   $isToken   true → hash comparison; false → OTP comparison
-     * @throws \Exception On invalid / expired code, or already-verified state
-     */
-    public function verifyEmail(int $userId, string $code, bool $isToken = false): bool
-    {
-        return DB::transaction(function () use ($userId, $code, $isToken) {
-            $user = $this->findUserOrFail($userId);
-
-            if ($user->hasVerifiedEmail()) {
-                throw new \Exception('Email is already verified.', 400);
-            }
-
+public function verifyEmail(int $userId, string $code, bool $isToken = false): bool
+{
+    return DB::transaction(function () use ($userId, $code, $isToken) {
+        $user = $this->findUserOrFail($userId);
+        
+        // Find valid token - this may throw an exception or return null
+        try {
             $validToken = $this->findValidToken($userId, 'email_verification', $code, $isToken);
-
-            // Mark token as used and email as verified
-            $validToken->markAsUsed();
-            $user->markEmailAsVerified();
-
-            Log::info('Email verified', [
+            
+            // If findValidToken returns null instead of throwing
+            if (!$validToken) {
+                throw new \Exception('Invalid or expired verification code.', 400);
+            }
+        } catch (\Exception $e) {
+            // Re-throw with a cleaner message or handle as needed
+            Log::warning('Token validation failed', [
                 'user_id' => $userId,
-                'method'  => $isToken ? 'token' : 'otp',
+                'error' => $e->getMessage()
             ]);
+            throw new \Exception('Invalid or expired verification code.', 400);
+        }
+        
+        // Token is valid - mark it as used regardless of verification status
+        $validToken->markAsUsed();
+        
+        // Now check if email is already verified
+        if ($user->hasVerifiedEmail()) {
+            Log::info('Email already verified - token consumed', [
+                'user_id' => $userId,
+                'method' => $isToken ? 'token' : 'otp',
+            ]);
+            
+            return true; // Still return true - email IS verified
+        }
 
-            return true;
-        });
-    }
+        // Email not verified yet - verify it now
+        $user->markEmailAsVerified();
+
+        Log::info('Email verified', [
+            'user_id' => $userId,
+            'method'  => $isToken ? 'token' : 'otp',
+        ]);
+
+        return true;
+    });
+}
 
     // ─────────────────────────────────────────────────────────────────────────
     // Password Reset

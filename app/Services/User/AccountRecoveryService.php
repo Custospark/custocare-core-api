@@ -5,8 +5,8 @@ declare(strict_types=1);
 
 namespace App\Services\User;
 
+use App\Constants\ActionTypes;
 use App\Events\PasswordChanged;
-use App\Events\PasswordResetRequested;
 use App\Events\EmailVerificationRequested;
 use App\Models\AccountRecoveryToken;
 use App\Models\User;
@@ -147,7 +147,7 @@ public function verifyEmail(int $userId, string $code, bool $isToken = false): b
         if (!$user) {
             Log::info('Password reset requested for unknown email hash');
 
-            return ['message' => 'If that email address is registered, a reset code has been sent.'];
+            return ['message' => 'If that email address is associated with an account, a password reset code has been sent.'];
         }
 
         return DB::transaction(function () use ($user, $channel) {
@@ -156,8 +156,9 @@ public function verifyEmail(int $userId, string $code, bool $isToken = false): b
                 'password_reset'
             );
 
-            // Fire event → SendPasswordResetNotification listener handles delivery
-            PasswordResetRequested::dispatch($user, $token, $otp, $channel);
+            //Using the same email verification event to deliver the token.
+            $this->sendEmailVerification($user->id, 'email',ActionTypes::PASSWORD_RESET);
+
 
             Log::info('Password reset token created', [
                 'user_id' => $user->id,
@@ -165,7 +166,7 @@ public function verifyEmail(int $userId, string $code, bool $isToken = false): b
             ]);
 
             return [
-                'message'    => 'Password reset code sent successfully.',
+                'message' => 'If that email address is associated with an account, a password reset code has been sent.',
                 'expires_at' => $recoveryToken->expires_at,
             ];
         });

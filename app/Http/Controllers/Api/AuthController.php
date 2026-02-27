@@ -218,7 +218,7 @@ class AuthController extends Controller
         return response()->json([
             'success'      => true,
             'code'         => 'RESET_INITIATED',
-            'message'      => 'If that email address is registered, a reset code has been sent.',
+            'message' => 'If that email address is associated with an account, a password reset code has been sent.',
             'user'         => null,
             'token'        => null,
             'requires_mfa' => false,

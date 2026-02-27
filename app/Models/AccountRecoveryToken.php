@@ -17,6 +17,8 @@ class AccountRecoveryToken extends Model
         'token_hash',
         'otp_code',
         'type',
+        'token_hash_lookup',
+        'otp_hash_lookup',
         'channel',
         'expires_at',
         'used_at',

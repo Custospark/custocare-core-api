@@ -36,6 +36,11 @@ final class ActionTypes
      * Used when a user updates their email address
      */
     public const EMAIL_CHANGE = 'email_change';
+
+    /**
+     * Successful password change.
+     */
+    public const PASSWORD_CHANGED = 'password_changed';
     
     /**
      * Get all available action types

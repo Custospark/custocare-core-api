@@ -15,7 +15,16 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Laravel'),
+    'name' => env('APP_NAME', 'Custocare AI'),
+    'domain' => env('APP_DOMAIN', 'custocare-ai'),
+    
+    /**
+     * Application frontend client.
+     */
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
+    'support_email' => env('SUPPORT_EMAIL', 'support@custospark.com'),
+    'support_phone' => env('SUPPORT_PHONE', '+256756697871'),
+
 
     /*
     |--------------------------------------------------------------------------

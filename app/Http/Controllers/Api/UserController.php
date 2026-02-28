@@ -21,6 +21,8 @@ use App\Http\Requests\User\UpdateUserSecurityRequest;
 use App\Http\Requests\User\ReadUserPreferencesRequest;
 use App\Http\Requests\User\UpdateUserPreferencesRequest;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class UserController extends Controller
 {
@@ -401,4 +403,70 @@ class UserController extends Controller
             ], 500);
         }
     }
+
+    /**
+ * POST /users/{user}/profile/photo
+ *
+ * Upload a profile photo for the given user.
+ *
+ * @param Request $request
+ * @param User $user
+ * @return JsonResponse
+ */
+public function uploadProfilePhoto(Request $request, User $user): JsonResponse
+{
+    try {
+    //     Log::info([
+    //     'all' => $request->all(),
+    //     'allFiles' => $request->allFiles(),
+    //     'hasFile_photo' => $request->hasFile('photo'),
+    //     'file_photo' => $request->file('photo'),
+    //     'content_type' => $request->header('Content-Type'),
+    //     'user_id'=>$user->id,
+    //     'obtained Id'=>Auth::id(),
+    // ]);
+        // Validate the request
+        $request->validate([
+            'photo' => 'required|image|mimes:jpeg,png,jpg,gif,svg,webp|max:2048', // 2MB max
+        ]);
+        
+
+        // Check authorization (ensure user can update their own profile or admin can update any)
+      if (Auth::id() !== $user->id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized to update this user\'s profile photo.',
+            'errors' => ['authorization' => ['You do not have permission to update this profile photo.']],
+            'data' => null,
+        ], 403);
+    }
+
+        // Upload the photo using the service
+        $photoPath = $this->userService->uploadProfilePhoto($user, $request->file('photo'));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile photo uploaded successfully.',
+            'data' => [
+                'profile_photo_path' => $photoPath,
+                'profile_photo_url' => asset('storage/' . $photoPath),
+            ],
+        ], 200);
+        
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Photo upload validation failed.',
+            'errors' => $e->errors(),
+            'data' => null,
+        ], 422);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to upload profile photo.',
+            'errors' => ['server' => [$e->getMessage()]],
+            'data' => null,
+        ], 500);
+    }
+}
 }

@@ -140,4 +140,14 @@ interface UserServiceInterface
      * @return bool
      */
     public function validateMfa(int $userId, string $code): bool;
+
+        /**
+     * Upload a profile photo for a user.
+     *
+     * @param User $user
+     * @param \Illuminate\Http\UploadedFile $photo
+     * @return string The path to the uploaded photo
+     * @throws \Throwable
+     */
+    public function uploadProfilePhoto(User $user, \Illuminate\Http\UploadedFile $photo): string;
 }

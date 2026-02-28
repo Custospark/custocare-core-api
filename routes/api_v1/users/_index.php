@@ -69,4 +69,5 @@ Route::middleware(['auth:sanctum'])->prefix('users')->name('users.')->group(func
 
     Route::put('/{user}/preferences', [UserController::class, 'updatePreferences'])
         ->name('preferences.update');
+    Route::post('{user}/profile/photo', [UserController::class, 'uploadProfilePhoto']);
 });

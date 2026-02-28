@@ -55,6 +55,7 @@ class UserContextResolverService
             'email' => $user->email_encrypted ? decrypt($user->email_encrypted) : null,
             'phone' => $user->phone_encrypted ? decrypt($user->phone_encrypted) : null,
             'national_id_country_code' => $user->national_id_country_code,
+            'profile_photo_path' => $user->profile_photo_path,
         ];
     }
 

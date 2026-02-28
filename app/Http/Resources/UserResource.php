@@ -55,6 +55,7 @@ class UserResource extends JsonResource
             'id' => $this->id,
             'uuid' => $this->global_user_uuid,
             'national_id_country_code' => $this->national_id_country_code,
+            'profile_photo_path' => $this->profile_photo_path,
             'identity' => [
                 'state' => $this->identity_state,
                 'verified_at' => $this->identity_verified_at,

@@ -16,6 +16,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
 
@@ -712,4 +713,38 @@ private function createMfaToken(int $userId): array
 
         return str_repeat('*', $len - 4) . substr($phone, -4);
     }
+
+    /**
+ * Upload a profile photo for a user.
+ *
+ * @param User $user
+ * @param \Illuminate\Http\UploadedFile $photo
+ * @return string
+ * @throws \Throwable
+ */
+public function uploadProfilePhoto(User $user, \Illuminate\Http\UploadedFile $photo): string
+{
+    try {
+        // Delete old profile photo if exists
+        if ($user->profile_photo_path) {
+            Storage::disk('public')->delete($user->profile_photo_path);
+        }
+
+        // Store the new photo
+        $path = $photo->store('profile-photos/' . $user->id, 'public');
+        
+        // Update user record
+        $user->profile_photo_path = $path;
+        $user->save();
+
+        return $path;
+        
+    } catch (\Exception $e) {
+        Log::error('Failed to upload profile photo', [
+            'user_id' => $user->id,
+            'error' => $e->getMessage()
+        ]);
+        throw $e;
+    }
+}
 }

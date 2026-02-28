@@ -194,4 +194,120 @@ class UserRepository implements UserRepositoryInterface
     {
         return $user->update(['account_locked_until' => null]);
     }
+
+    // ══════════════════════════════════════════════════════════════
+        // PROFILE
+        // ══════════════════════════════════════════════════════════════
+
+        /**
+         * Retrieve only profile-relevant columns for a user.
+         *
+         * @param int $id
+         * @return User|null
+         */
+        public function getProfileById(int $id): ?User
+        {
+            return User::select([
+                'id',
+                'first_name',
+                'last_name',
+                'display_name',
+                'title',
+                'dob',
+                'gender',
+                'phone_encrypted',
+                'address_line1',
+                'address_line2',
+                'city',
+                'state',
+                'country',
+                'postal_code',
+                'profile_photo_path',
+            ])->find($id);
+        }
+
+        /**
+         * Update profile-relevant columns for a user.
+         *
+         * @param int   $id
+         * @param array $data  Prepared payload (phone already encrypted)
+         * @return bool
+         */
+        public function updateProfileById(int $id, array $data): bool
+        {
+            return (bool) User::where('id', $id)->update($data);
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // SECURITY
+        // ══════════════════════════════════════════════════════════════
+
+        /**
+         * Retrieve only security-relevant columns for a user.
+         * Includes password_hash so the service can verify current password.
+         * The service layer must NEVER pass password_hash to the controller response.
+         *
+         * @param int $id
+         * @return User|null
+         */
+        public function getSecurityById(int $id): ?User
+        {
+            return User::select([
+                'id',
+                'password_hash',
+                'password_changed_at',
+                'requires_password_change',
+                'mfa_enabled',
+                'mfa_secret_encrypted',
+                'last_login_at',
+                'last_login_ip',
+                'failed_login_attempts',
+                'account_locked_until',
+            ])->find($id);
+        }
+
+        /**
+         * Update security-relevant columns for a user.
+         *
+         * @param int   $id
+         * @param array $data  Prepared payload (password already hashed)
+         * @return bool
+         */
+        public function updateSecurityById(int $id, array $data): bool
+        {
+            return (bool) User::where('id', $id)->update($data);
+        }
+
+        // ══════════════════════════════════════════════════════════════
+        // PREFERENCES
+        // ══════════════════════════════════════════════════════════════
+
+        /**
+         * Retrieve only preferences-relevant columns for a user.
+         *
+         * @param int $id
+         * @return User|null
+         */
+        public function getPreferencesById(int $id): ?User
+        {
+            return User::select([
+                'id',
+                'theme_mode',
+                'ui_density',
+                'timezone',
+                'locale',
+            ])->find($id);
+        }
+
+        /**
+         * Update preferences-relevant columns for a user.
+         *
+         * @param int   $id
+         * @param array $data
+         * @return bool
+         */
+        public function updatePreferencesById(int $id, array $data): bool
+        {
+            return (bool) User::where('id', $id)->update($data);
+        }
 }

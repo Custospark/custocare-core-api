@@ -126,4 +126,69 @@ interface UserRepositoryInterface
      * @return bool
      */
     public function unlockAccount(User $user): bool;
+
+    // ══════════════════════════════════════════════════════════════
+    // PROFILE
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve profile-relevant columns for a user.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getProfileById(int $id): ?User;
+
+    /**
+     * Update profile-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data
+     * @return bool
+     */
+    public function updateProfileById(int $id, array $data): bool;
+
+
+    // ══════════════════════════════════════════════════════════════
+    // SECURITY
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve security-relevant columns for a user.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getSecurityById(int $id): ?User;
+
+    /**
+     * Update security-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data
+     * @return bool
+     */
+    public function updateSecurityById(int $id, array $data): bool;
+
+
+    // ══════════════════════════════════════════════════════════════
+    // PREFERENCES
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve preferences-relevant columns for a user.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getPreferencesById(int $id): ?User;
+
+    /**
+     * Update preferences-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data
+     * @return bool
+     */
+    public function updatePreferencesById(int $id, array $data): bool;
 }

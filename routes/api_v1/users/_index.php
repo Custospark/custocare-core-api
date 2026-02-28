@@ -45,6 +45,28 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/users', [UserController::class, 'store'])
         ->middleware('can:create,App\Models\User');
 
-   
+});
 
+Route::middleware(['auth:sanctum'])->prefix('users')->name('users.')->group(function () {
+
+    // ── Profile ────────────────────────────────────────────────
+    Route::get('/{user}/profile', [UserController::class, 'getProfile'])
+        ->name('profile.show');
+
+    Route::put('/{user}/profile', [UserController::class, 'updateProfile'])
+        ->name('profile.update');
+
+    // ── Security ───────────────────────────────────────────────
+    Route::get('/{user}/security', [UserController::class, 'getSecurity'])
+        ->name('security.show');
+
+    Route::put('/{user}/security', [UserController::class, 'updateSecurity'])
+        ->name('security.update');
+
+    // ── Preferences ────────────────────────────────────────────
+    Route::get('/{user}/preferences', [UserController::class, 'getPreferences'])
+        ->name('preferences.show');
+
+    Route::put('/{user}/preferences', [UserController::class, 'updatePreferences'])
+        ->name('preferences.update');
 });

@@ -19,6 +19,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
 
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Validation\ValidationException;
+
 /**
  * Handles all user-lifecycle operations: registration, login, password management,
  * identity verification, and MFA.
@@ -505,5 +508,208 @@ private function createMfaToken(int $userId): array
         }
 
         return $this->loginFailure('INVALID_CREDENTIALS', 'Invalid credentials.');
+    }
+    // ══════════════════════════════════════════════════════════════
+    // PROFILE
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve the profile fields for a given user.
+     *
+     * @param User $user
+     * @return array<string, mixed>
+     */
+    public function getUserProfile(User $user): array
+    {
+        $raw = $this->userRepository->getProfileById($user->id);
+
+        return [
+            'first_name'         => $raw->first_name,
+            'last_name'          => $raw->last_name,
+            'display_name'       => $raw->display_name,
+            'title'              => $raw->title,
+            'dob'                => $raw->dob?->toDateString(),
+            'gender'             => $raw->gender,
+
+            // Return masked phone — never the raw encrypted blob
+            'phone'              => $raw->phone_encrypted
+                                        ? $this->maskPhone(Crypt::decryptString($raw->phone_encrypted))
+                                        : null,
+
+            'address_line1'      => $raw->address_line1,
+            'address_line2'      => $raw->address_line2,
+            'city'               => $raw->city,
+            'state'              => $raw->state,
+            'country'            => $raw->country,
+            'postal_code'        => $raw->postal_code,
+            'profile_photo_path' => $raw->profile_photo_path,
+        ];
+    }
+
+    /**
+     * Update the profile fields for a given user.
+     * Handles phone encryption + hashing transparently.
+     *
+     * @param User  $user
+     * @param array $data  Validated data from UpdateUserProfileRequest
+     * @return User        Fresh model instance after update
+     */
+    public function updateUserProfile(User $user, array $data): User
+    {
+        $payload = collect($data)
+            ->except(['phone'])          // remove plain phone; re-add as encrypted below
+            ->toArray();
+
+        // Encrypt phone and store its hash for indexed lookups
+        if (array_key_exists('phone', $data)) {
+            $plain = $data['phone'];
+
+            if ($plain !== null && $plain !== '') {
+                $payload['phone_encrypted'] = Crypt::encryptString($plain);
+                $payload['phone_hash']      = hash('sha256', $plain);
+            } else {
+                $payload['phone_encrypted'] = null;
+                $payload['phone_hash']      = null;
+            }
+        }
+
+        $this->userRepository->updateProfileById($user->id, $payload);
+
+        return $user->fresh();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // SECURITY
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve the non-sensitive security settings for a given user.
+     * Never exposes password_hash or mfa_secret_encrypted.
+     *
+     * @param User $user
+     * @return array<string, mixed>
+     */
+    public function getUserSecurity(User $user): array
+    {
+        $raw = $this->userRepository->getSecurityById($user->id);
+
+        return [
+            'mfa_enabled'              => (bool) $raw->mfa_enabled,
+            'requires_password_change' => (bool) $raw->requires_password_change,
+            'password_changed_at'      => $raw->password_changed_at?->toDateTimeString(),
+            'last_login_at'            => $raw->last_login_at?->toDateTimeString(),
+            'last_login_ip'            => $raw->last_login_ip,
+            'failed_login_attempts'    => $raw->failed_login_attempts,
+            'account_locked_until'     => $raw->account_locked_until?->toDateTimeString(),
+        ];
+    }
+
+    /**
+     * Update the security settings for a given user.
+     * Validates current password before allowing a password change.
+     *
+     * @param User  $user
+     * @param array $data  Validated data from UpdateUserSecurityRequest
+     * @return User        Fresh model instance after update
+     *
+     * @throws ValidationException  When current_password does not match.
+     */
+    public function updateUserSecurity(User $user, array $data): User
+    {
+        $payload = [];
+
+        // ── Password change ────────────────────────────────────────
+        if (!empty($data['password'])) {
+            $raw = $this->userRepository->getSecurityById($user->id);
+
+            if (!Hash::check($data['current_password'], $raw->password_hash)) {
+                throw ValidationException::withMessages([
+                    'current_password' => ['The current password you entered is incorrect.'],
+                ]);
+            }
+
+            $payload['password_hash']       = Hash::make($data['password']);
+            $payload['password_changed_at'] = now();
+            // Once they successfully change password, clear the forced-change flag
+            $payload['requires_password_change'] = false;
+        }
+
+        // ── Flags ──────────────────────────────────────────────────
+        if (array_key_exists('requires_password_change', $data)) {
+            $payload['requires_password_change'] = $data['requires_password_change'];
+        }
+
+        if (array_key_exists('mfa_enabled', $data)) {
+            $payload['mfa_enabled'] = $data['mfa_enabled'];
+
+            // Clear the MFA secret when disabling so it cannot be reused
+            if ($data['mfa_enabled'] === false) {
+                $payload['mfa_secret_encrypted'] = null;
+            }
+        }
+
+        if (!empty($payload)) {
+            $this->userRepository->updateSecurityById($user->id, $payload);
+        }
+
+        return $user->fresh();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // PREFERENCES
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve the UI/UX preferences for a given user.
+     *
+     * @param User $user
+     * @return array<string, mixed>
+     */
+    public function getUserPreferences(User $user): array
+    {
+        $raw = $this->userRepository->getPreferencesById($user->id);
+
+        return [
+            'theme_mode' => $raw->theme_mode,
+            'ui_density' => $raw->ui_density,
+            'timezone'   => $raw->timezone,
+            'locale'     => $raw->locale,
+        ];
+    }
+
+    /**
+     * Update the UI/UX preferences for a given user.
+     *
+     * @param User  $user
+     * @param array $data  Validated data from UpdateUserPreferencesRequest
+     * @return User        Fresh model instance after update
+     */
+    public function updateUserPreferences(User $user, array $data): User
+    {
+        $this->userRepository->updatePreferencesById($user->id, $data);
+
+        return $user->fresh();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // HELPERS (private)
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Mask a plain phone number for safe display.
+     * e.g. +1 555 123 4567 → +1 *** *** 4567
+     *
+     * @param string $phone
+     * @return string
+     */
+    private function maskPhone(string $phone): string
+    {
+        $len = strlen($phone);
+
+        if ($len <= 4) {
+            return str_repeat('*', $len);
+        }
+
+        return str_repeat('*', $len - 4) . substr($phone, -4);
     }
 }

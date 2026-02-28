@@ -57,6 +57,13 @@ use Spatie\Permission\Traits\HasRoles;
  * @property int|null $updated_by_staff_id
  * @property string|null $created_ip
  * @property array|null $metadata
+ * @property string $theme_mode
+ * @property string $ui_density
+ * @property string|null $timezone
+ * @property string|null $locale
+ * @property string|null $profile_photo_path
+ * @property string|null $profile_photo_disk
+ * @property Carbon|null $profile_photo_updated_at
  * @property Carbon $created_at
  * @property Carbon $updated_at
  * @property Carbon|null $deleted_at
@@ -113,6 +120,14 @@ class User extends Authenticatable
         'updated_by_staff_id',
         'created_ip',
         'metadata',
+        // NEW FIELDS
+        'theme_mode',
+        'ui_density',
+        'timezone',
+        'locale',
+        'profile_photo_path',
+        'profile_photo_disk',
+        'profile_photo_updated_at',
     ];
 
     /**
@@ -145,6 +160,13 @@ class User extends Authenticatable
         'password_changed_at' => 'datetime',
         'metadata' => 'array',
         'failed_login_attempts' => 'integer',
+        'theme_mode' => 'string',
+        'ui_density' => 'string',
+        'timezone' => 'string',
+        'locale' => 'string',
+        'profile_photo_path' => 'string',
+        'profile_photo_disk' => 'string',
+        'profile_photo_updated_at' => 'datetime',
     ];
 
     /**

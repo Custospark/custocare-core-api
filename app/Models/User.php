@@ -77,8 +77,8 @@ class User extends Authenticatable
      *
      * @var array<string>
      */
-    public const TOKEN_EXPIRATION_MINUTES = 30;
-    public const OTP_EXPIRATION_MINUTES = 15;
+    public const TOKEN_EXPIRATION_MINUTES = 10;
+    public const OTP_EXPIRATION_MINUTES = 10;
 
     protected $primaryKey = 'id';
     public $incrementing = true;

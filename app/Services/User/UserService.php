@@ -19,7 +19,6 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use PragmaRX\Google2FA\Google2FA;
 
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -524,6 +523,7 @@ private function createMfaToken(int $userId): array
         $raw = $this->userRepository->getProfileById($user->id);
 
         return [
+            'id'            =>$raw->id,
             'first_name'         => $raw->first_name,
             'last_name'          => $raw->last_name,
             'display_name'       => $raw->display_name,
@@ -533,7 +533,7 @@ private function createMfaToken(int $userId): array
 
             // Return masked phone — never the raw encrypted blob
             'phone'              => $raw->phone_encrypted
-                                        ? $this->maskPhone(Crypt::decryptString($raw->phone_encrypted))
+                                        ? decrypt($raw->phone_encrypted)
                                         : null,
 
             'address_line1'      => $raw->address_line1,
@@ -565,7 +565,7 @@ private function createMfaToken(int $userId): array
             $plain = $data['phone'];
 
             if ($plain !== null && $plain !== '') {
-                $payload['phone_encrypted'] = Crypt::encryptString($plain);
+                $payload['phone_encrypted'] = encrypt($plain);
                 $payload['phone_hash']      = hash('sha256', $plain);
             } else {
                 $payload['phone_encrypted'] = null;

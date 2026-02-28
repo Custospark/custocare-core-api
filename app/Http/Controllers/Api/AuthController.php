@@ -122,7 +122,7 @@ class AuthController extends Controller
     // Email Verification
     // ─────────────────────────────────────────────────────────────────────────
 
-   public function verifyEmail(VerifyEmailRequest $request): JsonResponse
+public function verifyEmail(VerifyEmailRequest $request): JsonResponse
 {
     $validated = $request->validated();
 
@@ -130,7 +130,9 @@ class AuthController extends Controller
         $this->accountRecoveryService->verifyEmail(
             (int)  $validated['user_id'],
             (string) $validated['code'],
-            (bool) ($validated['is_token'] ?? false)
+            (bool) ($validated['is_token'] ?? false),
+            $request->ip(),           // Pass IP from request
+            $request->userAgent()      // Pass user agent from request
         );
 
         // Fetch the now‑verified user and issue a token
@@ -140,7 +142,7 @@ class AuthController extends Controller
         return response()->json([
             'success'      => true,
             'code'         => 'EMAIL_VERIFIED',
-            'message' => 'Identity confirmed. Authentication successful.',
+            'message'      => 'Identity confirmed. Authentication successful.',
             'user'         => new UserResource($user),
             'token'        => $token,
             'requires_mfa' => false,

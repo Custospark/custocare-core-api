@@ -34,23 +34,3 @@ Route::prefix('auth')->group(function () {
         Route::get('/me', [AuthController::class, 'me']);
     });
 });
-
-Route::get('/test-verification-flow/{userId}', function ($userId) {
-    try {
-        $service = app(\App\Services\User\AccountRecoveryService::class);
-        $result = $service->sendEmailVerification($userId, 'email',ActionTypes::LOGIN_CONFIRMATION);
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Verification email process completed',
-            'result' => $result,
-            'logs' => 'Check storage/logs/laravel.log for details'
-        ]);
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ], 500);
-    }
-});

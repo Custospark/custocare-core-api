@@ -79,53 +79,68 @@ class AccountRecoveryService
         });
     }
 
-public function verifyEmail(int $userId, string $code, bool $isToken = false): bool
-{
-    return DB::transaction(function () use ($userId, $code, $isToken) {
-        $user = $this->findUserOrFail($userId);
-        
-        // Find valid token - this may throw an exception or return null
-        try {
-            $validToken = $this->findValidToken($userId, 'email_verification', $code, $isToken);
+    public function verifyEmail(int $userId, string $code, bool $isToken = false, ?string $ip = null, ?string $userAgent = null): bool
+    {
+        return DB::transaction(function () use ($userId, $code, $isToken, $ip, $userAgent) {
+            $user = $this->findUserOrFail($userId);
             
-            // If findValidToken returns null instead of throwing
-            if (!$validToken) {
+            // Find valid token - this may throw an exception or return null
+            try {
+                $validToken = $this->findValidToken($userId, 'email_verification', $code, $isToken);
+                
+                // If findValidToken returns null instead of throwing
+                if (!$validToken) {
+                    throw new \Exception('Invalid or expired verification code.', 400);
+                }
+            } catch (\Exception $e) {
+                // Re-throw with a cleaner message or handle as needed
+                Log::warning('Token validation failed', [
+                    'user_id' => $userId,
+                    'error' => $e->getMessage()
+                ]);
                 throw new \Exception('Invalid or expired verification code.', 400);
             }
-        } catch (\Exception $e) {
-            // Re-throw with a cleaner message or handle as needed
-            Log::warning('Token validation failed', [
-                'user_id' => $userId,
-                'error' => $e->getMessage()
-            ]);
-            throw new \Exception('Invalid or expired verification code.', 400);
-        }
-        
-        // Token is valid - mark it as used regardless of verification status
-        $validToken->markAsUsed();
-        
-        // Now check if email is already verified
-        if ($user->hasVerifiedEmail()) {
-            Log::info('Email already verified - token consumed', [
-                'user_id' => $userId,
-                'method' => $isToken ? 'token' : 'otp',
-            ]);
             
-            return true; // Still return true - email IS verified
-        }
+            // Token is valid - mark it as used regardless of verification status
+            $validToken->markAsUsed();
+            
+            // Now check if email is already verified
+            if ($user->hasVerifiedEmail()) {
+                Log::info('Email already verified - token consumed', [
+                    'user_id' => $userId,
+                    'method' => $isToken ? 'token' : 'otp',
+                ]);
+                
+                return true; // Still return true - email IS verified
+            }
 
-        // Email not verified yet - verify it now
-        $user->markEmailAsVerified();
+            // Email not verified yet - verify it now
+            $user->markEmailAsVerified();
 
-        Log::info('Email verified', [
-            'user_id' => $userId,
-            'method'  => $isToken ? 'token' : 'otp',
-        ]);
+            Log::info('Email verified', [
+                'user_id' => $userId,
+                'method'  => $isToken ? 'token' : 'otp',
+            ]);
 
-        return true;
-    });
-}
+            // ✅ Update last login after successful email verification
+            if ($ip && $userAgent) {
+                $user->update([
+                    'last_login_at' => now(),
+                    'last_login_ip' => $ip,
+                    'last_login_user_agent' => $userAgent,
+                    'failed_login_attempts' => 0, // Reset failed attempts on successful verification
+                ]);
 
+                Log::info('Last login updated after email verification', [
+                    'user_id' => $userId,
+                    'ip' => $ip,
+                    'user_agent' => $userAgent
+                ]);
+            }
+
+            return true;
+        });
+    }
      public function initiatePasswordReset(string $email, string $channel = 'email'): array
     {
         $emailHash = hash('sha256', strtolower(trim($email)));

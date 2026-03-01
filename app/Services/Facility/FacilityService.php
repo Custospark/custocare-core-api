@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -962,4 +963,281 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
         
         return true;
     }
+
+        // ══════════════════════════════════════════════════════════════════════════
+    // FACILITY SETTINGS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve all editable settings fields for the given facility.
+     *
+     * The return value mirrors the logical grouping defined in the settings
+     * specification so the client can render each section independently.
+     *
+     * Boolean fields are explicitly cast to avoid returning 0/1 integers.
+     * The Branding group includes a computed `facility_logo_url` alongside
+     * the raw `facility_logo_path` for convenience.
+     *
+     * @param Facility $facility
+     * @return array<string, array<string, mixed>>
+     */
+    public function getFacilitySettings(Facility $facility): array
+    {
+        return [
+
+            // ── CoreIdentity ─────────────────────────────────────────────────
+            'CoreIdentity' => [
+                'facility_name'      => $facility->facility_name,
+                'legal_entity_name'  => $facility->legal_entity_name,
+                'health_system_name' => $facility->health_system_name,
+            ],
+
+            // ── Classification ───────────────────────────────────────────────
+            'Classification' => [
+                'nature_of_facility' => $facility->nature_of_facility,
+                'facility_type'      => $facility->facility_type,
+                'facility_tier'      => $facility->facility_tier,
+            ],
+
+            // ── CapacityAndServices ──────────────────────────────────────────
+            'CapacityAndServices' => [
+                'bed_capacity'                => $facility->bed_capacity,
+                'available_services'          => $facility->available_services,
+                'specialty_services'          => $facility->specialty_services,
+                'equipment_inventory_summary' => $facility->equipment_inventory_summary,
+            ],
+
+            // ── Location ─────────────────────────────────────────────────────
+            'Location' => [
+                'address_line1'  => $facility->address_line1,
+                'address_line2'  => $facility->address_line2,
+                'city'           => $facility->city,
+                'state_province' => $facility->state_province,
+                'postal_code'    => $facility->postal_code,
+                'country_code'   => $facility->country_code,
+                'latitude'       => $facility->latitude,
+                'longitude'      => $facility->longitude,
+            ],
+
+            // ── ContactInformation ───────────────────────────────────────────
+            'ContactInformation' => [
+                'main_phone'      => $facility->main_phone,
+                'emergency_phone' => $facility->emergency_phone,
+                'fax'             => $facility->fax,
+                'email'           => $facility->email,
+                'website'         => $facility->website,
+            ],
+
+            // ── Operations ───────────────────────────────────────────────────
+            'Operations' => [
+                'operating_hours'           => $facility->operating_hours,
+                'emergency_services_hours'  => $facility->emergency_services_hours,
+                'is_24_7'                   => (bool) $facility->is_24_7,
+                'operational_status'        => $facility->operational_status,
+                'average_wait_time_minutes' => $facility->average_wait_time_minutes,
+                'monthly_patient_volume'    => $facility->monthly_patient_volume,
+            ],
+
+            // ── LicensingAndCompliance ───────────────────────────────────────
+            'LicensingAndCompliance' => [
+                'license_number'            => $facility->license_number,
+                'license_issuing_authority' => $facility->license_issuing_authority,
+                'license_expiry_date'       => $facility->license_expiry_date?->toDateString(),
+                'regulatory_identifiers'    => $facility->regulatory_identifiers,
+                'participates_in_medicare'  => (bool) $facility->participates_in_medicare,
+                'participates_in_medicaid'  => (bool) $facility->participates_in_medicaid,
+            ],
+
+            // ── ClinicalCapabilities ─────────────────────────────────────────
+            'ClinicalCapabilities' => [
+                'has_emergency_department' => (bool) $facility->has_emergency_department,
+                'has_trauma_center'        => (bool) $facility->has_trauma_center,
+                'trauma_center_level'      => $facility->trauma_center_level,
+                'has_intensive_care'       => (bool) $facility->has_intensive_care,
+                'has_neonatal_icu'         => (bool) $facility->has_neonatal_icu,
+                'has_cardiac_cath_lab'     => (bool) $facility->has_cardiac_cath_lab,
+            ],
+
+            // ── FinancialConfiguration ───────────────────────────────────────
+            'FinancialConfiguration' => [
+                'currency'    => $facility->currency,
+                'tax_enabled' => (bool) $facility->tax_enabled,
+                'tax_name'    => $facility->tax_name,
+                'tax_rate'    => $facility->tax_rate,
+            ],
+
+            // ── Branding ─────────────────────────────────────────────────────
+            // facility_logo_path is read here but written only via uploadFacilityLogo().
+            'Branding' => [
+                'facility_logo_path'    => $facility->facility_logo_path,
+                'facility_logo_url'     => $facility->facility_logo_path
+                                            ? asset('storage/' . $facility->facility_logo_path)
+                                            : null,
+                'primary_brand_color'   => $facility->primary_brand_color,
+                'secondary_brand_color' => $facility->secondary_brand_color,
+            ],
+
+            // ── SystemConfiguration ──────────────────────────────────────────
+            'SystemConfiguration' => [
+                'timezone'              => $facility->timezone,
+                'data_residency_region' => $facility->data_residency_region,
+            ],
+        ];
+    }
+
+    /**
+     * Update one or more editable settings fields for the given facility.
+     *
+     * Only keys that are both present in $data AND present in the explicit
+     * $allowed whitelist are persisted. Any extra keys (e.g. facility_uuid,
+     * facility_code, shard columns, audit stamps) are silently discarded even
+     * if somehow included in $data, providing a defence-in-depth guard on top
+     * of the request-level validation.
+     *
+     * `facility_logo_path` is deliberately absent from $allowed — logo writes
+     * must go through uploadFacilityLogo() so the old file is always cleaned up.
+     *
+     * Returns a fresh Facility instance reflecting the saved state.
+     *
+     * @param Facility             $facility
+     * @param array<string, mixed> $data  Validated payload from UpdateFacilitySettingsRequest
+     * @return Facility
+     */
+    public function updateFacilitySettings(Facility $facility, array $data): Facility
+    {
+        // Explicit whitelist — mirrors every field in the settings grouping spec.
+        $allowed = [
+            // CoreIdentity
+            'facility_name',
+            'legal_entity_name',
+            'health_system_name',
+
+            // Classification
+            'nature_of_facility',
+            'facility_type',
+            'facility_tier',
+
+            // CapacityAndServices
+            'bed_capacity',
+            'available_services',
+            'specialty_services',
+            'equipment_inventory_summary',
+
+            // Location
+            'address_line1',
+            'address_line2',
+            'city',
+            'state_province',
+            'postal_code',
+            'country_code',
+            'latitude',
+            'longitude',
+
+            // ContactInformation
+            'main_phone',
+            'emergency_phone',
+            'fax',
+            'email',
+            'website',
+
+            // Operations
+            'operating_hours',
+            'emergency_services_hours',
+            'is_24_7',
+            'operational_status',
+            'average_wait_time_minutes',
+            'monthly_patient_volume',
+
+            // LicensingAndCompliance
+            'license_number',
+            'license_issuing_authority',
+            'license_expiry_date',
+            'regulatory_identifiers',
+            'participates_in_medicare',
+            'participates_in_medicaid',
+
+            // ClinicalCapabilities
+            'has_emergency_department',
+            'has_trauma_center',
+            'trauma_center_level',
+            'has_intensive_care',
+            'has_neonatal_icu',
+            'has_cardiac_cath_lab',
+
+            // FinancialConfiguration
+            'currency',
+            'tax_enabled',
+            'tax_name',
+            'tax_rate',
+
+            // Branding — colours only (logo_path is managed via upload endpoint)
+            'primary_brand_color',
+            'secondary_brand_color',
+
+            // SystemConfiguration
+            'timezone',
+            'data_residency_region',
+        ];
+
+        // Intersect validated data against the whitelist and persist.
+        $payload = array_intersect_key($data, array_flip($allowed));
+
+        if (!empty($payload)) {
+            $facility->update($payload);
+        }
+
+        return $facility->fresh();
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FACILITY LOGO
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Upload (or replace) the logo image for the given facility.
+     *
+     * Workflow:
+     *   1. If a previous logo path is stored, delete the old file from the
+     *      public disk so storage does not accumulate orphaned images.
+     *   2. Store the uploaded file under `facility-logos/{facility->id}/`
+     *      on the public disk, letting Laravel generate a unique filename.
+     *   3. Persist the resulting relative path to `facility_logo_path` and
+     *      save the model.
+     *   4. Return the relative path to the caller (the controller appends
+     *      the public URL for the response).
+     *
+     * @param Facility                        $facility
+     * @param \Illuminate\Http\UploadedFile   $logo
+     * @return string  Relative storage path (e.g. "facility-logos/7/abc123.jpg")
+     *
+     * @throws \Exception  Re-thrown after logging so the controller can surface it.
+     */
+    public function uploadFacilityLogo(Facility $facility, \Illuminate\Http\UploadedFile $logo): string
+    {
+        try {
+            // 1. Remove the old logo file if present.
+            if ($facility->facility_logo_path) {
+                Storage::disk('public')->delete($facility->facility_logo_path);
+            }
+
+            // 2. Store the new logo in a facility-scoped subdirectory.
+            $path = $logo->store('facility-logos/' . $facility->id, 'public');
+
+            // 3. Persist the path on the model.
+            $facility->facility_logo_path = $path;
+            $facility->save();
+
+            // 4. Return the relative path.
+            return $path;
+
+        } catch (\Exception $e) {
+            Log::error('Failed to upload facility logo', [
+                'facility_id' => $facility->id,
+                'error'       => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
 }

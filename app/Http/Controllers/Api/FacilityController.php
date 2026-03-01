@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Facility\StoreFacilityRequest;
 use App\Http\Requests\Facility\UpdateFacilityRequest;
+use App\Http\Requests\Facility\UpdateFacilitySettingsRequest;
 use App\Http\Resources\FacilityResource;
 use App\Http\Resources\FacilityCollection;
+use App\Models\Facility;
 use App\Services\Contracts\FacilityServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -914,4 +916,133 @@ class FacilityController extends Controller
             ], 500);
         }
     }
+
+
+        // ══════════════════════════════════════════════════════════════════════════
+    // FACILITY SETTINGS
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * GET /facilities/{facility}/settings
+     *
+     * Retrieve all editable settings for the given facility, returned as a
+     * structured object keyed by logical group (CoreIdentity, Location, …).
+     *
+     * Fields that cannot be changed through settings (e.g. facility_uuid,
+     * facility_code, shard columns, audit stamps) are intentionally absent.
+     *
+     * @param ReadFacilitySettingsRequest $request
+     * @param Facility $facility
+     * @return JsonResponse
+     */
+    public function getSettings(Facility $facility): JsonResponse
+    {
+        try {
+            $settings = $this->facilityService->getFacilitySettings($facility);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Facility settings retrieved successfully.',
+                'data'    => $settings,
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve facility settings.',
+                'errors'  => ['server' => [$e->getMessage()]],
+                'data'    => null,
+            ], 500);
+        }
+    }
+
+    /**
+     * PUT /facilities/{facility}/settings
+     *
+     * Update one or more editable settings fields for the given facility.
+     * The request body is flat (individual fields, not grouped objects).
+     * Only fields explicitly sent in the request are updated; all others
+     * remain unchanged.
+     *
+     * The response returns the full grouped settings snapshot after the update,
+     * matching exactly what GET /settings returns.
+     *
+     * @param UpdateFacilitySettingsRequest $request
+     * @param Facility $facility
+     * @return JsonResponse
+     */
+    public function updateSettings(UpdateFacilitySettingsRequest $request, Facility $facility): JsonResponse
+    {
+        try {
+            $updated = $this->facilityService->updateFacilitySettings($facility, $request->validated());
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Facility settings updated successfully.',
+                'data'    => $this->facilityService->getFacilitySettings($updated),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update facility settings.',
+                'errors'  => ['server' => [$e->getMessage()]],
+                'data'    => null,
+            ], 500);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FACILITY LOGO
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * POST /facilities/{facility}/settings/logo
+     *
+     * Upload (or replace) the logo image for the given facility.
+     * The service layer handles:
+     *   – deleting the existing logo from storage if one is already set,
+     *   – storing the new file under facility-logos/{id}/,
+     *   – persisting the resulting path to facility_logo_path on the model.
+     *
+     * The response returns both the raw storage path and a fully-qualified
+     * public URL so the client does not need to build the URL itself.
+     *
+     * @param Request  $request
+     * @param Facility $facility
+     * @return JsonResponse
+     */
+    public function uploadFacilityLogo(Request $request, Facility $facility): JsonResponse
+    {
+        try {
+            $request->validate([
+                'logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg,webp|max:2048',
+            ]);
+
+            $logoPath = $this->facilityService->uploadFacilityLogo($facility, $request->file('logo'));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Facility logo uploaded successfully.',
+                'data'    => [
+                    'facility_logo_path' => $logoPath,
+                    'facility_logo_url'  => asset('storage/' . $logoPath),
+                ],
+            ], 200);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Logo upload validation failed.',
+                'errors'  => $e->errors(),
+                'data'    => null,
+            ], 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload facility logo.',
+                'errors'  => ['server' => [$e->getMessage()]],
+                'data'    => null,
+            ], 500);
+        }
+    }
+
 }

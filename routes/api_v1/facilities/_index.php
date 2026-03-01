@@ -79,3 +79,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
         ->name('facilities.update-operational-status')
         ->middleware('can:updateOperationalStatus,facility');
 });
+
+Route::middleware(['auth:sanctum'])->prefix('facilities')->name('facilities.')->group(function () {
+
+    // ── Settings (read all grouped fields) ────────────────────────────────
+    Route::get('/{facility}/settings', [FacilityController::class, 'getSettings'])
+        ->name('settings.show');
+
+    // ── Settings (update individual fields from any group) ────────────────
+    Route::put('/{facility}/settings', [FacilityController::class, 'updateSettings'])
+        ->name('settings.update');
+
+    // ── Logo (upload / replace facility logo) ─────────────────────────────
+    Route::post('/{facility}/settings/logo', [FacilityController::class, 'uploadFacilityLogo'])
+        ->name('settings.logo.upload');
+});

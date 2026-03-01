@@ -692,27 +692,6 @@ private function createMfaToken(int $userId): array
         return $user->fresh();
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // HELPERS (private)
-    // ══════════════════════════════════════════════════════════════
-
-    /**
-     * Mask a plain phone number for safe display.
-     * e.g. +1 555 123 4567 → +1 *** *** 4567
-     *
-     * @param string $phone
-     * @return string
-     */
-    private function maskPhone(string $phone): string
-    {
-        $len = strlen($phone);
-
-        if ($len <= 4) {
-            return str_repeat('*', $len);
-        }
-
-        return str_repeat('*', $len - 4) . substr($phone, -4);
-    }
 
     /**
  * Upload a profile photo for a user.
@@ -747,4 +726,27 @@ public function uploadProfilePhoto(User $user, \Illuminate\Http\UploadedFile $ph
         throw $e;
     }
 }
+
+
+    // ══════════════════════════════════════════════════════════════
+    // HELPERS (private)
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Mask a plain phone number for safe display.
+     * e.g. +1 555 123 4567 → +1 *** *** 4567
+     *
+     * @param string $phone
+     * @return string
+     */
+    private function maskPhone(string $phone): string
+    {
+        $len = strlen($phone);
+
+        if ($len <= 4) {
+            return str_repeat('*', $len);
+        }
+
+        return str_repeat('*', $len - 4) . substr($phone, -4);
+    }
 }

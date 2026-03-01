@@ -73,6 +73,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property array|null $metadata
  * @property \Illuminate\Support\Carbon $created_at
  * @property \Illuminate\Support\Carbon $updated_at
+ *  * --------------------------------------------------------------------------
+ * 🆕 Financial Configuration
+ * --------------------------------------------------------------------------
+ * @property string $currency
+ * @property bool $tax_enabled
+ * @property string|null $tax_name
+ * @property float|null $tax_rate
+ *
+ * --------------------------------------------------------------------------
+ * 🆕 Branding
+ * --------------------------------------------------------------------------
+ * @property string|null $facility_logo_path
+ * @property string|null $primary_brand_color
+ * @property string|null $secondary_brand_color
  */
 class Facility extends Model
 {
@@ -140,6 +154,24 @@ class Facility extends Model
         'created_by_staff_id',
         'updated_by_staff_id',
         'metadata',
+                /*
+        |--------------------------------------------------------------------------
+        | 🆕 Facility Financial Configuration
+        |--------------------------------------------------------------------------
+        */
+        'currency',
+        'tax_enabled',
+        'tax_name',
+        'tax_rate',
+
+        /*
+        |--------------------------------------------------------------------------
+        | 🆕 Facility Branding
+        |--------------------------------------------------------------------------
+        */
+        'facility_logo_path',
+        'primary_brand_color',
+        'secondary_brand_color',
     ];
 
     /**
@@ -177,6 +209,8 @@ class Facility extends Model
         'license_expiry_date' => 'date',
         'metadata' => 'array',
         'deleted_at' => 'datetime',
+        'tax_enabled' => 'boolean',
+        'tax_rate' => 'float',
     ];
 
     /**
@@ -242,6 +276,30 @@ class Facility extends Model
             'created_by_staff_id' => 'nullable|exists:staff,id',
             'updated_by_staff_id' => 'nullable|exists:staff,id',
             'metadata' => 'nullable|array',
+                        /*
+            |--------------------------------------------------------------------------
+            | 🆕 Financial Configuration Validation
+            |--------------------------------------------------------------------------
+            */
+            'currency' => 'required|string|size:3',
+            'tax_enabled' => 'boolean',
+            'tax_name' => 'nullable|string|max:50',
+            'tax_rate' => 'nullable|numeric|min:0|max:100',
+
+            /*
+            |--------------------------------------------------------------------------
+            | 🆕 Branding Validation
+            |--------------------------------------------------------------------------
+            */
+            'facility_logo_path' => 'nullable|string|max:512',
+            'primary_brand_color' => [
+                'nullable',
+                'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'
+            ],
+            'secondary_brand_color' => [
+                'nullable',
+                'regex:/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/'
+            ],
         ];
     }
 

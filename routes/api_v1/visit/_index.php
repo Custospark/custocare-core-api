@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\VisitController;
 // Visit Routes
-Route::prefix('visits')->middleware(['auth:api','auth:sanctum'])->group(function () {
+Route::prefix('visits')->middleware(['auth:sanctum'])->group(function () {
     // Basic CRUD operations
     Route::get('/', [VisitController::class, 'index']);
     Route::post('/', [VisitController::class, 'store']);

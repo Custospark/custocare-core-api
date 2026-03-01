@@ -133,12 +133,8 @@ class VisitController extends Controller
                 ->where('facility_id', $facilityId)
                 ->where('staff_id', $staffId)
                 ->where('assignment_status', 'active')
-                ->whereDate('effective_from', '<=', now()->toDateString())
-                ->where(function ($q) {
-                    $q->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', now()->toDateString());
-                })
                 ->first(['id', 'role_code']);
+                Log::alert($assignment);
 
             if (!$assignment) {
                 return response()->json([

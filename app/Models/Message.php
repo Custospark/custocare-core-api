@@ -1,192 +1,264 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 /**
- * App\Models\Message
+ * @property int         $id
+ * @property string      $uuid
+ * @property int         $sender_id
+ * @property string|null $subject
+ * @property string|null $body
+ * @property string      $body_type         plain|html|markdown
+ * @property string      $status            draft|scheduled|sending|sent|failed
+ * @property string      $priority          low|normal|high
+ * @property Carbon|null $scheduled_send_at
+ * @property Carbon|null $sent_at
+ * @property bool        $read_receipt_requested
+ * @property bool        $delivery_confirmation_requested
+ * @property int|null    $parent_id
+ * @property int|null    $thread_root_id
+ * @property int|null    $word_count
+ * @property int|null    $character_count
+ * @property Carbon|null $last_auto_saved_at
+ * @property array|null  $metadata
+ * @property Carbon      $created_at
+ * @property Carbon      $updated_at
+ * @property Carbon|null $deleted_at
  *
- * @property int $id
- * @property string $message_uuid
- * @property int $conversation_id
- * @property string $sender_type
- * @property int|null $sender_id
- * @property string $message_type
- * @property string|null $content_encrypted
- * @property string $content_hash
- * @property bool $contains_phi
- * @property bool $is_clinical
- * @property bool $requires_acknowledgement
- * @property int|null $parent_message_id
- * @property string $delivery_status
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- * @property \Illuminate\Support\Carbon|null $deleted_at
- * @property \Illuminate\Support\Carbon|null $edited_at
- * @property int|null $edited_by_user_id
+ * @property-read User                                     $sender
+ * @property-read \Illuminate\Database\Eloquent\Collection $recipients
+ * @property-read \Illuminate\Database\Eloquent\Collection $toRecipients
+ * @property-read \Illuminate\Database\Eloquent\Collection $ccRecipients
+ * @property-read \Illuminate\Database\Eloquent\Collection $bccRecipients
+ * @property-read \Illuminate\Database\Eloquent\Collection $attachments
+ * @property-read \Illuminate\Database\Eloquent\Collection $labels
+ * @property-read \Illuminate\Database\Eloquent\Collection $userStates
+ * @property-read Message|null                             $parent
+ * @property-read \Illuminate\Database\Eloquent\Collection $replies
  */
 class Message extends Model
 {
     use HasFactory, SoftDeletes;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
+    // ── Valid enumerations (re-used in validation) ──────────────────────
+    public const STATUSES   = ['draft', 'scheduled', 'sending', 'sent', 'failed'];
+    public const PRIORITIES = ['low', 'normal', 'high'];
+    public const BODY_TYPES = ['plain', 'html', 'markdown'];
+
+    /** Auto-purge window for trashed messages (days). */
+    public const TRASH_EXPIRES_DAYS = 30;
+
     protected $fillable = [
-        'message_uuid',
-        'conversation_id',
-        'sender_type',
+        'uuid',
         'sender_id',
-        'message_type',
-        'content_encrypted',
-        'content_hash',
-        'contains_phi',
-        'is_clinical',
-        'requires_acknowledgement',
-        'parent_message_id',
-        'delivery_status',
-        'edited_at',
-        'edited_by_user_id',
+        'subject',
+        'body',
+        'body_type',
+        'status',
+        'priority',
+        'scheduled_send_at',
+        'sent_at',
+        'read_receipt_requested',
+        'delivery_confirmation_requested',
+        'parent_id',
+        'thread_root_id',
+        'word_count',
+        'character_count',
+        'last_auto_saved_at',
+        'metadata',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
-        'contains_phi' => 'boolean',
-        'is_clinical' => 'boolean',
-        'requires_acknowledgement' => 'boolean',
-        'edited_at' => 'datetime',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
-        'deleted_at' => 'datetime',
+        'scheduled_send_at'               => 'datetime',
+        'sent_at'                          => 'datetime',
+        'last_auto_saved_at'               => 'datetime',
+        'read_receipt_requested'           => 'boolean',
+        'delivery_confirmation_requested'  => 'boolean',
+        'word_count'                       => 'integer',
+        'character_count'                  => 'integer',
+        'metadata'                         => 'array',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
-     */
-    protected $hidden = [
-        'content_encrypted', // Sensitive data
-    ];
+    // ── Boot ────────────────────────────────────────────────────────────
 
-    /**
-     * Boot the model.
-     */
     protected static function boot(): void
     {
         parent::boot();
 
-        static::creating(function (Message $message) {
-            if (empty($message->message_uuid)) {
-                $message->message_uuid = (string) \Illuminate\Support\Str::uuid();
+        // Auto-generate UUID on creation
+        static::creating(function (self $model): void {
+            if (empty($model->uuid)) {
+                $model->uuid = (string) Str::uuid();
+            }
+        });
+
+        // Recompute body metrics on every save
+        static::saving(function (self $model): void {
+            if ($model->isDirty('body') && $model->body !== null) {
+                $plain               = strip_tags($model->body);
+                $model->word_count   = str_word_count($plain);
+                $model->character_count = mb_strlen($plain);
             }
         });
     }
 
-    /**
-     * Get the conversation that owns the message.
-     */
-    public function conversation(): BelongsTo
+    // ── Relationships ────────────────────────────────────────────────────
+
+    /** The user who composed / owns this message. */
+    public function sender(): BelongsTo
     {
-        return $this->belongsTo(Conversation::class);
+        return $this->belongsTo(User::class, 'sender_id');
     }
 
-    /**
-     * Get the sender of the message (polymorphic).
-     */
-    public function sender(): MorphTo
+    /** All recipients regardless of type. */
+    public function recipients(): HasMany
     {
-        return $this->morphTo();
+        return $this->hasMany(MessageRecipient::class);
     }
 
-    /**
-     * Get the parent message.
-     */
+    /** Only "To" recipients. */
+    public function toRecipients(): HasMany
+    {
+        return $this->hasMany(MessageRecipient::class)->where('type', 'to');
+    }
+
+    /** Only CC recipients. */
+    public function ccRecipients(): HasMany
+    {
+        return $this->hasMany(MessageRecipient::class)->where('type', 'cc');
+    }
+
+    /** Only BCC recipients. */
+    public function bccRecipients(): HasMany
+    {
+        return $this->hasMany(MessageRecipient::class)->where('type', 'bcc');
+    }
+
+    /** File attachments. */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(MessageAttachment::class);
+    }
+
+    /** Per-user folder/read/star/archive states. */
+    public function userStates(): HasMany
+    {
+        return $this->hasMany(MessageUserState::class);
+    }
+
+    /** Labels (tags) applied by any user. */
+    public function labels(): HasMany
+    {
+        return $this->hasMany(MessageLabel::class);
+    }
+
+    /** The message this one is replying to. */
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(Message::class, 'parent_message_id');
+        return $this->belongsTo(Message::class, 'parent_id');
+    }
+
+    /** Direct replies to this message. */
+    public function replies(): HasMany
+    {
+        return $this->hasMany(Message::class, 'parent_id');
+    }
+
+    /** All messages in the same thread. */
+    public function threadMessages(): HasMany
+    {
+        return $this->hasMany(Message::class, 'thread_root_id');
+    }
+
+    // ── Local scopes ─────────────────────────────────────────────────────
+
+    /** Limit to messages in a specific lifecycle status. */
+    public function scopeWithStatus(Builder $query, string $status): Builder
+    {
+        return $query->where('status', $status);
+    }
+
+    /** Drafts only. */
+    public function scopeDrafts(Builder $query): Builder
+    {
+        return $query->where('status', 'draft');
+    }
+
+    /** Messages ready to be dispatched (status=scheduled, time reached). */
+    public function scopeReadyToSend(Builder $query): Builder
+    {
+        return $query->where('status', 'scheduled')
+                     ->where('scheduled_send_at', '<=', now());
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    /**
+     * Build a short preview string (stripped of markup, max 160 chars).
+     */
+    public function getPreviewAttribute(): string
+    {
+        $plain = strip_tags((string) $this->body);
+        return mb_substr(trim($plain), 0, 160);
     }
 
     /**
-     * Get the user who edited the message.
+     * Compute the list of fields that are still incomplete for a draft.
+     * Mirrors the `incompleteFields` concept used in the Draft component.
+     *
+     * @return string[]
      */
-    public function editor(): BelongsTo
+    public function getIncompleteFieldsAttribute(): array
     {
-        return $this->belongsTo(User::class, 'edited_by_user_id');
+        $missing = [];
+
+        if (empty(trim((string) $this->subject))) {
+            $missing[] = 'subject';
+        }
+
+        if (empty(trim(strip_tags((string) $this->body)))) {
+            $missing[] = 'body';
+        }
+
+        if ($this->recipients()->whereIn('type', ['to', 'cc'])->doesntExist()) {
+            $missing[] = 'recipients';
+        }
+
+        return $missing;
     }
 
-    /**
-     * Get the child messages (replies).
-     */
-    public function replies()
+    /** Friendly "expires in X days" label when this draft is in trash. */
+    public function trashExpiresLabel(Carbon $expiresAt): string
     {
-        return $this->hasMany(Message::class, 'parent_message_id');
+        $days = (int) now()->diffInDays($expiresAt, false);
+
+        if ($days < 0) {
+            return 'Expired';
+        }
+
+        return $days === 0 ? 'Today' : "{$days} days";
     }
 
-    /**
-     * Scope messages by conversation.
-     */
-    public function scopeInConversation($query, $conversationId)
+    /** Whether this message was sent (not draft, not failed). */
+    public function isSent(): bool
     {
-        return $query->where('conversation_id', $conversationId);
+        return in_array($this->status, ['sent', 'delivered'], true);
     }
 
-    /**
-     * Scope clinical messages.
-     */
-    public function scopeClinical($query)
+    /** Whether the draft is complete enough to send. */
+    public function isReadyToSend(): bool
     {
-        return $query->where('is_clinical', true);
-    }
-
-    /**
-     * Scope non-PHI messages.
-     */
-    public function scopeNonPHI($query)
-    {
-        return $query->where('contains_phi', false);
-    }
-
-    /**
-     * Check if message requires acknowledgement.
-     */
-    public function requiresAcknowledgement(): bool
-    {
-        return $this->requires_acknowledgement;
-    }
-
-    /**
-     * Check if message is delivered.
-     */
-    public function isDelivered(): bool
-    {
-        return $this->delivery_status === 'delivered';
-    }
-
-    /**
-     * Mark message as delivered.
-     */
-    public function markAsDelivered(): bool
-    {
-        return $this->update(['delivery_status' => 'delivered']);
-    }
-
-    /**
-     * Mark message as sent.
-     */
-    public function markAsSent(): bool
-    {
-        return $this->update(['delivery_status' => 'sent']);
+        return count($this->incomplete_fields) === 0;
     }
 }

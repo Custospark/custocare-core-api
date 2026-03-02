@@ -1,463 +1,421 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Message\StoreMessageRequest;
-use App\Http\Requests\Message\UpdateMessageRequest;
-use App\Http\Resources\MessageResource;
-use App\Services\Contracts\MessageServiceInterface;
+use App\Models\Message;
+use App\Services\MessageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 
+/**
+ * MessageController
+ * ─────────────────
+ * REST API for the messaging module.
+ *
+ * Suggested route registration (routes/api.php):
+ * ─────────────────────────────────────────────
+ *   Route::prefix('messages')->middleware('auth:sanctum')->group(function () {
+ *       Route::get('/',                  [MessageController::class, 'index']);
+ *       Route::post('/',                 [MessageController::class, 'store']);
+ *       Route::get('/stats',             [MessageController::class, 'stats']);
+ *       Route::delete('/trash/empty',    [MessageController::class, 'emptyTrash']);
+ *       Route::post('/bulk',             [MessageController::class, 'bulk']);
+ *       Route::get('/{id}',              [MessageController::class, 'show']);
+ *       Route::put('/{id}',              [MessageController::class, 'update']);
+ *       Route::delete('/{id}',           [MessageController::class, 'destroy']);
+ *       Route::post('/{id}/send',        [MessageController::class, 'send']);
+ *       Route::post('/{id}/restore',     [MessageController::class, 'restore']);
+ *       Route::delete('/{id}/permanent', [MessageController::class, 'permanentDelete']);
+ *       Route::patch('/{id}/read',       [MessageController::class, 'markRead']);
+ *       Route::patch('/{id}/unread',     [MessageController::class, 'markUnread']);
+ *       Route::patch('/{id}/star',       [MessageController::class, 'star']);
+ *       Route::patch('/{id}/archive',    [MessageController::class, 'archive']);
+ *       Route::patch('/{id}/unarchive',  [MessageController::class, 'unarchive']);
+ *       Route::post('/{id}/labels',      [MessageController::class, 'addLabel']);
+ *       Route::delete('/{id}/labels/{label}', [MessageController::class, 'removeLabel']);
+ *       Route::post('/{id}/attachments', [MessageController::class, 'uploadAttachment']);
+ *       Route::delete('/attachments/{attachmentId}', [MessageController::class, 'removeAttachment']);
+ *   });
+ */
 class MessageController extends Controller
 {
-    /**
-     * The message service instance.
-     */
-    private MessageServiceInterface $messageService;
+    public function __construct(private readonly MessageService $service) {}
+
+    // ── GET /messages ──────────────────────────────────────────────────────
 
     /**
-     * Create a new controller instance.
-     */
-    public function __construct(MessageServiceInterface $messageService)
-    {
-        $this->messageService = $messageService;
-    }
-
-    /**
-     * Display a listing of messages.
+     * List messages for the authenticated user in a given folder.
+     *
+     * Query params:
+     *   folder   string  inbox|sent|drafts|archive|trash  (default: inbox)
+     *   filter   string  all|unread|starred|archived|incomplete|failed
+     *   sort     string  newest|oldest|alphabetical|recentlyDeleted|originalDate
+     *   search   string  Full-text substring search
+     *   per_page int     Items per page (default 20, max 100)
      */
     public function index(Request $request): JsonResponse
     {
-        try {
-            $perPage = $request->get('per_page', 15);
-            $messages = $this->messageService->getMessages($perPage);
-            
-            return response()->json([
-                'success' => true,
-                'data' => MessageResource::collection($messages),
-                'meta' => [
-                    'current_page' => $messages->currentPage(),
-                    'last_page' => $messages->lastPage(),
-                    'per_page' => $messages->perPage(),
-                    'total' => $messages->total(),
-                ],
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to retrieve messages', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve messages. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $params = $request->validate([
+            'folder'   => ['sometimes', Rule::in(array_merge(
+                ['inbox', 'sent', 'drafts', 'archive', 'trash']
+            ))],
+            'filter'   => ['sometimes', Rule::in([
+                'all', 'unread', 'starred', 'archived', 'incomplete', 'failed',
+            ])],
+            'sort'     => ['sometimes', Rule::in([
+                'newest', 'oldest', 'alphabetical',
+                'recentlyDeleted', 'oldestDeleted', 'originalDate',
+            ])],
+            'search'   => ['sometimes', 'string', 'max:255'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $paginator = $this->service->getFolder(Auth::user(), $params);
+
+        return response()->json($paginator);
     }
 
+    // ── POST /messages ─────────────────────────────────────────────────────
+
     /**
-     * Display messages for a specific conversation.
+     * Create a new message — either save it as a draft or send it immediately.
+     *
+     * Pass `save_draft: true` in the body to save without sending.
+     * Pass `scheduled_send_at` to queue a future send.
      */
-    public function conversationMessages(Request $request, int $conversationId): JsonResponse
+    public function store(Request $request): JsonResponse
     {
-        try {
-            $perPage = $request->get('per_page', 20);
-            $messages = $this->messageService->getConversationMessages($conversationId, $perPage);
-            
+        $data = $request->validate([
+            'save_draft'                => ['sometimes', 'boolean'],
+            'message_id'                => ['sometimes', 'integer', 'exists:messages,id'],
+            'subject'                   => ['nullable', 'string', 'max:998'],
+            'body'                      => ['nullable', 'string'],
+            'body_type'                 => ['sometimes', Rule::in(Message::BODY_TYPES)],
+            'priority'                  => ['sometimes', Rule::in(Message::PRIORITIES)],
+            'scheduled_send_at'         => ['nullable', 'date', 'after:now'],
+            'read_receipt'              => ['sometimes', 'boolean'],
+            'delivery_confirmation'     => ['sometimes', 'boolean'],
+            'parent_id'                 => ['nullable', 'integer', 'exists:messages,id'],
+            'labels'                    => ['sometimes', 'array'],
+            'labels.*'                  => ['string', 'max:100'],
+            // Recipients: flat arrays keyed by type
+            'to'                        => ['sometimes', 'array'],
+            'to.*.name'                 => ['nullable', 'string', 'max:255'],
+            'to.*.email'                => ['required_with:to', 'email', 'max:255'],
+            'cc'                        => ['sometimes', 'array'],
+            'cc.*.name'                 => ['nullable', 'string', 'max:255'],
+            'cc.*.email'                => ['required_with:cc', 'email', 'max:255'],
+            'bcc'                       => ['sometimes', 'array'],
+            'bcc.*.name'                => ['nullable', 'string', 'max:255'],
+            'bcc.*.email'               => ['required_with:bcc', 'email', 'max:255'],
+        ]);
+
+        $user = Auth::user();
+
+        // Route to draft or send based on the `save_draft` flag
+        if ($request->boolean('save_draft', false)) {
+            $message = $this->service->saveDraft($user, $data);
+
             return response()->json([
-                'success' => true,
-                'data' => MessageResource::collection($messages),
-                'meta' => [
-                    'current_page' => $messages->currentPage(),
-                    'last_page' => $messages->lastPage(),
-                    'per_page' => $messages->perPage(),
-                    'total' => $messages->total(),
-                    'conversation_id' => $conversationId,
-                ],
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to retrieve conversation messages', [
-                'conversation_id' => $conversationId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve conversation messages. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+                'message' => $message,
+                'status'  => 'draft_saved',
+            ], Response::HTTP_CREATED);
         }
+
+        // Validate minimum requirements for sending
+        $request->validate([
+            'subject' => ['required', 'string', 'max:998'],
+            'body'    => ['required', 'string'],
+            'to'      => ['required_without_all:cc,bcc', 'array'],
+        ]);
+
+        $message = $this->service->sendMessage($user, $data);
+
+        $status = $message->scheduled_send_at ? 'scheduled' : 'sent';
+
+        return response()->json([
+            'message' => $message,
+            'status'  => $status,
+        ], Response::HTTP_CREATED);
     }
 
-    /**
-     * Store a newly created message.
-     */
-    public function store(StoreMessageRequest $request): JsonResponse
-    {
-        try {
-            $validated = $request->validated();
-            $message = $this->messageService->createMessage($validated);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message created successfully.',
-                'data' => new MessageResource($message),
-            ], JsonResponse::HTTP_CREATED);
-        } catch (\RuntimeException $e) {
-            Log::error('MessageController: Failed to create message', [
-                'data' => $request->except(['content']), // Exclude sensitive content
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], JsonResponse::HTTP_BAD_REQUEST);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Unexpected error creating message', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while creating the message.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
+    // ── GET /messages/{id} ────────────────────────────────────────────────
 
     /**
-     * Display the specified message.
+     * Retrieve a single message detail.
+     * Auto-marks inbox messages as read on first open.
      */
     public function show(int $id): JsonResponse
     {
-        try {
-            $message = $this->messageService->getMessage($id);
-            
-            if (!$message) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'data' => new MessageResource($message),
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to retrieve message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve message. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $result = $this->service->getMessage(Auth::user(), $id);
+
+        return response()->json($result);
     }
 
+    // ── PUT /messages/{id} ────────────────────────────────────────────────
+
     /**
-     * Display the specified message by UUID.
+     * Update (patch) an existing draft.
+     * Only the sender may update their own drafts.
      */
-    public function showByUuid(string $uuid): JsonResponse
+    public function update(Request $request, int $id): JsonResponse
     {
-        try {
-            $message = $this->messageService->getMessageByUuid($uuid);
-            
-            if (!$message) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'data' => new MessageResource($message),
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to retrieve message by UUID', [
-                'uuid' => $uuid,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve message. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $data = $request->validate([
+            'subject'               => ['nullable', 'string', 'max:998'],
+            'body'                  => ['nullable', 'string'],
+            'body_type'             => ['sometimes', Rule::in(Message::BODY_TYPES)],
+            'priority'              => ['sometimes', Rule::in(Message::PRIORITIES)],
+            'scheduled_send_at'     => ['nullable', 'date', 'after:now'],
+            'read_receipt'          => ['sometimes', 'boolean'],
+            'delivery_confirmation' => ['sometimes', 'boolean'],
+            'labels'                => ['sometimes', 'array'],
+            'labels.*'              => ['string', 'max:100'],
+            'to'                    => ['sometimes', 'array'],
+            'to.*.name'             => ['nullable', 'string', 'max:255'],
+            'to.*.email'            => ['required_with:to', 'email'],
+            'cc'                    => ['sometimes', 'array'],
+            'cc.*.name'             => ['nullable', 'string', 'max:255'],
+            'cc.*.email'            => ['required_with:cc', 'email'],
+            'bcc'                   => ['sometimes', 'array'],
+            'bcc.*.name'            => ['nullable', 'string', 'max:255'],
+            'bcc.*.email'           => ['required_with:bcc', 'email'],
+        ]);
+
+        $message = $this->service->updateDraft(Auth::user(), $id, $data);
+
+        return response()->json(['message' => $message]);
     }
 
-    /**
-     * Update the specified message.
-     */
-    public function update(UpdateMessageRequest $request, int $id): JsonResponse
-    {
-        try {
-            $validated = $request->validated();
-            $message = $this->messageService->updateMessage($id, $validated);
-            
-            if (!$message) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or could not be updated.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message updated successfully.',
-                'data' => new MessageResource($message),
-            ]);
-        } catch (\RuntimeException $e) {
-            Log::error('MessageController: Failed to update message', [
-                'id' => $id,
-                'data' => $request->except(['content']), // Exclude sensitive content
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], JsonResponse::HTTP_BAD_REQUEST);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Unexpected error updating message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while updating the message.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
+    // ── DELETE /messages/{id} (move to trash) ─────────────────────────────
 
     /**
-     * Remove the specified message.
+     * Move a message to the authenticated user's trash.
+     * Does NOT permanently delete — use /messages/{id}/permanent for that.
      */
     public function destroy(int $id): JsonResponse
     {
-        try {
-            $deleted = $this->messageService->deleteMessage($id);
-            
-            if (!$deleted) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or could not be deleted.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message deleted successfully.',
-            ]);
-        } catch (\RuntimeException $e) {
-            Log::error('MessageController: Failed to delete message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], JsonResponse::HTTP_BAD_REQUEST);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Unexpected error deleting message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while deleting the message.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $this->service->trashMessage(Auth::user(), $id);
+
+        return response()->json(['status' => 'trashed']);
     }
 
+    // ── POST /messages/{id}/send ───────────────────────────────────────────
+
     /**
-     * Restore a soft-deleted message.
+     * Dispatch a previously saved draft immediately.
+     */
+    public function send(int $id): JsonResponse
+    {
+        $message = $this->service->sendDraft(Auth::user(), $id);
+
+        return response()->json(['message' => $message, 'status' => 'sent']);
+    }
+
+    // ── POST /messages/{id}/restore ────────────────────────────────────────
+
+    /**
+     * Restore a trashed message to its original folder.
      */
     public function restore(int $id): JsonResponse
     {
-        try {
-            $restored = $this->messageService->restoreMessage($id);
-            
-            if (!$restored) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or could not be restored.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message restored successfully.',
-            ]);
-        } catch (\RuntimeException $e) {
-            Log::error('MessageController: Failed to restore message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], JsonResponse::HTTP_BAD_REQUEST);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Unexpected error restoring message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred while restoring the message.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $this->service->restoreFromTrash(Auth::user(), $id);
+
+        return response()->json(['status' => 'restored']);
     }
 
-    /**
-     * Mark a message as delivered.
-     */
-    public function markAsDelivered(int $id): JsonResponse
-    {
-        try {
-            $updated = $this->messageService->markAsDelivered($id);
-            
-            if (!$updated) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or could not be marked as delivered.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message marked as delivered.',
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to mark message as delivered', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update message status. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
+    // ── DELETE /messages/{id}/permanent ────────────────────────────────────
 
     /**
-     * Mark a message as sent.
+     * Permanently delete a message for the authenticated user.
+     * Drafts owned by the user are hard-deleted from the database.
      */
-    public function markAsSent(int $id): JsonResponse
+    public function permanentDelete(int $id): JsonResponse
     {
-        try {
-            $updated = $this->messageService->markAsSent($id);
-            
-            if (!$updated) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or could not be marked as sent.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message marked as sent.',
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to mark message as sent', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update message status. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $this->service->permanentDelete(Auth::user(), $id);
+
+        return response()->json(['status' => 'permanently_deleted']);
     }
 
-    /**
-     * Acknowledge a message.
-     */
-    public function acknowledge(int $id): JsonResponse
+    // ── PATCH /messages/{id}/read ─────────────────────────────────────────
+
+    public function markRead(int $id): JsonResponse
     {
-        try {
-            $acknowledged = $this->messageService->acknowledgeMessage($id);
-            
-            if (!$acknowledged) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Message not found or does not require acknowledgement.',
-                ], JsonResponse::HTTP_NOT_FOUND);
-            }
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Message acknowledged successfully.',
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to acknowledge message', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to acknowledge message. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $this->service->markRead(Auth::user(), $id);
+
+        return response()->json(['status' => 'read']);
     }
 
-    /**
-     * Get clinical messages.
-     */
-    public function clinicalMessages(Request $request): JsonResponse
+    // ── PATCH /messages/{id}/unread ───────────────────────────────────────
+
+    public function markUnread(int $id): JsonResponse
     {
-        try {
-            $conversationId = $request->get('conversation_id');
-            $messages = $this->messageService->getClinicalMessages($conversationId);
-            
-            return response()->json([
-                'success' => true,
-                'data' => MessageResource::collection($messages),
-                'meta' => [
-                    'count' => $messages->count(),
-                    'conversation_id' => $conversationId,
-                ],
-            ]);
-        } catch (\Exception $e) {
-            Log::error('MessageController: Failed to retrieve clinical messages', [
-                'conversation_id' => $conversationId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve clinical messages. Please try again later.',
-            ], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $this->service->markUnread(Auth::user(), $id);
+
+        return response()->json(['status' => 'unread']);
+    }
+
+    // ── PATCH /messages/{id}/star ─────────────────────────────────────────
+
+    /**
+     * Toggle the star on a message and return the new starred state.
+     */
+    public function star(int $id): JsonResponse
+    {
+        $starred = $this->service->toggleStar(Auth::user(), $id);
+
+        return response()->json(['starred' => $starred]);
+    }
+
+    // ── PATCH /messages/{id}/archive ──────────────────────────────────────
+
+    public function archive(int $id): JsonResponse
+    {
+        $this->service->archiveMessage(Auth::user(), $id);
+
+        return response()->json(['status' => 'archived']);
+    }
+
+    // ── PATCH /messages/{id}/unarchive ────────────────────────────────────
+
+    public function unarchive(int $id): JsonResponse
+    {
+        $this->service->unarchiveMessage(Auth::user(), $id);
+
+        return response()->json(['status' => 'unarchived']);
+    }
+
+    // ── DELETE /messages/trash/empty ──────────────────────────────────────
+
+    /**
+     * Permanently delete every message in the user's trash.
+     */
+    public function emptyTrash(): JsonResponse
+    {
+        $count = $this->service->emptyTrash(Auth::user());
+
+        return response()->json([
+            'status'  => 'trash_emptied',
+            'deleted' => $count,
+        ]);
+    }
+
+    // ── POST /messages/bulk ────────────────────────────────────────────────
+
+    /**
+     * Bulk-apply an action to a list of message IDs.
+     *
+     * Body:
+     *   action      string   trash|restore|star|archive|unarchive|markRead|markUnread|permanentDelete
+     *   message_ids int[]
+     */
+    public function bulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'action'       => ['required', 'string', Rule::in([
+                'trash', 'restore', 'star', 'archive', 'unarchive',
+                'markRead', 'markUnread', 'permanentDelete',
+            ])],
+            'message_ids'  => ['required', 'array', 'min:1'],
+            'message_ids.*'=> ['integer'],
+        ]);
+
+        $count = $this->service->bulkAction(
+            Auth::user(),
+            $data['action'],
+            $data['message_ids']
+        );
+
+        return response()->json([
+            'status'   => 'bulk_action_complete',
+            'action'   => $data['action'],
+            'affected' => $count,
+        ]);
+    }
+
+    // ── POST /messages/{id}/labels ────────────────────────────────────────
+
+    /**
+     * Add a label tag to a message for the current user.
+     */
+    public function addLabel(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'label' => ['required', 'string', 'max:100'],
+        ]);
+
+        $this->service->addLabel(Auth::user(), $id, $data['label']);
+
+        return response()->json(['status' => 'label_added']);
+    }
+
+    // ── DELETE /messages/{id}/labels/{label} ──────────────────────────────
+
+    /**
+     * Remove a label tag from a message for the current user.
+     */
+    public function removeLabel(int $id, string $label): JsonResponse
+    {
+        $this->service->removeLabel(Auth::user(), $id, $label);
+
+        return response()->json(['status' => 'label_removed']);
+    }
+
+    // ── POST /messages/{id}/attachments ───────────────────────────────────
+
+    /**
+     * Upload a file and attach it to a draft message.
+     */
+    public function uploadAttachment(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'file'  => ['required', 'file', 'max:20480'],   // 20 MB hard limit
+            'disk'  => ['sometimes', 'string', Rule::in(['local', 'public', 's3'])],
+        ]);
+
+        $attachment = $this->service->uploadAttachment(
+            Auth::user(),
+            $id,
+            $request->file('file'),
+            $request->input('disk', 'local')
+        );
+
+        return response()->json(['attachment' => $attachment], Response::HTTP_CREATED);
+    }
+
+    // ── DELETE /messages/attachments/{attachmentId} ───────────────────────
+
+    /**
+     * Remove an attachment from a draft and delete the physical file.
+     */
+    public function removeAttachment(int $attachmentId): JsonResponse
+    {
+        $this->service->removeAttachment(Auth::user(), $attachmentId);
+
+        return response()->json(['status' => 'attachment_removed']);
+    }
+
+    // ── GET /messages/stats ───────────────────────────────────────────────
+
+    /**
+     * Return unread counts and totals per folder for the sidebar badges.
+     *
+     * Response shape:
+     * {
+     *   "inbox":   { "total": 10, "unread": 3 },
+     *   "sent":    { "total": 12, "unread": 0 },
+     *   "drafts":  { "total": 2,  "unread": 0 },
+     *   "archive": { "total": 5,  "unread": 0 },
+     *   "trash":   { "total": 4,  "unread": 0 }
+     * }
+     */
+    public function stats(): JsonResponse
+    {
+        return response()->json($this->service->getStats(Auth::user()));
     }
 }

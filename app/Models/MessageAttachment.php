@@ -1,149 +1,122 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-
+use Illuminate\Support\Facades\Storage;
 /**
- * @property int $id
- * @property string $attachment_uuid
- * @property int $message_id
- * @property string $attachment_type
- * @property string $file_name
- * @property string $mime_type
- * @property int $file_size_bytes
- * @property string $storage_disk
- * @property string $storage_path
- * @property bool $contains_phi
- * @property string $checksum
- * @property \Illuminate\Support\Carbon $created_at
- * @property \Illuminate\Support\Carbon $updated_at
- * 
- * @property-read Message $message
+ * @property int         $id
+ * @property int         $message_id
+ * @property string      $original_name
+ * @property string      $stored_name
+ * @property string      $disk
+ * @property string      $path
+ * @property string|null $mime_type
+ * @property int         $size_bytes
+ * @property string|null $size_formatted
+ * @property int|null    $uploaded_by
+ * @property string      $upload_status     pending|uploading|complete|failed
+ * @property int         $upload_progress   0-100
  */
 class MessageAttachment extends Model
 {
-    use HasFactory;
-
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
-        'attachment_uuid',
         'message_id',
-        'attachment_type',
-        'file_name',
+        'original_name',
+        'stored_name',
+        'disk',
+        'path',
         'mime_type',
-        'file_size_bytes',
-        'storage_disk',
-        'storage_path',
-        'contains_phi',
-        'checksum',
+        'size_bytes',
+        'size_formatted',
+        'uploaded_by',
+        'upload_status',
+        'upload_progress',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
-        'attachment_uuid' => 'string',
-        'message_id' => 'integer',
-        'attachment_type' => 'string',
-        'file_size_bytes' => 'integer',
-        'contains_phi' => 'boolean',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
+        'size_bytes'      => 'integer',
+        'upload_progress' => 'integer',
     ];
 
-    /**
-     * The model's default values for attributes.
-     *
-     * @var array
-     */
-    protected $attributes = [
-        'contains_phi' => true,
-    ];
+    // ── Relationships ─────────────────────────────────────────────────────
 
-    /**
-     * Get the attachment types allowed for this model.
-     *
-     * @return array
-     */
-    public static function getAttachmentTypes(): array
-    {
-        return [
-            'image',
-            'pdf',
-            'lab_result',
-            'radiology_image',
-            'audio',
-            'video',
-            'other',
-        ];
-    }
-
-    /**
-     * Get the message that owns this attachment.
-     *
-     * @return BelongsTo
-     */
     public function message(): BelongsTo
     {
         return $this->belongsTo(Message::class);
     }
 
-    /**
-     * Generate a human-readable file size.
-     *
-     * @return string
-     */
-    public function getFormattedFileSizeAttribute(): string
+    public function uploader(): BelongsTo
     {
-        $bytes = $this->file_size_bytes;
+        return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+
+
+    /**
+     * Generate a temporary signed URL for downloading the file.
+     * Falls back to a permanent URL for public disks.
+     */
+    public function downloadUrl(int $expirationMinutes = 60): string
+    {
+        /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+        $disk = Storage::disk($this->disk);
         
-        if ($bytes >= 1073741824) {
-            return number_format($bytes / 1073741824, 2) . ' GB';
-        } elseif ($bytes >= 1048576) {
-            return number_format($bytes / 1048576, 2) . ' MB';
-        } elseif ($bytes >= 1024) {
-            return number_format($bytes / 1024, 2) . ' KB';
+        // Check if the disk supports temporary URLs
+        if ($disk instanceof \Illuminate\Contracts\Filesystem\Filesystem && 
+            method_exists($disk, 'temporaryUrl')) {
+            try {
+                /** @var string $url */
+                $url = $disk->temporaryUrl($this->path, now()->addMinutes($expirationMinutes));
+                return $url;
+            } catch (\Exception $e) {
+                // If temporary URL fails, fall back to permanent URL
+                /** @var string $url */
+                $url = $disk->url($this->path);
+                return $url;
+            }
         }
         
-        return $bytes . ' bytes';
+        // For disks without temporary URL support
+        /** @var string $url */
+        $url = $disk->url($this->path);
+        return $url;
     }
 
     /**
-     * Check if the attachment is an image.
-     *
-     * @return bool
+     * Format raw bytes into a human-readable string (KB / MB / GB).
      */
-    public function isImage(): bool
+    public static function formatBytes(int $bytes): string
     {
-        return $this->attachment_type === 'image';
+        if ($bytes < 1_024) {
+            return $bytes . ' B';
+        }
+
+        if ($bytes < 1_048_576) {
+            return round($bytes / 1_024, 1) . ' KB';
+        }
+
+        if ($bytes < 1_073_741_824) {
+            return round($bytes / 1_048_576, 1) . ' MB';
+        }
+
+        return round($bytes / 1_073_741_824, 2) . ' GB';
     }
 
     /**
-     * Check if the attachment is a document.
-     *
-     * @return bool
+     * Delete the physical file from storage when the model is deleted.
      */
-    public function isDocument(): bool
+    protected static function boot(): void
     {
-        return in_array($this->attachment_type, ['pdf', 'lab_result']);
-    }
+        parent::boot();
 
-    /**
-     * Check if the attachment contains PHI.
-     *
-     * @return bool
-     */
-    public function hasProtectedHealthInfo(): bool
-    {
-        return $this->contains_phi;
+        static::deleting(function (self $attachment): void {
+            Storage::disk($attachment->disk)->delete($attachment->path);
+        });
     }
 }

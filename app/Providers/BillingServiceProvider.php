@@ -12,6 +12,8 @@ use App\Repositories\Billing\PlanRepository;
 use App\Repositories\Billing\SubscriptionRepository;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
+use App\Services\Billing\Gateways\GatewayManager;
+use App\Services\Billing\Gateways\GatewayService;
 use App\Services\Billing\PaymentService;
 use App\Services\Billing\SubscriptionService;
 use Illuminate\Support\ServiceProvider;
@@ -28,6 +30,14 @@ class BillingServiceProvider extends ServiceProvider
         // ── Services ──────────────────────────────────────────────────────
         $this->app->bind(SubscriptionServiceInterface::class, SubscriptionService::class);
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
+
+        // ── Gateway infrastructure ────────────────────────────────────────
+        // GatewayManager is a singleton — one instance per request lifecycle,
+        // caches resolved driver instances.
+        $this->app->singleton(GatewayManager::class);
+
+        // GatewayService is resolved fresh each time (uses singleton manager internally)
+        $this->app->bind(GatewayService::class);
     }
 
     public function boot(): void {}

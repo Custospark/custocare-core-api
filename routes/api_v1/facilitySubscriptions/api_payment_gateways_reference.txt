@@ -1,0 +1,86 @@
+Add to your .env / .env.example:
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CUSTOCARE PAYMENT GATEWAYS
+# All gateways are disabled by default. Enable per gateway when ready.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Default gateway (set to a gateway name or leave as 'manual')
+BILLING_GATEWAY=manual
+
+# ── MTN Mobile Money Uganda ───────────────────────────────────────────────────
+MTN_MOMO_ENABLED=false
+MTN_MOMO_ENVIRONMENT=sandbox                         # sandbox | production
+MTN_MOMO_SUBSCRIPTION_KEY=your_subscription_key
+MTN_MOMO_API_USER=your_api_user_uuid
+MTN_MOMO_API_KEY=your_api_key
+MTN_MOMO_CURRENCY=UGX                                # EUR in sandbox
+MTN_MOMO_CALLBACK_URL="${APP_URL}/api/billing/gateway/mtn_momo/webhook"
+
+# ── Airtel Money Uganda ───────────────────────────────────────────────────────
+AIRTEL_MONEY_ENABLED=false
+AIRTEL_MONEY_ENVIRONMENT=sandbox
+AIRTEL_MONEY_BASE_URL=https://openapi.airtel.africa
+AIRTEL_CLIENT_ID=your_client_id
+AIRTEL_CLIENT_SECRET=your_client_secret
+AIRTEL_CALLBACK_URL="${APP_URL}/api/billing/gateway/airtel_money/webhook"
+
+# ── Flutterwave ────────────────────────────────────────────────────────────────
+FLUTTERWAVE_ENABLED=false
+FLW_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxxxxxxxxxxxxxxxxxx-X
+FLW_PUBLIC_KEY=FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxxxxxxxxx-X
+FLW_ENCRYPTION_KEY=xxxxxxxxxxxxxxxxxxxx
+FLW_WEBHOOK_SECRET=your_flutterwave_webhook_secret_hash
+FLW_REDIRECT_URL="${APP_URL}/api/billing/gateway/flutterwave/callback"
+
+# ── PesaPal ────────────────────────────────────────────────────────────────────
+PESAPAL_ENABLED=false
+PESAPAL_ENVIRONMENT=sandbox                          # sandbox | production
+PESAPAL_CONSUMER_KEY=your_consumer_key
+PESAPAL_CONSUMER_SECRET=your_consumer_secret
+PESAPAL_IPN_ID=                                      # Set after first registration
+PESAPAL_CALLBACK_URL="${APP_URL}/api/billing/gateway/pesapal/callback"
+18. Complete API Reference — Gateway Routes
+Method	URL	Auth	Description
+GET	/api/billing/gateways	✅ Sanctum	List enabled gateways
+POST	/api/billing/gateway/{gateway}/initiate	✅ Sanctum	Initiate payment
+GET	/api/facilities/{facility}/payments/gateway/{ref}/status	✅ Sanctum	Poll payment status
+POST	/api/billing/gateway/{gateway}/webhook	❌ Public	Receive async webhook
+GET	/api/billing/gateway/{gateway}/callback	❌ Public	Handle redirect-back
+GET	/api/billing/gateway/pesapal/ipn	❌ Public	PesaPal IPN notification
+19. End-to-End Payment Flow Comparison
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MANUAL (remains unchanged)          GATEWAY (new, automatic approval)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 1. POST /facilities/{id}/payments   1. POST /billing/gateway/{gw}/initiate
+    method: mobile_money/cash/bank      amount, currency, phone or email
+    receipt uploaded                    ↓
+ 2. Admin views queue                2a. REDIRECT: frontend → gateway page
+    GET /admin/billing/payments?         user pays → GET /callback
+    status=pending                  2b. PUSH: USSD prompt on phone
+ 3. Admin approves:                      user approves → POST /webhook
+    POST /payments/{id}/approve      3. GatewayService.processWebhook()
+    → subscription activated             verify() with gateway API
+                                         auto-approve payment
+                                         activateSubscription() ✅
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Requires admin action               Zero admin action required
+ Best for: cash, bank transfer       Best for: MTN, Airtel, card
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+20. Adding a New Gateway in the Future
+The architecture is open for extension without touching any existing code:
+
+Copy// 1. Create the driver
+// app/Services/Billing/Gateways/Drivers/StripeDriver.php
+class StripeDriver implements GatewayDriverInterface { ... }
+
+// 2. Add config entry
+// config/billing_gateways.php → 'stripe' => [ ... ]
+
+// 3. Register in AppServiceProvider (no need to touch BillingServiceProvider)
+app(GatewayManager::class)->extend('stripe', StripeDriver::class);
+
+// 4. Enable in .env
+// STRIPE_ENABLED=true
+
+// That's it — all existing routes, services, and approval flow work automatically.

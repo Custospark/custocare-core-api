@@ -11,7 +11,7 @@ use App\Enums\Billing\SubscriptionStatus;
 use App\Models\Facility;
 use App\Models\Payment;
 use App\Models\Plan;
-use App\Models\Staff;
+use App\Models\User;
 use App\Models\Subscription;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
@@ -95,7 +95,7 @@ class SubscriptionService implements SubscriptionServiceInterface
     public function activateSubscription(
         Subscription $subscription,
         Payment $payment,
-        Staff $approvedBy
+        ?User $approvedBy
     ): Subscription {
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
@@ -109,7 +109,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'grace_period_ends_at' => null,
                 'suspended_at'        => null,
                 'approved_at'         => $now,
-                'approved_by_staff_id' => $approvedBy->id,
+                'approved_by_staff_id' => $approvedBy ? $approvedBy->id :null,
                 'onboarding_fee_paid' => $payment->payment_type === PaymentType::ONBOARDING
                     ? true
                     : $subscription->onboarding_fee_paid,
@@ -136,7 +136,7 @@ class SubscriptionService implements SubscriptionServiceInterface
     public function renewSubscription(
         Subscription $subscription,
         Payment $payment,
-        Staff $approvedBy
+        ?User $approvedBy
     ): Subscription {
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
@@ -156,7 +156,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             Log::info('[Billing] Subscription renewed', [
                 'subscription_id' => $updated->id,
                 'new_ends_at'     => $newEndsAt->toDateTimeString(),
-                'approved_by'     => $approvedBy->id,
+                'approved_by'     =>$approvedBy? $approvedBy->id: null,
             ]);
 
             return $updated;

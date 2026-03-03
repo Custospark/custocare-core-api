@@ -505,7 +505,7 @@ class SendEmailVerificationNotification implements ShouldHandleEventsAfterCommit
     $expiryMinutes = User::TOKEN_EXPIRATION_MINUTES;
     $appName       = config('app.name');
     $baseUrl       = rtrim(config('app.frontend_url'), '/');
-    $resetLink     = $baseUrl . '/#/reset-password?token=' . $token;
+    $resetLink     = $baseUrl . '/reset-password?token=' . $token;
 
     $title = 'Password Reset Request';
 

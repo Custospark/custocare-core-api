@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Services;
+namespace App\Services\Message;
 
 use App\Models\Message;
 use App\Models\MessageAttachment;
@@ -126,12 +126,12 @@ class MessageService
             ->where('message_user_states.user_id', $user->id)
             ->where('message_user_states.folder', $folder)
             ->with([
-                'message.sender:id,first_name,last_name,display_name,email_hash',
-                'message.toRecipients',
-                'message.ccRecipients',
-                'message.attachments',
-                'message.labels' => fn (Builder $q) => $q->where('user_id', $user->id),
-            ])
+                    'message.sender:id,first_name,last_name,display_name,email_hash',
+                    'message.toRecipients',
+                    'message.ccRecipients',
+                    'message.attachments',
+                    'message.labels' => fn ($q) => $q->where('user_id', $user->id), 
+                ])
             ->join('messages', 'messages.id', '=', 'message_user_states.message_id')
             ->whereNull('messages.deleted_at');
     }
@@ -212,7 +212,7 @@ class MessageService
                     'message.ccRecipients',
                     'message.bccRecipients',
                     'message.attachments',
-                    'message.labels' => fn (Builder $q) => $q->where('user_id', $user->id),
+                    'message.labels' => fn ($q) => $q->where('user_id', $user->id), // Remove Builder type hint
                     'message.parent.sender',
                 ])
                 ->firstOrFail();
@@ -1007,17 +1007,32 @@ class MessageService
         // Try to resolve internal user
         $internalUser = User::where('email_hash', hash('sha256', $email))
             ->first();
+        
+        // Log the debug information
+        Log::info(sprintf(
+            "Debug: Looking for user with email '%s' (hash: %s). Found: %s. User ID: %s",
+            $email,
+            hash('sha256', $email),
+            $internalUser ? 'YES' : 'NO',
+            $internalUser?->id ?? 'null'
+        ));
+        
+        // Throw error if user not found
+        if (!$internalUser) {
+            throw new \Exception(
+                "Internal user not found for email: {$email}"
+            );
+        }
 
         MessageRecipient::create([
             'message_id' => $message->id,
-            'user_id' => $internalUser?->id,
+            'user_id' => $internalUser->id,
             'name' => $recipient['name'] ?? null,
             'email' => $email,
             'type' => $type,
             'delivery_status' => 'pending',
         ]);
     }
-
     /**
      * Sync labels.
      *

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasPermissions;
 use Spatie\Permission\Traits\HasRoles;
@@ -275,4 +276,15 @@ class User extends Authenticatable
                     ->withPivot('read_at')
                     ->withTimestamps();
     }
+
+    // In User model temporarily add:
+public function setEmailAttribute($value)
+{
+    $this->attributes['email'] = $value;
+    $this->attributes['email_hash'] = hash('sha256', strtolower(trim($value)));
+    Log::debug('Setting user email', [
+        'email' => $value,
+        'email_hash' => $this->attributes['email_hash']
+    ]);
+}
 }

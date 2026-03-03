@@ -36,4 +36,6 @@ return [
     App\Providers\VisitEventServiceProvider::class,
     App\Providers\VisitRouteServiceProvider::class,
     App\Providers\VisitServiceProvider::class,
+    App\Providers\BillingServiceProvider::class,
+
 ];

@@ -1,0 +1,114 @@
+Complete API Reference
+Public Endpoints
+Method	URL	Description
+GET	/api/billing/plans	List all active plans
+GET	/api/billing/plans/{plan}	Show plan details
+Facility Endpoints auth:sanctum
+Method	URL	Description
+GET	/api/facilities/{facility}/subscription	Get current subscription
+POST	/api/facilities/{facility}/subscription	Create subscription → status: trial
+DELETE	/api/facilities/{facility}/subscription	Cancel subscription
+GET	/api/facilities/{facility}/payments	List payments
+POST	/api/facilities/{facility}/payments	Record payment + receipt upload
+GET	/api/facilities/{facility}/payments/{payment}	Show payment
+Admin Endpoints auth:sanctum + admin.access
+Method	URL	Description
+GET	/api/admin/billing/plans	List all plans
+POST	/api/admin/billing/plans	Create plan
+PUT	/api/admin/billing/plans/{plan}	Update plan
+DELETE	/api/admin/billing/plans/{plan}	Delete plan
+GET	/api/admin/billing/subscriptions	List all subscriptions
+GET	/api/admin/billing/subscriptions/{sub}	Show subscription
+POST	/api/admin/billing/subscriptions/{sub}/activate	✅ Manually activate
+POST	/api/admin/billing/subscriptions/{sub}/suspend	🔒 Manually suspend
+POST	/api/admin/billing/subscriptions/{sub}/cancel	❌ Cancel
+GET	/api/admin/billing/payments	List payments (queue)
+GET	/api/admin/billing/payments/{payment}	Show payment + receipt
+POST	/api/admin/billing/payments/{payment}/approve	✅ APPROVE → activates subscription
+POST	/api/admin/billing/payments/{payment}/reject	❌ Reject with reason
+Subscription Lifecycle — Visual Summary
+FACILITY SIGNS UP
+       │
+       ▼
+[  trial  ] ──────── Admin approves payment ─────────► [  active  ]
+       │                                                     │
+       │                                                     │ next_billing_date passes
+       │ trial_ends_at passes                                │
+       │ (no payment approved)                               ▼
+       │                                          [  past_due  ] ← grace starts (7 days)
+       └──────────────────────────────────────────────────   │
+                                                             │ grace_period_ends_at passes
+                                                             │ (still no approved payment)
+                                                             ▼
+                                                       [ suspended ] ← EnsureFacilitySubscriptionIsActive
+                                                             │        blocks all API access (402)
+                                                             │
+                                                  facility submits new payment
+                                                  admin approves → back to [active]
+
+                                    At any point: facility or admin → [ cancelled ]
+Usage Example — Manual Billing Flow
+Step 1 — Facility Creates Subscription
+CopyPOST /api/facilities/42/subscription
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+    "plan_id": 2
+}
+Response: subscription.status = "trial"
+
+Step 2 — Facility Records Manual Payment
+CopyPOST /api/facilities/42/payments
+Authorization: Bearer {token}
+Content-Type: multipart/form-data
+
+amount=440000
+currency=UGX
+method=mobile_money
+payment_type=subscription
+transaction_reference=MTN-REF-20240310-XXXX
+paid_at=2024-03-10
+receipt_notes=Sent via MTN MoMo to 0770XXXXXX
+receipt=@/path/to/receipt.jpg
+Response: payment.status = "pending"
+
+Step 3 — Admin Views Pending Payments Queue
+CopyGET /api/admin/billing/payments?status=pending
+Authorization: Bearer {admin_token}
+Step 4 — Admin Approves Payment (Activates Subscription)
+CopyPOST /api/admin/billing/payments/7/approve
+Authorization: Bearer {admin_token}
+Content-Type: application/json
+
+{
+    "notes": "MTN receipt verified. Reference confirmed with mobile money statement."
+}
+Response: payment.status = "approved" → subscription.status = "active" ✅
+
+Step 5 — Protect Routes Requiring Active Subscription
+Copy// In your routes/api.php — wrap protected module routes:
+
+Route::middleware(['auth:sanctum', 'facility.subscription.active'])
+    ->prefix('facilities/{facility}')
+    ->group(function () {
+        // Patient records, appointments, lab, etc.
+        Route::apiResource('patients', PatientController::class);
+    });
+Gateway Integration — Future-Ready Stub
+When you're ready to plug in MTN MoMo / Airtel / Flutterwave, the only file that changes is PaymentService::recordPayment(). Add a gateway driver pattern like this:
+
+Copy// app/Services/Billing/Gateways/GatewayDriverInterface.php
+
+interface GatewayDriverInterface
+{
+    public function initiate(array $payload): array;
+    public function verify(string $transactionId): array;
+    public function getName(): string;
+}
+
+// Drivers added later:
+// app/Services/Billing/Gateways/FlutterwaveDriver.php
+// app/Services/Billing/Gateways/MtnMomoDriver.php
+// app/Services/Billing/Gateways/AirtelMoneyDriver.php
+The payments.gateway_name, gateway_transaction_id, and gateway_response columns in the database are already in place to receive this data without any migration changes.

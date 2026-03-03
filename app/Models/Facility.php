@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Models\Subscription;
+use App\Models\Payment;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Class Facility
@@ -463,4 +467,29 @@ class Facility extends Model
         
         return null;
     }
+
+/**
+ * The facility's current (latest) subscription.
+ */
+public function subscription(): HasOne
+{
+    return $this->hasOne(Subscription::class)->latestOfMany();
+}
+
+/**
+ * All subscriptions this facility has ever had.
+ */
+public function subscriptions(): HasMany
+{
+    return $this->hasMany(Subscription::class);
+}
+
+/**
+ * All payments made by this facility.
+ */
+public function payments(): HasMany
+{
+    return $this->hasMany(Payment::class);
+}
+
 }

@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\EnsureAdminAccess;
+use App\Http\Middleware\EnsureFacilitySubscriptionIsActive;
 use App\Http\Middleware\ValidateActiveContext;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -14,9 +16,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // $middleware->api(append: [
-        //     ValidateActiveContext::class,
-        // ]);
+        // Register middleware aliases (for route middleware)
+        $middleware->alias([
+            'facility.subscription.active' => EnsureFacilitySubscriptionIsActive::class,
+            'admin.access'                 => EnsureAdminAccess::class,
+            // 'validate.active.context'       => ValidateActiveContext::class, 
+        ]);
+
+        // Append to API middleware group if needed
+        $middleware->api(append: [
+            // 'validate.active.context', // Uncomment if you want it on all API routes
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

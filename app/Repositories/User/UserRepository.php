@@ -8,8 +8,8 @@ use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Spatie\Permission\Models\Role;
 
 class UserRepository implements UserRepositoryInterface
 {
@@ -88,18 +88,21 @@ class UserRepository implements UserRepositoryInterface
     }
 
     /**
-     * Create a new user.
+     * Create a new user and assign super_admin role if email matches.
      *
      * @param array $data
      * @return User
      */
     public function create(array $data): User
     {
-        return User::create($data);
+        $user = User::create($data);
+        $this->assignSuperAdminRoleIfMatches($user);
+        
+        return $user;
     }
 
     /**
-     * Update an existing user.
+     * Update an existing user and reassign super_admin role if email changed.
      *
      * @param User $user
      * @param array $data
@@ -107,7 +110,13 @@ class UserRepository implements UserRepositoryInterface
      */
     public function update(User $user, array $data): bool
     {
-        return $user->update($data);
+        $updated = $user->update($data);
+        
+        if ($updated) {
+            $this->assignSuperAdminRoleIfMatches($user->fresh());
+        }
+        
+        return $updated;
     }
 
     /**
@@ -154,7 +163,7 @@ class UserRepository implements UserRepositoryInterface
      * Increment failed login attempts.
      *
      * @param User $user
-     * @return bool
+     * @return int
      */
     public function incrementFailedAttempts(User $user): int
     {
@@ -196,118 +205,185 @@ class UserRepository implements UserRepositoryInterface
     }
 
     // ══════════════════════════════════════════════════════════════
-        // PROFILE
-        // ══════════════════════════════════════════════════════════════
+    // PROFILE
+    // ══════════════════════════════════════════════════════════════
 
-        /**
-         * Retrieve only profile-relevant columns for a user.
-         *
-         * @param int $id
-         * @return User|null
-         */
-        public function getProfileById(int $id): ?User
-        {
-            return User::select([
-                'id',
-                'first_name',
-                'last_name',
-                'display_name',
-                'title',
-                'dob',
-                'gender',
-                'phone_encrypted',
-                'address_line1',
-                'address_line2',
-                'city',
-                'state',
-                'country',
-                'postal_code',
-                'profile_photo_path',
-            ])->find($id);
+    /**
+     * Retrieve profile-relevant columns for a user.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getProfileById(int $id): ?User
+    {
+        return User::select([
+            'id',
+            'first_name',
+            'last_name',
+            'display_name',
+            'title',
+            'dob',
+            'gender',
+            'phone_encrypted',
+            'address_line1',
+            'address_line2',
+            'city',
+            'state',
+            'country',
+            'postal_code',
+            'profile_photo_path',
+        ])->find($id);
+    }
+
+    /**
+     * Update profile-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data  Prepared payload (phone already encrypted)
+     * @return bool
+     */
+    public function updateProfileById(int $id, array $data): bool
+    {
+        return (bool) User::where('id', $id)->update($data);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // SECURITY
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve security-relevant columns for a user.
+     * Includes password_hash so the service can verify current password.
+     * The service layer must NEVER pass password_hash to the controller response.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getSecurityById(int $id): ?User
+    {
+        return User::select([
+            'id',
+            'password_hash',
+            'password_changed_at',
+            'requires_password_change',
+            'mfa_enabled',
+            'mfa_secret_encrypted',
+            'last_login_at',
+            'last_login_ip',
+            'failed_login_attempts',
+            'account_locked_until',
+        ])->find($id);
+    }
+
+    /**
+     * Update security-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data  Prepared payload (password already hashed)
+     * @return bool
+     */
+    public function updateSecurityById(int $id, array $data): bool
+    {
+        return (bool) User::where('id', $id)->update($data);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // PREFERENCES
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Retrieve preferences-relevant columns for a user.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function getPreferencesById(int $id): ?User
+    {
+        return User::select([
+            'id',
+            'theme_mode',
+            'ui_density',
+            'timezone',
+            'locale',
+        ])->find($id);
+    }
+
+    /**
+     * Update preferences-relevant columns for a user.
+     *
+     * @param int   $id
+     * @param array $data
+     * @return bool
+     */
+    public function updatePreferencesById(int $id, array $data): bool
+    {
+        return (bool) User::where('id', $id)->update($data);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // PRIVATE HELPERS
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Assign or remove super_admin role based on email match with SUPER_ADMIN_EMAIL env.
+     *
+     * @param User $user
+     * @return void
+     */
+    private function assignSuperAdminRoleIfMatches(User $user): void
+    {
+        $superAdminEmail = env('SUPER_ADMIN_EMAIL');
+        
+        // If no super admin email is configured, do nothing
+        if (empty($superAdminEmail)) {
+            return;
         }
-
-        /**
-         * Update profile-relevant columns for a user.
-         *
-         * @param int   $id
-         * @param array $data  Prepared payload (phone already encrypted)
-         * @return bool
-         */
-        public function updateProfileById(int $id, array $data): bool
-        {
-            return (bool) User::where('id', $id)->update($data);
+        
+        // Make sure we have an encrypted email to decrypt
+        if (empty($user->email_encrypted)) {
+            Log::warning('User has no encrypted email for super admin check', ['user_id' => $user->id]);
+            return;
         }
-
-        // ══════════════════════════════════════════════════════════════
-        // SECURITY
-        // ══════════════════════════════════════════════════════════════
-
-        /**
-         * Retrieve only security-relevant columns for a user.
-         * Includes password_hash so the service can verify current password.
-         * The service layer must NEVER pass password_hash to the controller response.
-         *
-         * @param int $id
-         * @return User|null
-         */
-        public function getSecurityById(int $id): ?User
-        {
-            return User::select([
-                'id',
-                'password_hash',
-                'password_changed_at',
-                'requires_password_change',
-                'mfa_enabled',
-                'mfa_secret_encrypted',
-                'last_login_at',
-                'last_login_ip',
-                'failed_login_attempts',
-                'account_locked_until',
-            ])->find($id);
+        
+        try {
+            $email = decrypt($user->email_encrypted);
+        } catch (\Exception $e) {
+            Log::error('Failed to decrypt email for super admin check', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return;
         }
-
-        /**
-         * Update security-relevant columns for a user.
-         *
-         * @param int   $id
-         * @param array $data  Prepared payload (password already hashed)
-         * @return bool
-         */
-        public function updateSecurityById(int $id, array $data): bool
-        {
-            return (bool) User::where('id', $id)->update($data);
+        
+        $isSuperAdminEmail = strtolower(trim($email)) === strtolower(trim($superAdminEmail));
+        
+        // IMPORTANT: Check for role in BOTH guards or the one your app uses
+        // Based on your error, you need 'api' guard
+        $roleExists = Role::where('name', 'super_admin')
+            ->whereIn('guard_name', ['api', 'web'])
+            ->exists();
+        
+        if (!$roleExists) {
+            Log::error('super_admin role does not exist for api or web guard');
+            return;
         }
-
-        // ══════════════════════════════════════════════════════════════
-        // PREFERENCES
-        // ══════════════════════════════════════════════════════════════
-
-        /**
-         * Retrieve only preferences-relevant columns for a user.
-         *
-         * @param int $id
-         * @return User|null
-         */
-        public function getPreferencesById(int $id): ?User
-        {
-            return User::select([
-                'id',
-                'theme_mode',
-                'ui_density',
-                'timezone',
-                'locale',
-            ])->find($id);
+        
+        $hasSuperAdminRole = $user->hasRole('super_admin');
+        
+        if ($isSuperAdminEmail && !$hasSuperAdminRole) {
+            // User matches super admin email but doesn't have role - assign it
+            $user->assignRole('super_admin');
+            Log::info("Super admin role assigned to user", [
+                'email' => $email,
+                'user_id' => $user->id
+            ]);
+        } elseif (!$isSuperAdminEmail && $hasSuperAdminRole) {
+            // User has super admin role but doesn't match email - remove it
+            $user->removeRole('super_admin');
+            Log::info("Super admin role removed from user", [
+                'email' => $email,
+                'user_id' => $user->id
+            ]);
         }
-
-        /**
-         * Update preferences-relevant columns for a user.
-         *
-         * @param int   $id
-         * @param array $data
-         * @return bool
-         */
-        public function updatePreferencesById(int $id, array $data): bool
-        {
-            return (bool) User::where('id', $id)->update($data);
-        }
+    }
 }

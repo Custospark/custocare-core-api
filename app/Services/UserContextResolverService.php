@@ -138,11 +138,13 @@ class UserContextResolverService
     {
         $patientAccess = RoleModuleDefault::where('role_code', 'patient')
             ->where('default_access', true)
-            ->whereIn('module_code', $allModules->keys())
-            ->pluck('module_code')
-            ->toArray();
+            ->pluck('module_code') // Remove whereIn to get all modules
+            ->first(); // Get the first record since it's JSON array
+        
+        // Decode the JSON array
+        $accessibleCodes = is_array($patientAccess) ? $patientAccess : (json_decode($patientAccess ?? '[]', true) ?? []);
 
-        return $this->buildModuleList($allModules, $patientAccess);
+        return $this->buildModuleList($allModules, $accessibleCodes);
     }
 
     /**
@@ -152,11 +154,12 @@ class UserContextResolverService
     {
         $staffAccess = RoleModuleDefault::where('role_code', 'staff')
             ->where('default_access', true)
-            ->whereIn('module_code', $allModules->keys())
             ->pluck('module_code')
-            ->toArray();
+            ->first();
+        
+        $accessibleCodes = is_array($staffAccess) ? $staffAccess : (json_decode($staffAccess ?? '[]', true) ?? []);
 
-        return $this->buildModuleList($allModules, $staffAccess);
+        return $this->buildModuleList($allModules, $accessibleCodes);
     }
 
     /**
@@ -164,13 +167,33 @@ class UserContextResolverService
      */
     protected function resolveSpatieRoleModules(string $roleName, Collection $allModules): array
     {
-        $roleAccess = RoleModuleDefault::where('role_code', $roleName)
+        // Get the role module default record
+        $roleDefault = RoleModuleDefault::where('role_code', $roleName)
             ->where('default_access', true)
-            ->whereIn('module_code', $allModules->keys())
-            ->pluck('module_code')
-            ->toArray();
+            ->first();
+        
+        if (!$roleDefault) {
+            // If no record found, return all modules as inactive
+            return $this->buildModuleList($allModules, []);
+        }
+        
+        // Get the module codes from the JSON column
+        $moduleCodes = $roleDefault->module_code;
+        
+        // Decode if it's a JSON string, or use as is if it's already an array
+        $accessibleCodes = [];
+        if (is_string($moduleCodes)) {
+            $accessibleCodes = json_decode($moduleCodes, true) ?? [];
+        } elseif (is_array($moduleCodes)) {
+            $accessibleCodes = $moduleCodes;
+        }
+        
+        // Ensure we have an array of strings
+        $accessibleCodes = array_values(array_filter($accessibleCodes, function($code) {
+            return is_string($code) && !empty($code);
+        }));
 
-        return $this->buildModuleList($allModules, $roleAccess);
+        return $this->buildModuleList($allModules, $accessibleCodes);
     }
 
     /**

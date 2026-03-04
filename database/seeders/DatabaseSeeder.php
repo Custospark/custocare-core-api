@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use App\Models\Module;
 use App\Models\FacilityRole;
 use App\Models\RoleModuleDefault;
+use Spatie\Permission\Models\Role; // Add this
 
 class DatabaseSeeder extends Seeder
 {
@@ -25,8 +26,9 @@ class DatabaseSeeder extends Seeder
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
             ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
             ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
-            ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true,
-            ],
+            ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true],
+            // ADD NEW PLATFORM ADMINISTRATION MODULE
+            ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],
         ];
 
         foreach ($modules as $module) {
@@ -71,12 +73,31 @@ class DatabaseSeeder extends Seeder
                 $role
             );
         }
+        /*
+        |--------------------------------------------------------------------------
+        | 3️⃣ Create Spatie Roles for BOTH guards
+        |--------------------------------------------------------------------------
+        */
+        // Create super_admin role for web guard
+        Role::firstOrCreate([
+            'name' => 'super_admin', 
+            'guard_name' => 'web'
+        ]);
+
+        // Create super_admin role for api guard
+        Role::firstOrCreate([
+            'name' => 'super_admin', 
+            'guard_name' => 'api'
+        ]);
+        
+        // You can add other global Spatie roles here if needed
+        // Role::firstOrCreate(['name' => 'global_viewer', 'guard_name' => 'web']);
 
         /*
         |--------------------------------------------------------------------------
-        | 3️⃣ Role → Module Defaults (JSON-BASED, STRICT)
+        | 4️⃣ Facility Role → Module Defaults (JSON-BASED, STRICT)
         |--------------------------------------------------------------------------
-        | One row per role
+        | One row per facility role
         | module_code = JSON ARRAY
         |--------------------------------------------------------------------------
         */
@@ -91,9 +112,8 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($roleToModuleMap as $roleCode => $moduleCodes) {
-
             if (!FacilityRole::where('code', $roleCode)->exists()) {
-                Log::warning("⚠️ Role not found: {$roleCode}");
+                Log::warning("⚠️ Facility role not found: {$roleCode}");
                 continue;
             }
 
@@ -104,7 +124,7 @@ class DatabaseSeeder extends Seeder
                 ->toArray();
 
             if (empty($validModules)) {
-                Log::warning("⚠️ No valid modules for role: {$roleCode}");
+                Log::warning("⚠️ No valid modules for facility role: {$roleCode}");
                 continue;
             }
 
@@ -117,6 +137,48 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        $this->command->info('✅ Database seeded: Modules, Roles, and RoleModuleDefaults successfully.');
+        /*
+        |--------------------------------------------------------------------------
+        | 5️⃣ Spatie Role → Module Defaults (FOR GLOBAL ROLES)
+        |--------------------------------------------------------------------------
+        | One row per Spatie role
+        | module_code = JSON ARRAY
+        |--------------------------------------------------------------------------
+        */
+        $spatieRoleToModuleMap = [
+            'super_admin' => ['account', 'platform_administration'], // Super admin gets platform admin + account
+            // Add other Spatie roles here if needed
+            // 'global_viewer' => ['account', 'clinical_readonly'],
+        ];
+
+        foreach ($spatieRoleToModuleMap as $roleName => $moduleCodes) {
+            // Verify Spatie role exists
+            if (!Role::where('name', $roleName)->where('guard_name', 'web')->exists()) {
+                Log::warning("⚠️ Spatie role not found: {$roleName}");
+                continue;
+            }
+
+            // Validate modules exist
+            $validModules = Module::whereIn('code', $moduleCodes)
+                ->where('is_active', true)
+                ->pluck('code')
+                ->values()
+                ->toArray();
+
+            if (empty($validModules)) {
+                Log::warning("⚠️ No valid modules for Spatie role: {$roleName}");
+                continue;
+            }
+
+            RoleModuleDefault::updateOrCreate(
+                ['role_code' => $roleName], // Same table, role_code stores Spatie role name
+                [
+                    'module_code' => $validModules, // JSON
+                    'default_access' => true,
+                ]
+            );
+        }
+
+        $this->command->info('✅ Database seeded: Modules, Facility Roles, Spatie Roles, and RoleModuleDefaults successfully.');
     }
 }

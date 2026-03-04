@@ -128,6 +128,47 @@ class UserContextResolverService
             ];
         }
 
+        // Ensure account module is accessible in ALL capabilities
+        $capabilities = $this->ensureAccountAccessInAllCapabilities($capabilities, $allModules);
+
+        return $capabilities;
+    }
+
+    /**
+     * Ensure account module is accessible in every capability
+     */
+    protected function ensureAccountAccessInAllCapabilities(array $capabilities, Collection $allModules): array
+    {
+        foreach ($capabilities as $capabilityName => &$capabilityData) {
+            // Skip if no modules array exists
+            if (!isset($capabilityData['modules'])) {
+                continue;
+            }
+
+            // Check if account module already has is_active = true
+            $accountFound = false;
+            foreach ($capabilityData['modules'] as &$module) {
+                if ($module['code'] === 'account') {
+                    $accountFound = true;
+                    // Force account to be active regardless of original setting
+                    $module['is_active'] = true;
+                    break;
+                }
+            }
+
+            // If account module wasn't found in the list, we need to add it
+            if (!$accountFound && $allModules->has('account')) {
+                $accountModule = $allModules->get('account');
+                $capabilityData['modules'][] = [
+                    'id' => $accountModule->id,
+                    'code' => $accountModule->code,
+                    'name' => $accountModule->name,
+                    'description' => $accountModule->description,
+                    'is_active' => true, // Always true for account
+                ];
+            }
+        }
+
         return $capabilities;
     }
 
@@ -138,11 +179,16 @@ class UserContextResolverService
     {
         $patientAccess = RoleModuleDefault::where('role_code', 'patient')
             ->where('default_access', true)
-            ->pluck('module_code') // Remove whereIn to get all modules
-            ->first(); // Get the first record since it's JSON array
+            ->pluck('module_code')
+            ->first();
         
         // Decode the JSON array
         $accessibleCodes = is_array($patientAccess) ? $patientAccess : (json_decode($patientAccess ?? '[]', true) ?? []);
+        
+        // Ensure account is always in the accessible codes
+        if (!in_array('account', $accessibleCodes)) {
+            $accessibleCodes[] = 'account';
+        }
 
         return $this->buildModuleList($allModules, $accessibleCodes);
     }
@@ -158,6 +204,11 @@ class UserContextResolverService
             ->first();
         
         $accessibleCodes = is_array($staffAccess) ? $staffAccess : (json_decode($staffAccess ?? '[]', true) ?? []);
+        
+        // Ensure account is always in the accessible codes
+        if (!in_array('account', $accessibleCodes)) {
+            $accessibleCodes[] = 'account';
+        }
 
         return $this->buildModuleList($allModules, $accessibleCodes);
     }
@@ -172,26 +223,29 @@ class UserContextResolverService
             ->where('default_access', true)
             ->first();
         
-        if (!$roleDefault) {
-            // If no record found, return all modules as inactive
-            return $this->buildModuleList($allModules, []);
-        }
-        
-        // Get the module codes from the JSON column
-        $moduleCodes = $roleDefault->module_code;
-        
-        // Decode if it's a JSON string, or use as is if it's already an array
         $accessibleCodes = [];
-        if (is_string($moduleCodes)) {
-            $accessibleCodes = json_decode($moduleCodes, true) ?? [];
-        } elseif (is_array($moduleCodes)) {
-            $accessibleCodes = $moduleCodes;
+        
+        if ($roleDefault) {
+            // Get the module codes from the JSON column
+            $moduleCodes = $roleDefault->module_code;
+            
+            // Decode if it's a JSON string, or use as is if it's already an array
+            if (is_string($moduleCodes)) {
+                $accessibleCodes = json_decode($moduleCodes, true) ?? [];
+            } elseif (is_array($moduleCodes)) {
+                $accessibleCodes = $moduleCodes;
+            }
+            
+            // Ensure we have an array of strings
+            $accessibleCodes = array_values(array_filter($accessibleCodes, function($code) {
+                return is_string($code) && !empty($code);
+            }));
         }
         
-        // Ensure we have an array of strings
-        $accessibleCodes = array_values(array_filter($accessibleCodes, function($code) {
-            return is_string($code) && !empty($code);
-        }));
+        // Ensure account is always in the accessible codes for EVERY Spatie role
+        if (!in_array('account', $accessibleCodes)) {
+            $accessibleCodes[] = 'account';
+        }
 
         return $this->buildModuleList($allModules, $accessibleCodes);
     }
@@ -214,6 +268,11 @@ class UserContextResolverService
 
         foreach ($facilityRoles as $role) {
             $moduleCodes = $this->extractModuleCodes($role->module_code);
+            
+            // Ensure account is always in the module codes for staff facilities
+            if (!in_array('account', $moduleCodes)) {
+                $moduleCodes[] = 'account';
+            }
             
             $facilities[] = [
                 'facility_id' => $role->facility_id,
@@ -302,6 +361,11 @@ class UserContextResolverService
         string $moduleCode, 
         ?int $facilityId = null
     ): bool {
+        // Account module is always accessible
+        if ($moduleCode === 'account') {
+            return true;
+        }
+
         $context = $this->resolve($userId);
         
         if (!isset($context['capabilities'][$capability])) {
@@ -373,9 +437,8 @@ class UserContextResolverService
         }
 
         // Return only accessible modules
-       return array_values(array_filter($modules, function ($module) {
+        return array_values(array_filter($modules, function ($module) {
             return ($module['is_active'] ?? false) === true;
         }));
-
     }
 }

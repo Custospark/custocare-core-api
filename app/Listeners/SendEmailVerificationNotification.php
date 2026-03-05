@@ -592,3 +592,5 @@ class SendEmailVerificationNotification implements ShouldHandleEventsAfterCommit
     return ['title' => $title, 'body' => $body];
 }
 }
+
+

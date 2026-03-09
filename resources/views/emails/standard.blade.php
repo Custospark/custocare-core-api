@@ -183,7 +183,7 @@
         {{-- ── Footer ─────────────────────────────────────────────────── --}}
         <div class="email-footer">
             <div class="footer-message">
-                You're receiving this because you use <strong>Custocare AI</strong>,<br>
+                You're receiving this because you use <strong>Custocare</strong>,<br>
                 a product of <strong>Custospark</strong> — where innovation meets excellence.
             </div>
             <div class="copyright">

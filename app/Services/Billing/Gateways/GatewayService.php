@@ -100,7 +100,7 @@ class GatewayService
         // ── Step 2: Build driver payload ──────────────────────────────────
         $plan        = $subscription->plan ?? $subscription->plan()->first();
         $facility    = $subscription->facility ?? $subscription->facility()->first();
-        $ourRef      = "CUSTOCARE-AI-{$payment->id}-" . now()->format('YmdHis');
+        $ourRef      = "CUSTOCARE-{$payment->id}-" . now()->format('YmdHis');
 
         $driverPayload = [
             'amount'          => $data['amount'],

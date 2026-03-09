@@ -15,8 +15,8 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Custocare AI'),
-    'domain' => env('APP_DOMAIN', 'custocare-ai'),
+    'name' => env('APP_NAME', 'Custocare'),
+    'domain' => env('APP_DOMAIN', 'custocare'),
     
     /**
      * Application frontend client.

@@ -35,7 +35,7 @@ class SubscriptionController extends Controller
 
         if (! $subscription) {
             return response()->json([
-                'success' => false,
+                'success' => true,
                 'message' => 'No subscription found for this facility.',
                 'data'    => null,
             ], 404);

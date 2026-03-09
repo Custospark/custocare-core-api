@@ -38,7 +38,7 @@ Route::prefix('billing')
 
 /*
 |──────────────────────────────────────────────────────────────────────────────
-| [2] FACILITY-FACING — Requires auth; scoped per facility route parameter.
+| [2] FACILITY-FACING(Faciity Administrator) — Requires auth; scoped per facility route parameter.
 |
 | Every route here is under /api/facilities/{facility}/...
 | The {facility} is resolved via Laravel route model binding → Facility model.
@@ -85,7 +85,7 @@ Route::middleware(['auth:sanctum'])
 
 /*
 |──────────────────────────────────────────────────────────────────────────────
-| [3] ADMIN — Requires auth:sanctum + admin.access (super_admin role)
+| [3] ADMIN — Requires auth:sanctum + admin.access (Platform Admin:super_admin role)
 |
 | These are the CORE MANUAL BILLING ENDPOINTS.
 | Admins view pending payments, approve or reject them, and manage subscriptions.
@@ -145,7 +145,7 @@ Route::middleware(['auth:sanctum', 'admin.access'])
             });
 
         /*
-        |── Payment Management (Admin) ──────────────────────────────────────
+        |── Payment Management (Platform Admin) ──────────────────────────────────────
         |
         | ✅ APPROVE → POST /admin/billing/payments/{payment}/approve
         |    - Confirms receipt/evidence of payment

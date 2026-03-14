@@ -132,7 +132,7 @@ class UserService implements UserServiceInterface
      * @param  array<string, mixed> $credentials
      * @return array{success: bool, code: string, message: string, requires_mfa: bool, user: User|null, token: string|null}
      */
-  public function login(array $credentials, string $ip, string $userAgent): array
+public function login(array $credentials, string $ip, string $userAgent): array
 {
     $emailHash = hash('sha256', strtolower(trim($credentials['email'])));
     $user      = $this->userRepository->findByEmailHash($emailHash);
@@ -177,9 +177,8 @@ class UserService implements UserServiceInterface
                 [$token, $otp, $recoveryToken] = $this->createMfaToken($user->id);
                 
                 // Dispatch MfaRequired event with token and OTP
-                // \App\Events\MfaRequired::dispatch($user, $token, $otp, 'email');
                 $service = app(\App\Services\User\AccountRecoveryService::class);
-                $service->sendEmailVerification($user->id, 'email',ActionTypes::LOGIN_CONFIRMATION);     
+                $service->sendEmailVerification($user->id, 'email', ActionTypes::LOGIN_CONFIRMATION);     
                 
                 Log::info('MFA OTP email dispatched via event', [
                     'user_id' => $user->id,
@@ -206,14 +205,13 @@ class UserService implements UserServiceInterface
         }
 
         // Code supplied – validation happens in a separate endpoint
-        // We just log it and proceed
         Log::info('MFA code provided for user', [
             'user_id' => $user->id
         ]);
     }
 
-    // ── Issue token (single-session enforcement inside User model) ──────
-    $token = $user->generateAuthToken();
+    // ── Issue token with reuse logic ───────────────────────────────────
+    $token = $user->generateAuthToken('auth-token', false); // false = reuse existing if valid
 
     return [
         'success'      => true,

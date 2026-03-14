@@ -203,14 +203,34 @@ class User extends Authenticatable
     /**
      * Generate a new token with single session enforcement.
      */
-    public function generateAuthToken(string $deviceName = 'auth-token'): string
-    {
-        // Delete all existing tokens to enforce single session
-        $this->deleteAllTokens();
+public function generateAuthToken(string $deviceName = 'auth-token', bool $forceNew = false): string
+{
+    // If not forcing new token, check for existing valid token
+    if (!$forceNew) {
+        $existingToken = $this->tokens()
+            ->where('name', $deviceName)
+            ->where('expires_at', '>', now())
+            ->latest()
+            ->first();
         
-        // Create new token with expiration
-        return $this->createToken($deviceName, ['*'], now()->addDays(7))->plainTextToken;
+        if ($existingToken && $existingToken->plainTextToken) {
+            return $existingToken->plainTextToken;
+        }
     }
+    
+    // Delete all existing tokens to enforce single session
+    $this->deleteAllTokens();
+    
+    // Create new token with expiration
+    $newToken = $this->createToken($deviceName, ['*'], now()->addDays(7));
+    
+    // Make sure we have a valid token
+    if (!$newToken || !$newToken->plainTextToken) {
+        throw new \RuntimeException('Failed to create authentication token');
+    }
+    
+    return $newToken->plainTextToken;
+}
 
     /**
      * Verify email address.

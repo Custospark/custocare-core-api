@@ -400,10 +400,8 @@ class UserRepository implements UserRepositoryInterface
     // Sync role based on email match
     if ($isSuperAdminEmail && !$hasSuperAdminRole) {
         // User matches super admin email but doesn't have role - assign it for all guards
-        foreach ($guards as $guard) {
-            $user->assignRole('super_admin', $guard);
-        }
-        
+            $user->assignRole('super_admin');
+
         Log::info("Super admin role assigned to user", [
             'email' => $email,
             'user_id' => $user->id,
@@ -412,9 +410,7 @@ class UserRepository implements UserRepositoryInterface
         
     } elseif (!$isSuperAdminEmail && $hasSuperAdminRole) {
         // User has super admin role but doesn't match email - remove it from all guards
-        foreach ($guards as $guard) {
             $user->removeRole('super_admin', $guard);
-        }
         
         Log::info("Super admin role removed from user", [
             'email' => $email,

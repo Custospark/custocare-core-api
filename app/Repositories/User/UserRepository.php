@@ -9,7 +9,6 @@ use App\Repositories\User\Contracts\UserRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
-use Spatie\Permission\Models\Role;
 
 class UserRepository implements UserRepositoryInterface
 {
@@ -330,60 +329,105 @@ class UserRepository implements UserRepositoryInterface
      * @param User $user
      * @return void
      */
-    private function assignSuperAdminRoleIfMatches(User $user): void
-    {
-        $superAdminEmail = env('SUPER_ADMIN_EMAIL');
+  private function assignSuperAdminRoleIfMatches(User $user): void
+{
+    $superAdminEmail = env('SUPER_ADMIN_EMAIL');
+    
+    // If no super admin email is configured, do nothing
+    if (empty($superAdminEmail)) {
+        return;
+    }
+    
+    // Make sure we have an encrypted email to decrypt
+    if (empty($user->email_encrypted)) {
+        Log::warning('User has no encrypted email for super admin check', ['user_id' => $user->id]);
+        return;
+    }
+    
+    // Decrypt the user's email
+    try {
+        $email = decrypt($user->email_encrypted);
+    } catch (\Exception $e) {
+        Log::error('Failed to decrypt email for super admin check', [
+            'user_id' => $user->id,
+            'error' => $e->getMessage()
+        ]);
+        return;
+    }
+    
+    // Normalize emails for comparison
+    $normalizedEmail = strtolower(trim($email));
+    $normalizedSuperEmail = strtolower(trim($superAdminEmail));
+    $isSuperAdminEmail = $normalizedEmail === $normalizedSuperEmail;
+    
+    // Ensure super_admin role exists for required guards
+    try {
+        $guards = ['api', 'web'];
+        $roleCreated = false;
         
-        // If no super admin email is configured, do nothing
-        if (empty($superAdminEmail)) {
-            return;
-        }
-        
-        // Make sure we have an encrypted email to decrypt
-        if (empty($user->email_encrypted)) {
-            Log::warning('User has no encrypted email for super admin check', ['user_id' => $user->id]);
-            return;
-        }
-        
-        try {
-            $email = decrypt($user->email_encrypted);
-        } catch (\Exception $e) {
-            Log::error('Failed to decrypt email for super admin check', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage()
+        foreach ($guards as $guard) {
+            $role = \Spatie\Permission\Models\Role::firstOrCreate([
+                'name' => 'super_admin',
+                'guard_name' => $guard
             ]);
-            return;
+            
+            if ($role->wasRecentlyCreated) {
+                $roleCreated = true;
+            }
         }
         
-        $isSuperAdminEmail = strtolower(trim($email)) === strtolower(trim($superAdminEmail));
-        
-        // IMPORTANT: Check for role in BOTH guards or the one your app uses
-        // Based on your error, you need 'api' guard
-        $roleExists = Role::where('name', 'super_admin')
-            ->whereIn('guard_name', ['api', 'web'])
-            ->exists();
-        
-        if (!$roleExists) {
-            Log::error('super_admin role does not exist for api or web guard');
-            return;
+        if ($roleCreated) {
+            Log::info('super_admin role was created for one or more guards');
         }
         
-        $hasSuperAdminRole = $user->hasRole('super_admin');
-        
-        if ($isSuperAdminEmail && !$hasSuperAdminRole) {
-            // User matches super admin email but doesn't have role - assign it
-            $user->assignRole('super_admin');
-            Log::info("Super admin role assigned to user", [
-                'email' => $email,
-                'user_id' => $user->id
-            ]);
-        } elseif (!$isSuperAdminEmail && $hasSuperAdminRole) {
-            // User has super admin role but doesn't match email - remove it
-            $user->removeRole('super_admin');
-            Log::info("Super admin role removed from user", [
-                'email' => $email,
-                'user_id' => $user->id
-            ]);
+    } catch (\Exception $e) {
+        Log::error('Failed to verify/create super_admin role', [
+            'error' => $e->getMessage(),
+            'user_id' => $user->id
+        ]);
+        return;
+    }
+    
+    // Check if user already has super_admin role (for any guard)
+    $hasSuperAdminRole = false;
+    foreach ($guards as $guard) {
+        if ($user->hasRole('super_admin', $guard)) {
+            $hasSuperAdminRole = true;
+            break;
         }
     }
+    
+    // Sync role based on email match
+    if ($isSuperAdminEmail && !$hasSuperAdminRole) {
+        // User matches super admin email but doesn't have role - assign it for all guards
+        foreach ($guards as $guard) {
+            $user->assignRole('super_admin', $guard);
+        }
+        
+        Log::info("Super admin role assigned to user", [
+            'email' => $email,
+            'user_id' => $user->id,
+            'guards' => $guards
+        ]);
+        
+    } elseif (!$isSuperAdminEmail && $hasSuperAdminRole) {
+        // User has super admin role but doesn't match email - remove it from all guards
+        foreach ($guards as $guard) {
+            $user->removeRole('super_admin', $guard);
+        }
+        
+        Log::info("Super admin role removed from user", [
+            'email' => $email,
+            'user_id' => $user->id,
+            'guards' => $guards
+        ]);
+        
+    } elseif ($isSuperAdminEmail && $hasSuperAdminRole) {
+        // User already has correct role - just log for debugging if needed
+        Log::debug("Super admin user verified", [
+            'email' => $email,
+            'user_id' => $user->id
+        ]);
+    }
+}
 }

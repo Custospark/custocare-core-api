@@ -153,7 +153,7 @@ class DatabaseSeeder extends Seeder
 
         foreach ($spatieRoleToModuleMap as $roleName => $moduleCodes) {
             // Verify Spatie role exists
-            if (!Role::where('name', $roleName)->where('guard_name', 'web')->exists()) {
+            if (!Role::where('name', $roleName)->whereIn('guard_name', ['web','api'])->exists()) {
                 Log::warning("⚠️ Spatie role not found: {$roleName}");
                 continue;
             }

@@ -58,3 +58,4 @@ require __DIR__.'/api_v1/billing/refund/_index.php';
 require __DIR__.'/api_v1/facilitySubscriptions/_index.php';
 require __DIR__.'/api_v1/facilitySubscriptions/payment_gateways.php';
 require __DIR__.'/api_v1/statistics/user_stat.php';
+require __DIR__.'/api_v1/statistics/facility_stat.php';

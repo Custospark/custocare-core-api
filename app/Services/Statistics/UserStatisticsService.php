@@ -57,52 +57,41 @@ class UserStatisticsService
         $lastWeek = now()->subWeek()->startOfDay();
         $lastMonth = now()->subMonth()->startOfDay();
 
-        // Total users
-        $totalUsers = User::count();
+        // Total users - cast to int
+        $totalUsers = (int) User::count();
         
         // New today
-        $newToday = User::where('created_at', '>=', $today)->count();
-        $newYesterday = User::whereBetween('created_at', [$yesterday, $today])->count();
+        $newToday = (int) User::where('created_at', '>=', $today)->count();
+        $newYesterday = (int) User::whereBetween('created_at', [$yesterday, $today])->count();
         
         // Verified today
-        $verifiedToday = User::whereNotNull('identity_verified_at')
+        $verifiedToday = (int) User::whereNotNull('identity_verified_at')
             ->where('identity_verified_at', '>=', $today)
             ->count();
         
-        $verifiedYesterday = User::whereNotNull('identity_verified_at')
+        $verifiedYesterday = (int) User::whereNotNull('identity_verified_at')
             ->whereBetween('identity_verified_at', [$yesterday, $today])
             ->count();
 
         // Pending review
-        $pendingReview = User::where('identity_state', 'pending')->count();
-        $pendingLastWeek = User::where('identity_state', 'pending')
+        $pendingReview = (int) User::where('identity_state', 'pending')->count();
+        $pendingLastWeek = (int) User::where('identity_state', 'pending')
             ->where('created_at', '<', $lastWeek)
             ->count();
 
         // Active users (last 30 days)
-        $activeUsers = User::where('last_login_at', '>=', now()->subDays(30))->count();
-        $activeLastMonth = User::whereBetween('last_login_at', [now()->subDays(60), now()->subDays(30)])->count();
+        $activeUsers = (int) User::where('last_login_at', '>=', now()->subDays(30))->count();
+        $activeLastMonth = (int) User::whereBetween('last_login_at', [now()->subDays(60), now()->subDays(30)])->count();
 
         // MFA adoption
-        $mfaEnabled = User::where('mfa_enabled', true)->count();
+        $mfaEnabled = (int) User::where('mfa_enabled', true)->count();
         $mfaRate = $totalUsers > 0 ? round(($mfaEnabled / $totalUsers) * 100, 1) : 0;
 
-        // Calculate changes
-        $newChange = $newYesterday > 0 
-            ? round((($newToday - $newYesterday) / $newYesterday) * 100, 1)
-            : ($newToday > 0 ? 100 : 0);
-
-        $verifiedChange = $verifiedYesterday > 0
-            ? round((($verifiedToday - $verifiedYesterday) / $verifiedYesterday) * 100, 1)
-            : ($verifiedToday > 0 ? 100 : 0);
-
-        $pendingChange = $pendingLastWeek > 0
-            ? round((($pendingReview - $pendingLastWeek) / $pendingLastWeek) * 100, 1)
-            : 0;
-
-        $activeChange = $activeLastMonth > 0
-            ? round((($activeUsers - $activeLastMonth) / $activeLastMonth) * 100, 1)
-            : 0;
+        // Calculate changes - with safe type casting
+        $newChange = $this->calculatePercentageChange($newToday, $newYesterday);
+        $verifiedChange = $this->calculatePercentageChange($verifiedToday, $verifiedYesterday);
+        $pendingChange = $this->calculatePercentageChange($pendingReview, $pendingLastWeek);
+        $activeChange = $this->calculatePercentageChange($activeUsers, $activeLastMonth);
 
         return [
             [
@@ -163,13 +152,32 @@ class UserStatisticsService
     }
 
     /**
-     * Get verification funnel statistics
+     * Calculate percentage change safely
+     *
+     * @param mixed $current
+     * @param mixed $previous
+     * @return float
+     */
+    private function calculatePercentageChange($current, $previous): float
+    {
+        $current = (float) $current;
+        $previous = (float) $previous;
+        
+        if ($previous > 0) {
+            return round((($current - $previous) / $previous) * 100, 1);
+        }
+        
+        return $current > 0 ? 100.0 : 0.0;
+    }
+
+    /**
+     * Get verification funnel statistics - FIXED LINE 219
      *
      * @return array
      */
     public function getVerificationFunnel(): array
     {
-        $total = User::count();
+        $total = (int) User::count();
         
         $states = User::select('identity_state', DB::raw('COUNT(*) as count'))
             ->groupBy('identity_state')
@@ -177,14 +185,14 @@ class UserStatisticsService
             ->pluck('count', 'identity_state')
             ->toArray();
 
-        $pending = $states['pending'] ?? 0;
-        $verified = $states['verified'] ?? 0;
-        $rejected = $states['rejected'] ?? 0;
+        $pending = (int) ($states['pending'] ?? 0);
+        $verified = (int) ($states['verified'] ?? 0);
+        $rejected = (int) ($states['rejected'] ?? 0);
 
-        // Calculate conversion rates
-        $verificationRate = $total > 0 ? round(($verified / $total) * 100, 1) : 0;
-        $pendingRate = $total > 0 ? round(($pending / $total) * 100, 1) : 0;
-        $rejectionRate = $total > 0 ? round(($rejected / $total) * 100, 1) : 0;
+        // Calculate conversion rates - with safe type casting (FIX FOR LINE 219)
+        $verificationRate = $total > 0 ? round(((float) $verified / (float) $total) * 100, 1) : 0;
+        $pendingRate = $total > 0 ? round(((float) $pending / (float) $total) * 100, 1) : 0;
+        $rejectionRate = $total > 0 ? round(((float) $rejected / (float) $total) * 100, 1) : 0;
 
         // Get verification methods breakdown
         $methods = User::whereNotNull('identity_verified_at')
@@ -195,7 +203,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'name' => $this->formatVerificationMethod($item->identity_verification_method),
-                    'value' => $item->count,
+                    'value' => (int) $item->count,
                     'color' => $this->getMethodColor($item->identity_verification_method),
                 ];
             });
@@ -216,7 +224,7 @@ class UserStatisticsService
             'verification_rate' => $verificationRate,
             'pending_rate' => $pendingRate,
             'rejection_rate' => $rejectionRate,
-            'avg_verification_time_hours' => round($avgVerificationTime, 1),
+            'avg_verification_time_hours' => round((float) $avgVerificationTime, 1),
             'methods' => $methods,
         ];
     }
@@ -278,9 +286,9 @@ class UserStatisticsService
             $result[] = [
                 'day' => $dayName,
                 'date' => $dateString,
-                'newUsers' => $dailyNew[$dateString]->count ?? 0,
-                'verified' => $dailyVerified[$dateString]->count ?? 0,
-                'active' => $dailyActive[$dateString]->count ?? 0,
+                'newUsers' => (int) ($dailyNew[$dateString]->count ?? 0),
+                'verified' => (int) ($dailyVerified[$dateString]->count ?? 0),
+                'active' => (int) ($dailyActive[$dateString]->count ?? 0),
             ];
         }
 
@@ -305,17 +313,17 @@ class UserStatisticsService
             $weekEnd = (clone $weekStart)->endOfWeek();
             $weekLabel = $weekStart->format('M d') . ' - ' . $weekEnd->format('M d');
             
-            $newUsers = User::whereBetween('created_at', [$weekStart, $weekEnd])->count();
+            $newUsers = (int) User::whereBetween('created_at', [$weekStart, $weekEnd])->count();
             
-            $verified = User::whereNotNull('identity_verified_at')
+            $verified = (int) User::whereNotNull('identity_verified_at')
                 ->whereBetween('identity_verified_at', [$weekStart, $weekEnd])
                 ->count();
             
-            $withMfa = User::where('mfa_enabled', true)
+            $withMfa = (int) User::where('mfa_enabled', true)
                 ->whereBetween('created_at', [$weekStart, $weekEnd])
                 ->count();
 
-            $activeUsers = User::whereBetween('last_login_at', [$weekStart, $weekEnd])
+            $activeUsers = (int) User::whereBetween('last_login_at', [$weekStart, $weekEnd])
                 ->count();
 
             $result[] = [
@@ -347,14 +355,14 @@ class UserStatisticsService
             $monthEnd = (clone $monthStart)->endOfMonth();
             $monthLabel = $monthStart->format('M Y');
             
-            $newUsers = User::whereBetween('created_at', [$monthStart, $monthEnd])->count();
+            $newUsers = (int) User::whereBetween('created_at', [$monthStart, $monthEnd])->count();
             
-            $verified = User::whereNotNull('identity_verified_at')
+            $verified = (int) User::whereNotNull('identity_verified_at')
                 ->whereBetween('identity_verified_at', [$monthStart, $monthEnd])
                 ->count();
             
-            $cumulativeTotal = User::where('created_at', '<=', $monthEnd)->count();
-            $cumulativeVerified = User::whereNotNull('identity_verified_at')
+            $cumulativeTotal = (int) User::where('created_at', '<=', $monthEnd)->count();
+            $cumulativeVerified = (int) User::whereNotNull('identity_verified_at')
                 ->where('identity_verified_at', '<=', $monthEnd)
                 ->count();
 
@@ -366,7 +374,7 @@ class UserStatisticsService
                 'cumulative_total' => $cumulativeTotal,
                 'cumulative_verified' => $cumulativeVerified,
                 'verification_rate' => $cumulativeTotal > 0 
-                    ? round(($cumulativeVerified / $cumulativeTotal) * 100, 1)
+                    ? round(((float) $cumulativeVerified / (float) $cumulativeTotal) * 100, 1)
                     : 0,
             ];
         }
@@ -392,7 +400,7 @@ class UserStatisticsService
 
         $ageDistribution = [];
         foreach ($ageGroups as $group => [$min, $max]) {
-            $count = User::whereNotNull('dob')
+            $count = (int) User::whereNotNull('dob')
                 ->whereRaw(
                     "TIMESTAMPDIFF(YEAR, dob, CURDATE()) BETWEEN ? AND ?",
                     [$min, $max]
@@ -414,7 +422,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'name' => ucfirst($item->gender) ?? 'Unknown',
-                    'value' => $item->count,
+                    'value' => (int) $item->count,
                     'color' => $this->getGenderColor($item->gender),
                 ];
             });
@@ -429,7 +437,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'title' => $item->title,
-                    'count' => $item->count,
+                    'count' => (int) $item->count,
                 ];
             });
 
@@ -447,11 +455,11 @@ class UserStatisticsService
      */
     public function getMfaAdoptionStats(): array
     {
-        $total = User::count();
-        $mfaEnabled = User::where('mfa_enabled', true)->count();
+        $total = (int) User::count();
+        $mfaEnabled = (int) User::where('mfa_enabled', true)->count();
         $mfaDisabled = $total - $mfaEnabled;
 
-        $adoptionRate = $total > 0 ? round(($mfaEnabled / $total) * 100, 1) : 0;
+        $adoptionRate = $total > 0 ? round(((float) $mfaEnabled / (float) $total) * 100, 1) : 0;
 
         // MFA by region
         $byRegion = User::whereNotNull('data_residency_region')
@@ -463,12 +471,14 @@ class UserStatisticsService
             ->groupBy('data_residency_region')
             ->get()
             ->map(function ($item) {
+                $total = (int) $item->total;
+                $mfaCount = (int) $item->mfa_count;
                 return [
                     'region' => $item->data_residency_region,
-                    'total' => $item->total,
-                    'mfa_count' => (int) $item->mfa_count,
-                    'adoption_rate' => $item->total > 0 
-                        ? round(($item->mfa_count / $item->total) * 100, 1)
+                    'total' => $total,
+                    'mfa_count' => $mfaCount,
+                    'adoption_rate' => $total > 0 
+                        ? round(((float) $mfaCount / (float) $total) * 100, 1)
                         : 0,
                 ];
             });
@@ -484,12 +494,14 @@ class UserStatisticsService
             ->orderBy('cohort_year')
             ->get()
             ->map(function ($item) {
+                $total = (int) $item->total;
+                $mfaCount = (int) $item->mfa_count;
                 return [
                     'cohort' => $item->cohort_year,
-                    'total' => $item->total,
-                    'mfa_count' => (int) $item->mfa_count,
-                    'adoption_rate' => $item->total > 0 
-                        ? round(($item->mfa_count / $item->total) * 100, 1)
+                    'total' => $total,
+                    'mfa_count' => $mfaCount,
+                    'adoption_rate' => $total > 0 
+                        ? round(((float) $mfaCount / (float) $total) * 100, 1)
                         : 0,
                 ];
             });
@@ -523,7 +535,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'country' => $item->country,
-                    'count' => $item->count,
+                    'count' => (int) $item->count,
                     'country_name' => $this->getCountryName($item->country),
                 ];
             });
@@ -539,7 +551,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'state' => $item->state,
-                    'count' => $item->count,
+                    'count' => (int) $item->count,
                     'state_name' => $this->getStateName($item->state),
                 ];
             });
@@ -554,7 +566,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'city' => $item->city,
-                    'count' => $item->count,
+                    'count' => (int) $item->count,
                 ];
             });
 
@@ -566,7 +578,7 @@ class UserStatisticsService
             ->map(function ($item) {
                 return [
                     'region' => $item->data_residency_region,
-                    'count' => $item->count,
+                    'count' => (int) $item->count,
                 ];
             });
 
@@ -663,11 +675,12 @@ class UserStatisticsService
             ->groupBy('theme_mode')
             ->get()
             ->map(function ($item) {
+                $count = (int) $item->count;
                 return [
                     'theme' => $item->theme_mode,
-                    'count' => $item->count,
+                    'count' => $count,
                     'percentage' => User::count() > 0 
-                        ? round(($item->count / User::count()) * 100, 1)
+                        ? round(((float) $count / (float) User::count()) * 100, 1)
                         : 0,
                 ];
             });
@@ -700,7 +713,7 @@ class UserStatisticsService
                 $cohortMonth->copy()->endOfMonth()
             ])->pluck('id');
             
-            $cohortSize = $cohortUsers->count();
+            $cohortSize = (int) $cohortUsers->count();
             
             if ($cohortSize === 0) {
                 continue;
@@ -717,7 +730,7 @@ class UserStatisticsService
                     break;
                 }
                 
-                $activeInPeriod = User::whereIn('id', $cohortUsers)
+                $activeInPeriod = (int) User::whereIn('id', $cohortUsers)
                     ->whereBetween('last_login_at', [$periodStart, $periodEnd])
                     ->count();
                 
@@ -725,7 +738,7 @@ class UserStatisticsService
                     'month' => $j,
                     'period' => $periodStart->format('M Y'),
                     'active_users' => $activeInPeriod,
-                    'retention_rate' => round(($activeInPeriod / $cohortSize) * 100, 1),
+                    'retention_rate' => round(((float) $activeInPeriod / (float) $cohortSize) * 100, 1),
                 ];
             }
             
@@ -739,54 +752,55 @@ class UserStatisticsService
         
         return $cohorts;
     }
-/**
- * Get security metrics
- *
- * @return array
- */
-public function getSecurityMetrics(): array
-{
-    // Failed login attempts distribution
-    $failedAttempts = User::select(
-        DB::raw('CASE 
-            WHEN failed_login_attempts = 0 THEN "0"
-            WHEN failed_login_attempts BETWEEN 1 AND 3 THEN "1-3"
-            WHEN failed_login_attempts BETWEEN 4 AND 10 THEN "4-10"
-            ELSE "10+"
-        END as attempt_range'),
-        DB::raw('COUNT(*) as count')
-    )
-    ->groupBy('attempt_range')
-    ->get();
-
-    // Locked accounts
-    $lockedAccounts = User::whereNotNull('account_locked_until')
-        ->where('account_locked_until', '>', now())
-        ->count();
-
-    // Password changes (last 30 days)
-    $passwordChanges = User::where('password_changed_at', '>=', now()->subDays(30))
-        ->count();
-
-    // Users requiring password change
-    $requirePasswordChange = User::where('requires_password_change', true)
-        ->count();
-
-    // FIXED: Cast to float before rounding
-    $avgFailedAttempts = User::avg('failed_login_attempts');
-    $avgFailedAttempts = is_numeric($avgFailedAttempts) ? (float) $avgFailedAttempts : 0;
-
-    return [
-        'failed_attempts_distribution' => $failedAttempts,
-        'locked_accounts' => $lockedAccounts,
-        'password_changes_30d' => $passwordChanges,
-        'require_password_change' => $requirePasswordChange,
-        'avg_failed_attempts' => round($avgFailedAttempts, 1),
-    ];
-}
 
     /**
-     * Get staff performance metrics
+     * Get security metrics - FIXED LINE 838
+     *
+     * @return array
+     */
+    public function getSecurityMetrics(): array
+    {
+        // Failed login attempts distribution
+        $failedAttempts = User::select(
+            DB::raw('CASE 
+                WHEN failed_login_attempts = 0 THEN "0"
+                WHEN failed_login_attempts BETWEEN 1 AND 3 THEN "1-3"
+                WHEN failed_login_attempts BETWEEN 4 AND 10 THEN "4-10"
+                ELSE "10+"
+            END as attempt_range'),
+            DB::raw('COUNT(*) as count')
+        )
+        ->groupBy('attempt_range')
+        ->get();
+
+        // Locked accounts
+        $lockedAccounts = (int) User::whereNotNull('account_locked_until')
+            ->where('account_locked_until', '>', now())
+            ->count();
+
+        // Password changes (last 30 days)
+        $passwordChanges = (int) User::where('password_changed_at', '>=', now()->subDays(30))
+            ->count();
+
+        // Users requiring password change
+        $requirePasswordChange = (int) User::where('requires_password_change', true)
+            ->count();
+
+        // FIX FOR LINE 838 - Cast to float before rounding
+        $avgFailedAttempts = User::avg('failed_login_attempts');
+        $avgFailedAttempts = is_numeric($avgFailedAttempts) ? (float) $avgFailedAttempts : 0.0;
+
+        return [
+            'failed_attempts_distribution' => $failedAttempts,
+            'locked_accounts' => $lockedAccounts,
+            'password_changes_30d' => $passwordChanges,
+            'require_password_change' => $requirePasswordChange,
+            'avg_failed_attempts' => round($avgFailedAttempts, 1),
+        ];
+    }
+
+    /**
+     * Get staff performance metrics - FIXED FOR LINE 838 ISSUES
      *
      * @return array
      */
@@ -812,13 +826,13 @@ public function getSecurityMetrics(): array
                 return [
                     'staff_id' => $item->identity_verified_by_staff_id,
                     'staff_name' => $staff ? "{$staff->first_name} {$staff->last_name}" : 'Unknown',
-                    'verification_count' => $item->verification_count,
+                    'verification_count' => (int) $item->verification_count,
                     'first_verification' => $item->first_verification,
                     'last_verification' => $item->last_verification,
                 ];
             });
 
-        // Average verification time by staff
+        // Average verification time by staff - FIX: Cast to float before rounding
         $avgTimeByStaff = User::whereNotNull('identity_verified_by_staff_id')
             ->whereNotNull('identity_verified_at')
             ->select(
@@ -828,20 +842,23 @@ public function getSecurityMetrics(): array
             ->groupBy('identity_verified_by_staff_id')
             ->get()
             ->mapWithKeys(function ($item) {
-                return [$item->identity_verified_by_staff_id => round($item->avg_hours, 1)];
+                $avgHours = $item->avg_hours;
+                $avgHours = is_numeric($avgHours) ? (float) $avgHours : 0.0;
+                return [$item->identity_verified_by_staff_id => round($avgHours, 1)];
             });
+
+        // Overall average verification time
+        $overallAvg = User::whereNotNull('identity_verified_at')
+            ->select(DB::raw('AVG(TIMESTAMPDIFF(HOUR, created_at, identity_verified_at)) as avg_hours'))
+            ->first()
+            ->avg_hours ?? 0;
+        $overallAvg = is_numeric($overallAvg) ? (float) $overallAvg : 0.0;
 
         return [
             'top_performers' => $verificationsByStaff,
             'avg_time_by_staff' => $avgTimeByStaff,
-            'total_verifications' => User::whereNotNull('identity_verified_at')->count(),
-            'avg_verification_time_overall' => round(
-                User::whereNotNull('identity_verified_at')
-                    ->select(DB::raw('AVG(TIMESTAMPDIFF(HOUR, created_at, identity_verified_at)) as avg_hours'))
-                    ->first()
-                    ->avg_hours ?? 0,
-                1
-            ),
+            'total_verifications' => (int) User::whereNotNull('identity_verified_at')->count(),
+            'avg_verification_time_overall' => round($overallAvg, 1),
         ];
     }
 
@@ -860,15 +877,15 @@ public function getSecurityMetrics(): array
             $monthStart = $month->copy()->startOfMonth();
             $monthEnd = $month->copy()->endOfMonth();
             
-            $usersByEndOfMonth = User::where('created_at', '<=', $monthEnd)->count();
-            $mfaByEndOfMonth = User::where('mfa_enabled', true)
+            $usersByEndOfMonth = (int) User::where('created_at', '<=', $monthEnd)->count();
+            $mfaByEndOfMonth = (int) User::where('mfa_enabled', true)
                 ->where('created_at', '<=', $monthEnd)
                 ->count();
             
             $trend[] = [
                 'month' => $month->format('M Y'),
                 'adoption_rate' => $usersByEndOfMonth > 0 
-                    ? round(($mfaByEndOfMonth / $usersByEndOfMonth) * 100, 1)
+                    ? round(((float) $mfaByEndOfMonth / (float) $usersByEndOfMonth) * 100, 1)
                     : 0,
                 'mfa_count' => $mfaByEndOfMonth,
                 'total_users' => $usersByEndOfMonth,

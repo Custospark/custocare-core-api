@@ -4,16 +4,26 @@ namespace App\Services\Module;
 
 use App\Models\Module;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 
 class ModuleService
 {
     /**
      * Get all active modules
      */
-    public function getAllActive(): Collection
-    {
-        return Module::where('is_active', true)->orderBy('name')->get();
+public function getAllActive(): Collection
+{
+    $query = Module::where('is_active', true)
+        ->orderBy('name');
+
+    // Only super_admin sees platform_administration
+    $user = Auth::user();
+    if (!$user || !$user->hasRole('super_admin')) {
+        $query->where('code', '!=', 'platform_administration');
     }
+
+    return $query->get();
+}
 
     /**
      * Create a new module

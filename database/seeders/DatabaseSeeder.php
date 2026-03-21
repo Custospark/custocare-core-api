@@ -19,13 +19,13 @@ class DatabaseSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
         $modules = [
-            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => true],
-            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => true],
-            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => true],
+            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => false],
+            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => false],
+            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => false],
             ['code' => 'medical_records', 'name' => 'Medical Records', 'description' => 'Registration & Medical Records', 'is_active' => true],
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
-            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
-            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
+            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => false],
+            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => false],
             ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true],
             // ADD NEW PLATFORM ADMINISTRATION MODULE
             ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],

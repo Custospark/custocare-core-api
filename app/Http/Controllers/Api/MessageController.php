@@ -97,8 +97,7 @@ class MessageController extends Controller
      * Pass `scheduled_send_at` to queue a future send.
      */
     public function store(Request $request): JsonResponse
-    {
-        Log::info($request);
+    {  
 
         $data = $request->validate([
             'save_draft'                => ['sometimes', 'boolean'],

@@ -2,12 +2,14 @@
 
 namespace App\Services\Visit;
 
+use App\Models\Staff;
 use App\Models\Visit;
 use App\Repositories\Contracts\VisitRepositoryInterface;
 use App\Services\Contracts\VisitServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Auth as FacadesAuth;
 
 /**
  * Visit Service Implementation
@@ -232,7 +234,7 @@ class VisitService implements VisitServiceInterface
     /**
      * {@inheritDoc}
      */
-    public function createVisit(array $data, int $userId): array
+    public function createVisit(array $data, int $staffId): array
     {
         try {
             DB::beginTransaction();
@@ -244,8 +246,8 @@ class VisitService implements VisitServiceInterface
             }
 
             // Set audit fields
-            $data['created_by_staff_id'] = $userId;
-            $data['updated_by_staff_id'] = $userId;
+            $data['created_by_staff_id'] = $staffId;
+            $data['updated_by_staff_id'] = $staffId;
 
             // Set default arrived_at if not provided
             if (empty($data['arrived_at'])) {
@@ -265,7 +267,7 @@ class VisitService implements VisitServiceInterface
             Log::info('Visit created successfully', [
                 'visit_id' => $visit->id,
                 'visit_uuid' => $visit->visit_uuid,
-                'user_id' => $userId,
+                'staff_id' => Staff::where('user_id',Auth::id())->first()->id,
             ]);
 
             return [
@@ -278,7 +280,7 @@ class VisitService implements VisitServiceInterface
 
             Log::error('Failed to create visit', [
                 'data' => $data,
-                'user_id' => $userId,
+                'staff_id' => Staff::where('user_id',Auth::id())->first()->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);

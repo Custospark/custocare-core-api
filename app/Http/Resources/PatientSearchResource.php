@@ -22,7 +22,9 @@ class PatientSearchResource extends JsonResource
             ?? trim(($user?->first_name ?? '') . ' ' . ($user?->last_name ?? ''));
 
         return [
-            // 1) Patient number (patient_uuid)
+            // 1)(a) Patient number (patient_uuid)
+            'id' => $this->id,
+            // 1)(b) Patient number (patient_uuid)
             'patient_number' => $this->patient_uuid,
 
             // 2) User public ID (if needed by client)

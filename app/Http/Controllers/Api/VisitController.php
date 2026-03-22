@@ -278,10 +278,10 @@ class VisitController extends Controller
             $validatedData = $request->validated();
 
             // Get current user ID for audit
-            $userId = $request->user()->id;
+            $staffId =Staff::where('user_id',Auth::id())->first()->id;
 
             // Create visit via service
-            $result = $this->visitService->createVisit($validatedData, $userId);
+            $result = $this->visitService->createVisit($validatedData, $staffId);
 
             if (!$result['success']) {
                 return response()->json($result, 400);

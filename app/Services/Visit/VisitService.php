@@ -2,6 +2,7 @@
 
 namespace App\Services\Visit;
 
+use App\Models\Patient;
 use App\Models\Staff;
 use App\Models\Visit;
 use App\Repositories\Contracts\VisitRepositoryInterface;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Auth as FacadesAuth;
+use Illuminate\Support\Str;
 
 /**
  * Visit Service Implementation
@@ -234,64 +236,109 @@ class VisitService implements VisitServiceInterface
     /**
      * {@inheritDoc}
      */
-    public function createVisit(array $data, int $staffId): array
-    {
-        try {
-            DB::beginTransaction();
+   /**
+ * Create a new visit or return existing active visit for a patient
+ * 
+ * @param array $data Visit data (must include facility_id, patient_id or user_id)
+ * @param int $staffId The authenticated user ID (will be used to find staff record)
+ * @return array
+ */
+public function createVisit(array $data, int $staffId): array
+{
+    try {
+        DB::beginTransaction();
 
-            // Validate required fields
-            $validationResult = $this->validateVisitData($data, 'create');
-            if (!$validationResult['success']) {
-                return $validationResult;
-            }
+        // Find patient - either by patient_id or user_id
+        $patient = null;
+        if (isset($data['patient_id'])) {
+            $patient = Patient::find($data['patient_id']);
+        } elseif (isset($data['user_id'])) {
+            $patient = Patient::where('user_id', $data['user_id'])->first();
+        }
 
-            // Set audit fields
-            $data['created_by_staff_id'] = $staffId;
-            $data['updated_by_staff_id'] = $staffId;
+        if (!$patient) {
+            DB::rollBack();
+            return [
+                'success' => false,
+                'message' => 'Patient not found.',
+            ];
+        }
 
-            // Set default arrived_at if not provided
-            if (empty($data['arrived_at'])) {
-                $data['arrived_at'] = now();
-            }
+        // Check for existing active or in-progress visit for this patient at this facility
+        $existingVisit = Visit::where('patient_id', $patient->id)
+            ->where('facility_id', $data['facility_id'])
+            ->whereIn('status', ['active', 'in_progress'])
+            ->whereNull('deleted_at')
+            ->orderBy('created_at', 'desc')
+            ->first();
 
-            // Set registered_at if walk-in and no scheduled time
-            if (($data['is_walk_in'] ?? false) && empty($data['registered_at'])) {
-                $data['registered_at'] = now();
-            }
-
-            // Create the visit
-            $visit = $this->visitRepository->create($data);
-
+        // If an active visit exists, return it
+        if ($existingVisit) {
             DB::commit();
-
-            Log::info('Visit created successfully', [
-                'visit_id' => $visit->id,
-                'visit_uuid' => $visit->visit_uuid,
-                'staff_id' => Staff::where('user_id',Auth::id())->first()->id,
+            
+            Log::info('Existing active visit found', [
+                'visit_id' => $existingVisit->id,
+                'visit_uuid' => $existingVisit->visit_uuid,
+                'patient_id' => $patient->id,
+                'facility_id' => $data['facility_id'],
+                'staff_id' => $staffId,
             ]);
 
             return [
                 'success' => true,
-                'data' => $visit,
-                'message' => 'Visit created successfully.',
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            Log::error('Failed to create visit', [
-                'data' => $data,
-                'staff_id' => Staff::where('user_id',Auth::id())->first()->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Failed to create visit. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null,
+                'data' => $existingVisit,
+                'message' => 'Existing active visit found.',
+                'is_existing' => true,
             ];
         }
+
+        // No existing active visit - create new one
+        // Set required fields
+        $data['patient_id'] = $patient->id;
+        $data['created_by_staff_id'] = $staffId;
+        $data['updated_by_staff_id'] = $staffId;
+        $data['arrived_at'] = $data['arrived_at'] ?? now();
+        $data['current_phase'] = $data['current_phase'] ?? 'registration';
+        $data['status'] = $data['status'] ?? 'active';
+        $data['visit_uuid'] = $data['visit_uuid'] ?? (string) Str::uuid();
+
+        // Create the visit
+        $visit = Visit::create($data);
+
+        DB::commit();
+
+        Log::info('New visit created', [
+            'visit_id' => $visit->id,
+            'visit_uuid' => $visit->visit_uuid,
+            'patient_id' => $patient->id,
+            'facility_id' => $data['facility_id'],
+            'staff_id' => $staffId,
+        ]);
+
+        return [
+            'success' => true,
+            'data' => $visit,
+            'message' => 'Visit created successfully.',
+            'is_existing' => false,
+        ];
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+
+        Log::error('Failed to create visit', [
+            'data' => $data,
+            'staff_id' => $staffId,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to create visit. Please try again later.',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ];
     }
+}
 
     /**
      * {@inheritDoc}

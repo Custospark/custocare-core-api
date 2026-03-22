@@ -7,22 +7,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Storage;
-/**
- * @property int         $id
- * @property int         $message_id
- * @property string      $original_name
- * @property string      $stored_name
- * @property string      $disk
- * @property string      $path
- * @property string|null $mime_type
- * @property int         $size_bytes
- * @property string|null $size_formatted
- * @property int|null    $uploaded_by
- * @property string      $upload_status     pending|uploading|complete|failed
- * @property int         $upload_progress   0-100
- */
+use Illuminate\Support\Facades\URL;
+
 class MessageAttachment extends Model
 {
+    protected $appends = ['download_url'];
+
     protected $fillable = [
         'message_id',
         'original_name',
@@ -42,6 +32,7 @@ class MessageAttachment extends Model
         'upload_progress' => 'integer',
     ];
 
+
     // ── Relationships ─────────────────────────────────────────────────────
 
     public function message(): BelongsTo
@@ -54,39 +45,61 @@ class MessageAttachment extends Model
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
+    // ── Accessors ─────────────────────────────────────────────────────────
+
+    /**
+     * Get the download URL for this attachment.
+     * This will be included in API responses automatically.
+     */
+   
+
+    public function getDownloadUrlAttribute(): string
+{
+    return URL::temporarySignedRoute(
+        'messages.attachments.download',  // route name (registered below)
+        now()->addMinutes(60),
+        ['attachmentId' => $this->id]
+    );
+}
+
     // ── Helpers ───────────────────────────────────────────────────────────
-
-
 
     /**
      * Generate a temporary signed URL for downloading the file.
      * Falls back to a permanent URL for public disks.
-     */
-    public function downloadUrl(int $expirationMinutes = 60): string
-    {
-        /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-        $disk = Storage::disk($this->disk);
+     */   public function downloadUrl(): string
+{
+    return URL::temporarySignedRoute(
+        'messages.attachments.download',  // route name (registered below)
+        now()->addMinutes(60),
+        ['attachmentId' => $this->id]
+    );
+}
+    // public function downloadUrl(int $expirationMinutes = 60): string
+    // {
+    //     /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+    //     $disk = Storage::disk($this->disk);
         
-        // Check if the disk supports temporary URLs
-        if ($disk instanceof \Illuminate\Contracts\Filesystem\Filesystem && 
-            method_exists($disk, 'temporaryUrl')) {
-            try {
-                /** @var string $url */
-                $url = $disk->temporaryUrl($this->path, now()->addMinutes($expirationMinutes));
-                return $url;
-            } catch (\Exception $e) {
-                // If temporary URL fails, fall back to permanent URL
-                /** @var string $url */
-                $url = $disk->url($this->path);
-                return $url;
-            }
-        }
+    //     // Check if the disk supports temporary URLs
+    //     if ($disk instanceof \Illuminate\Contracts\Filesystem\Filesystem && 
+    //         method_exists($disk, 'temporaryUrl')) {
+    //         try {
+    //             /** @var string $url */
+    //             $url = $disk->temporaryUrl($this->path, now()->addMinutes($expirationMinutes));
+    //             return $url;
+    //         } catch (\Exception $e) {
+    //             // If temporary URL fails, fall back to permanent URL
+    //             /** @var string $url */
+    //             $url = $disk->url($this->path);
+    //             return $url;
+    //         }
+    //     }
         
-        // For disks without temporary URL support
-        /** @var string $url */
-        $url = $disk->url($this->path);
-        return $url;
-    }
+    //     // For disks without temporary URL support
+    //     /** @var string $url */
+    //     $url = $disk->url($this->path);
+    //     return $url;
+    // }
 
     /**
      * Format raw bytes into a human-readable string (KB / MB / GB).

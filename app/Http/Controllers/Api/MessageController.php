@@ -6,12 +6,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Message;
+use App\Models\MessageAttachment;
+use App\Models\User;
 use App\Services\Message\MessageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 /**
@@ -92,6 +95,8 @@ class MessageController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        Log::info($request);
+
         $data = $request->validate([
             'save_draft'                => ['sometimes', 'boolean'],
             'message_id'                => ['sometimes', 'integer', 'exists:messages,id'],
@@ -401,6 +406,68 @@ class MessageController extends Controller
         return response()->json(['status' => 'attachment_removed']);
     }
 
+    /**
+ * Download an attachment.
+ * 
+ * @param User $user
+ * @param int $attachmentId
+ * @return MessageAttachment
+ * @throws RuntimeException
+ */
+
+
+    // ── GET /messages/attachments/{attachmentId} ─────────────────────────────────────
+
+/**
+ * Download an attachment file.
+ * 
+ * @param int $attachmentId
+ * @return \Symfony\Component\HttpFoundation\StreamedResponse|JsonResponse
+ */
+/**
+ * Download an attachment file.
+ * 
+ * @param int $attachmentId
+ * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|JsonResponse
+ */
+public function downloadAttachment(Request $request, int $attachmentId)
+{
+    // Validate the signed URL (prevents forged / expired requests)
+    if (!$request->hasValidSignature()) {
+        abort(403, 'Invalid or expired download link.');
+    }
+
+    try {
+        $attachment = $this->service->downloadAttachment(Auth::user(), $attachmentId);
+
+        // Resolve absolute path on the correct disk
+        $disk = $attachment->disk;           // 'private', 'local', 'public', 's3', …
+        $path = $attachment->path;           // relative: messages/4/attachments/uuid.jpg
+
+        if (!Storage::disk($disk)->exists($path)) {
+            return response()->json(['message' => 'File not found on disk.'], 404);
+        }
+
+        $fullPath = Storage::disk($disk)->path($path);
+
+        return response()->download(
+            $fullPath,
+            $attachment->original_name,
+            ['Content-Type' => $attachment->mime_type ?? 'application/octet-stream']
+        );
+
+    } catch (\Exception $e) {
+        Log::error('Failed to download attachment', [
+            'user_id' => Auth::id(),
+            'attachment_id' => $attachmentId,
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'message' => 'Failed to download attachment: ' . $e->getMessage(),
+        ], Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+}
     // ── GET /messages/stats ───────────────────────────────────────────────
 
     /**

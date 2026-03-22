@@ -22,7 +22,7 @@ class DatabaseSeeder extends Seeder
             ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => false],
             ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => false],
             ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => false],
-            ['code' => 'medical_records', 'name' => 'Medical Records', 'description' => 'Registration & Medical Records', 'is_active' => true],
+            ['code' => 'medical_records', 'name' => 'Medical Records', 'description' => 'Medical Records, Patient Registration & workflows', 'is_active' => true],
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
             ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => false],
             ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => false],

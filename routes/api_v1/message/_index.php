@@ -47,4 +47,6 @@ Route::middleware('auth:sanctum')->prefix('messages')->group(function () {
     // ── Attachments ─────────────────────────────────────
     Route::post('/{id}/attachments', [MessageController::class, 'uploadAttachment']); // POST /api/messages/{id}/attachments
     Route::delete('/attachments/{attachmentId}', [MessageController::class, 'removeAttachment']); // DELETE /api/messages/attachments/{attachmentId}
+    Route::get('/attachments/{attachmentId}', [MessageController::class, 'downloadAttachment'])->name('messages.attachments.download'); // GET /api/messages/attachments/{attachmentId}
+
 });

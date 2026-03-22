@@ -881,6 +881,50 @@ class MessageService
     }
 
     /**
+ * Download an attachment.
+ * 
+ * @param User $user
+ * @param int $attachmentId
+ * @return MessageAttachment
+ * @throws RuntimeException
+ */
+public function downloadAttachment(User $user, int $attachmentId): MessageAttachment
+{
+    try {
+        $attachment = MessageAttachment::with('message')
+            ->findOrFail($attachmentId);
+        
+        // Check if user has access to this attachment
+        $hasAccess = MessageUserState::where('message_id', $attachment->message_id)
+            ->where('user_id', $user->id)
+            ->exists();
+        
+        // Allow access if user is the sender OR has a message state (recipient)
+        $isSender = $attachment->message->sender_id === $user->id;
+        
+        if (!$isSender && !$hasAccess) {
+            throw new RuntimeException('You do not have permission to download this attachment.');
+        }
+        
+        // Verify file exists
+        if (!Storage::disk($attachment->disk)->exists($attachment->path)) {
+            throw new RuntimeException('Attachment file not found.');
+        }
+        
+        return $attachment;
+        
+    } catch (Throwable $e) {
+        Log::error('Failed to download attachment', [
+            'user_id' => $user->id,
+            'attachment_id' => $attachmentId,
+            'error' => $e->getMessage()
+        ]);
+        
+        throw new RuntimeException('Failed to download attachment: ' . $e->getMessage(), 0, $e);
+    }
+}
+
+    /**
      * Verify message ownership.
      */
     private function verifyMessageOwnership(User $user, int $messageId): void

@@ -16,6 +16,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+
 
 /**
  * MessageController
@@ -406,57 +409,87 @@ class MessageController extends Controller
         return response()->json(['status' => 'attachment_removed']);
     }
 
-    /**
- * Download an attachment.
- * 
- * @param User $user
- * @param int $attachmentId
- * @return MessageAttachment
- * @throws RuntimeException
- */
-
-
-    // ── GET /messages/attachments/{attachmentId} ─────────────────────────────────────
 
 /**
  * Download an attachment file.
  * 
+ * @param Request $request
  * @param int $attachmentId
- * @return \Symfony\Component\HttpFoundation\StreamedResponse|JsonResponse
- */
-/**
- * Download an attachment file.
- * 
- * @param int $attachmentId
- * @return \Symfony\Component\HttpFoundation\BinaryFileResponse|JsonResponse
+ * @return BinaryFileResponse|StreamedResponse|\Illuminate\Http\JsonResponse
  */
 public function downloadAttachment(Request $request, int $attachmentId)
 {
-    // Validate the signed URL (prevents forged / expired requests)
+    // Validate signed URL
     if (!$request->hasValidSignature()) {
         abort(403, 'Invalid or expired download link.');
     }
 
     try {
         $attachment = $this->service->downloadAttachment(Auth::user(), $attachmentId);
+        
+        $disk = Storage::disk($attachment->disk);
+        $path = $attachment->path;
 
-        // Resolve absolute path on the correct disk
-        $disk = $attachment->disk;           // 'private', 'local', 'public', 's3', …
-        $path = $attachment->path;           // relative: messages/4/attachments/uuid.jpg
-
-        if (!Storage::disk($disk)->exists($path)) {
-            return response()->json(['message' => 'File not found on disk.'], 404);
+        if (!$disk->exists($path)) {
+            return response()->json([
+                'message' => 'File not found on disk.',
+            ], Response::HTTP_NOT_FOUND);
         }
 
-        $fullPath = Storage::disk($disk)->path($path);
+        $filename = $attachment->original_name;
+        $mimeType = $attachment->mime_type ?: 'application/octet-stream';
+        
+        // Clear any existing output buffers
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
 
-        return response()->download(
-            $fullPath,
-            $attachment->original_name,
-            ['Content-Type' => $attachment->mime_type ?? 'application/octet-stream']
-        );
-
-    } catch (\Exception $e) {
+        // For local disks - use BinaryFileResponse
+        if ($attachment->disk === 'local') {
+            $fullPath = $disk->path($path);
+            return new BinaryFileResponse($fullPath, 200, [
+                'Content-Type' => $mimeType,
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Content-Length' => $attachment->size_bytes,
+                'Cache-Control' => 'no-cache, private',
+                'Pragma' => 'no-cache',
+                'Expires' => '0',
+            ]);
+        }
+        
+        // For cloud disks - use StreamedResponse
+        $stream = $disk->readStream($path);
+        
+        if ($stream === false) {
+            return response()->json([
+                'message' => 'Unable to read file stream.',
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+        
+        return new StreamedResponse(function() use ($stream) {
+            // Set binary mode
+            if (function_exists('set_time_limit')) {
+                set_time_limit(0);
+            }
+            
+            // Output the file in chunks
+            while (!feof($stream)) {
+                echo fread($stream, 8192);
+                flush();
+            }
+            fclose($stream);
+        }, 200, [
+            'Content-Type' => $mimeType,
+            'Content-Length' => $attachment->size_bytes,
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+            'Content-Transfer-Encoding' => 'binary',
+            'Cache-Control' => 'no-cache, private',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+        
+    } catch (\Throwable $e) {
         Log::error('Failed to download attachment', [
             'user_id' => Auth::id(),
             'attachment_id' => $attachmentId,

@@ -941,10 +941,10 @@ private function determineStaffAvailability(string $presenceStatus, int $current
             // $this->authorize('delete', \App\Models\Visit::class);
 
             // Get current user ID
-            $userId = Auth::id();
+            $staffId = Staff::where('user_id',$request->user()->id)->first()->id;
 
             // Delete visit via service
-            $result = $this->visitService->deleteVisit($uuid, $userId);
+            $result = $this->visitService->deleteVisit($uuid, $staffId);
 
             if (!$result['success']) {
                 return response()->json($result, 400);
@@ -1195,14 +1195,14 @@ private function determineStaffAvailability(string $presenceStatus, int $current
             ]);
 
             // Get current user ID
-            $userId = $request->user()->id;
+            $staffId = Staff::where('user_id',$request->user()->id)->first()->id;
 
             // Update status via service
             $result = $this->visitService->updateVisitStatus(
                 $uuid,
                 $request->status,
                 $request->additional_data ?? [],
-                $userId
+                $staffId
             );
 
             if (!$result['success']) {
@@ -1502,10 +1502,10 @@ private function determineStaffAvailability(string $presenceStatus, int $current
             ]);
 
             // Get current user ID
-            $userId = $request->user()->id;
+            $staffId = Staff::where('user_id',$request->user()->id)->first()->id;
 
             // Cancel visit via service
-            $result = $this->visitService->cancelVisit($uuid, $request->cancellation_reason, $userId);
+            $result = $this->visitService->cancelVisit($uuid, $request->cancellation_reason, $staffId);
 
             if (!$result['success']) {
                 return response()->json($result, 400);

@@ -702,7 +702,7 @@ public function createVisit(array $data, int $staffId): array
     /**
      * {@inheritDoc}
      */
-    public function updateVisitStatus(string $uuid, string $status, array $additionalData = [], ?int $userId = null): array
+    public function updateVisitStatus(string $uuid, string $status, array $additionalData = [], ?int $staffId = null): array
     {
         try {
             DB::beginTransaction();
@@ -736,8 +736,8 @@ public function createVisit(array $data, int $staffId): array
             }
 
             // Set audit field if user provided
-            if ($userId) {
-                $additionalData['updated_by_staff_id'] = $userId;
+            if ($staffId) {
+                $additionalData['updated_by_staff_id'] = $staffId;
             }
 
             // Update status
@@ -750,7 +750,7 @@ public function createVisit(array $data, int $staffId): array
                 'visit_uuid' => $uuid,
                 'old_status' => $visit->status,
                 'new_status' => $status,
-                'user_id' => $userId,
+                'staff_id' => $staffId,
             ]);
 
             return [
@@ -764,7 +764,7 @@ public function createVisit(array $data, int $staffId): array
             Log::error('Failed to update visit status', [
                 'uuid' => $uuid,
                 'status' => $status,
-                'user_id' => $userId,
+                'user_id' => $staffId,
                 'error' => $e->getMessage(),
             ]);
 
@@ -779,7 +779,7 @@ public function createVisit(array $data, int $staffId): array
     /**
      * {@inheritDoc}
      */
-    public function dischargeVisit(string $uuid, array $dischargeData, int $userId): array
+    public function dischargeVisit(string $uuid, array $dischargeData, int $staffId): array
     {
         try {
             DB::beginTransaction();
@@ -810,8 +810,8 @@ public function createVisit(array $data, int $staffId): array
             }
 
             // Set discharge by
-            $dischargeData['discharged_by_staff_id'] = $userId;
-            $dischargeData['updated_by_staff_id'] = $userId;
+            $dischargeData['discharged_by_staff_id'] = $staffId;
+            $dischargeData['updated_by_staff_id'] = $staffId;
 
             // Discharge the visit
             $dischargedVisit = $this->visitRepository->discharge($visit, $dischargeData);
@@ -821,7 +821,7 @@ public function createVisit(array $data, int $staffId): array
             Log::info('Visit discharged', [
                 'visit_id' => $visit->id,
                 'visit_uuid' => $uuid,
-                'user_id' => $userId,
+                'staff_id' => $staffId,
                 'discharge_disposition' => $dischargeData['discharge_disposition'] ?? null,
             ]);
 
@@ -835,7 +835,7 @@ public function createVisit(array $data, int $staffId): array
 
             Log::error('Failed to discharge visit', [
                 'uuid' => $uuid,
-                'user_id' => $userId,
+                'user_id' => $staffId,
                 'error' => $e->getMessage(),
             ]);
 
@@ -998,13 +998,13 @@ public function createVisit(array $data, int $staffId): array
     /**
      * {@inheritDoc}
      */
-    public function cancelVisit(string $uuid, string $reason, int $userId): array
+    public function cancelVisit(string $uuid, string $reason, int $staffId): array
     {
         return $this->updateVisitStatus($uuid, 'cancelled', [
             'cancellation_reason' => $reason,
             'cancelled_at' => now(),
-            'updated_by_staff_id' => $userId,
-        ], $userId);
+            'updated_by_staff_id' => $staffId,
+        ], $staffId);
     }
 
     /**

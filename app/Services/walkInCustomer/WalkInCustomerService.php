@@ -190,7 +190,7 @@ class WalkInCustomerService
                     'system_user_id' => (int) $mapping->system_user_id,
                     'patient_id' => (int) $mapping->patient_id,
                     'patient_uuid' => $patient->patient_uuid ?? null,
-                    'display_name' => 'Walk-in Customer',
+                    'display_name' => 'Walk-in Patient',
                     'mode' => 'existing',
                 ];
             }
@@ -236,7 +236,7 @@ class WalkInCustomerService
                 'system_user_id' => (int) $systemUser->id,
                 'patient_id' => (int) $patient->id,
                 'patient_uuid' => $patient->patient_uuid ?? null,
-                'display_name' => 'Walk-in Customer',
+                'display_name' => 'Walk-in Patient',
                 'mode' => 'created',
             ];
         });

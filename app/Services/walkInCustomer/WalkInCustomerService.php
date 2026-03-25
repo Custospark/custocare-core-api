@@ -47,7 +47,7 @@ class WalkInCustomerService
                     
                     'first_name' => 'System',
                     'last_name' => 'WalkIn',
-                    'display_name' => 'System Walk-In Identity',
+                    'display_name' => 'Walk-in Patient',
                     
                     'dob' => '1900-01-01',
                     'gender' => 'other',
@@ -108,7 +108,7 @@ class WalkInCustomerService
                     
                     'first_name' => 'System',
                     'last_name' => 'WalkIn',
-                    'display_name' => 'System Walk-In Identity',
+                    'display_name' => 'Walk-in Patient',
                     
                     'dob' => '1900-01-01',
                     'gender' => 'other',

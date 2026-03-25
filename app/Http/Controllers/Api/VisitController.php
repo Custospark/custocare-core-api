@@ -369,49 +369,59 @@ class VisitController extends Controller
      * @param string $uuid
      * @return JsonResponse
      */
-    public function update(UpdateVisitRequest $request, string $uuid): JsonResponse
-    {
-        Log::info($request);
+   public function update(UpdateVisitRequest $request, string $uuid): JsonResponse
+{
+    Log::info($request);
+    
+    try {
+        // Get validated data
+        $validatedData = $request->validated();
+
+        // Get current staff ID for audit - FIX: extract just the ID
+        $staff = Staff::where('user_id', Auth::id())->first();
         
-        try {
-            // Get validated data
-            $validatedData = $request->validated();
-
-            // Get current user ID for audit
-            $userId = Auth::id();
-
-            // Update visit via service
-            $result = $this->visitService->updateVisit($uuid, $validatedData, $userId);
-
-            if (!$result['success']) {
-                return response()->json($result, 400);
-            }
-
-            // Transform to resource
-            $visit = $result['data'];
-            $transformed = new VisitResource($visit);
-
-            return response()->json([
-                'success' => true,
-                'data' => $transformed,
-                'message' => $result['message'],
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Failed to update visit', [
-                'uuid' => $uuid,
-                'data' => $request->all(),
-                'user_id' => $request->user()->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
+        // Check if staff exists
+        if (!$staff) {
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+                'message' => 'Staff record not found for authenticated user',
+            ], 404);
         }
+        
+        $staffId = $staff->id; // Extract the integer ID
+
+        // Update visit via service
+        $result = $this->visitService->updateVisit($uuid, $validatedData, $staffId);
+
+        if (!$result['success']) {
+            return response()->json($result, 400);
+        }
+
+        // Transform to resource
+        $visit = $result['data'];
+        $transformed = new VisitResource($visit);
+
+        return response()->json([
+            'success' => true,
+            'data' => $transformed,
+            'message' => $result['message'],
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Failed to update visit', [
+            'uuid' => $uuid,
+            'data' => $request->all(),
+            'user_id' => $request->user()->id,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'An unexpected error occurred. Please try again later.',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
     }
+}
     
    
    /**

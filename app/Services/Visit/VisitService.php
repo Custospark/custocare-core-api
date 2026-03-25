@@ -343,7 +343,7 @@ public function createVisit(array $data, int $staffId): array
     /**
      * {@inheritDoc}
      */
-    public function updateVisit(string $uuid, array $data, int $userId): array
+    public function updateVisit(string $uuid, array $data, int $staffId): array
     {
         try {
             DB::beginTransaction();
@@ -412,7 +412,7 @@ public function createVisit(array $data, int $staffId): array
             }
 
             // Set audit field
-            $data['updated_by_staff_id'] = $userId;
+            $data['updated_by_staff_id'] = $staffId;
 
             // Update the visit
             $updatedVisit = $this->visitRepository->update($visit, $data);
@@ -422,7 +422,7 @@ public function createVisit(array $data, int $staffId): array
             Log::info('Visit updated successfully', [
                 'visit_id' => $visit->id,
                 'visit_uuid' => $uuid,
-                'user_id' => $userId,
+                'user_id' => $staffId,
             ]);
 
             return [
@@ -436,7 +436,7 @@ public function createVisit(array $data, int $staffId): array
             Log::error('Failed to update visit', [
                 'uuid' => $uuid,
                 'data' => $data,
-                'user_id' => $userId,
+                'user_id' => $staffId,
                 'error' => $e->getMessage(),
             ]);
 

@@ -77,12 +77,16 @@ class BillingService
             return $billingEligibility;
         }
 
-        // Step 3: Check for existing billing cycle to prevent duplicate billing
+       // Step 3: Find existing editable billing cycle (pending / partially_paid)
+        // If found, we will append into it instead of creating a new one.
         $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
-        
+
         if (!$existingBillingCheck['success']) {
             return $existingBillingCheck;
         }
+
+        $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
+
 
         // Step 4: Validate inventory availability BEFORE transaction
         $inventoryValidation = $this->validation->validateInventoryAvailability($data['charge_items'], $staffId);
@@ -136,7 +140,7 @@ class BillingService
         $isInsuranceInvolved = false;
 
         // Step 8: Process billing within atomic transaction
-        $result = $this->processor->processBillingTransaction(
+            $result = $this->processor->processBillingTransaction(
             $data,
             $facilityId,
             $staffId,
@@ -144,8 +148,10 @@ class BillingService
             $paymentSplit,
             $isPrimaryCash,
             $isInsuranceInvolved,
-            $visit
+            $visit,
+            $existingEditableBillingCycle
         );
+
 
        // Use the authoritative resolved values
             $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
@@ -165,25 +171,31 @@ class BillingService
         ]);
 
         // Return success response with accurate data
+      $wasExistingCycleUpdated = !empty($existingEditableBillingCycle);
+
         return [
             'success' => true,
-            'message' => $isFullyPaid 
-                ? 'Payment successfully settled. Visit has been completed.' 
-                : 'Billing saved successfully.',
+            'message' => $isFullyPaid
+                ? 'Payment successfully settled. Visit has been completed.'
+                : ($wasExistingCycleUpdated
+                    ? 'Existing billing cycle updated successfully. New values were added to the current bill.'
+                    : 'Billing saved successfully.'),
             'data' => [
                 'billing_cycle_id' => $result['billing_cycle']->id ?? null,
                 'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid ?? null,
                 'receipt_number' => "REC-" . ($result['billing_cycle']->id ?? '0000'),
                 'billing_status' => $result['billing_cycle']->billing_status ?? null,
                 'net_amount' => $result['billing_cycle']->net_amount ?? 0,
-                'total_paid' => $validatedTotalPaid,
-                'balance' => $balance,
-                'created_at' => isset($result['billing_cycle']->created_at) 
-                    ? $result['billing_cycle']->created_at->toISOString() 
+                'total_paid' => $result['billing_cycle']->total_paid_amount ?? $validatedTotalPaid,
+                'balance' => $result['billing_cycle']->balance_amount ?? $balance,
+                'created_at' => isset($result['billing_cycle']->created_at)
+                    ? $result['billing_cycle']->created_at->toISOString()
                     : now()->toISOString(),
                 'line_items_count' => count($result['line_items'] ?? []),
+                'was_existing_cycle_updated' => $wasExistingCycleUpdated,
             ],
         ];
+
 
     } catch (Throwable $e) {
         Log::error('Failed to finalize billing', [
@@ -232,12 +244,14 @@ class BillingService
             }
 
             // Get billing cycle for this visit
-            $billingCycle = BillingCycle::query()
-                ->where('visit_id', $visitId)
-                ->where('facility_id', $facilityId)
-                ->with(['lineItems'])
-                ->orderByDesc('created_at')
-                ->first();
+           $billingCycle = BillingCycle::query()
+                            ->where('visit_id', $visitId)
+                            ->where('facility_id', $facilityId)
+                            ->with(['lineItems'])
+                            ->orderByRaw("CASE WHEN billing_status IN ('pending', 'partially_paid') THEN 0 ELSE 1 END")
+                            ->orderByDesc('created_at')
+                            ->first();
+
 
             // If no billing cycle exists, return empty state
             if (!$billingCycle) {
@@ -536,7 +550,9 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
         'taxes'             => $taxes,
         'payment_methods'   => $paymentMethods,
         'additional_notes'  => $additionalNotes,
-        'payment_status'    => Visit::where('id',$visit->id)->value('payment_status'),
+        'payment_status' => in_array($billingCycle->billing_status, ['pending', 'partially_paid', 'paid_in_full'], true)
+            ? $billingCycle->billing_status
+            : Visit::where('id', $visit->id)->value('payment_status'),
 
         // Calculated - FIXED: Using accurate values
         'billing_data' => $billingData,

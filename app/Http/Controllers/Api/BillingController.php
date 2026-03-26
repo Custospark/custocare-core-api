@@ -254,7 +254,8 @@ class BillingController extends Controller
                 'transaction_id' => $result['data']['transaction_id'] ?? null,
             ]);
 
-            return response()->json($result, 201);
+            $statusCode = !empty($result['data']['was_existing_cycle_updated']) ? 200 : 201;
+            return response()->json($result, $statusCode);
 
         } catch (ValidationException $e) {
             // This should not happen as we're catching ValidationException above,

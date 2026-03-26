@@ -14,56 +14,46 @@ use Throwable;
  */
 trait BillingHelpers
 {
-    /**
-     * Check if a visit can be billed
-     *
-     * @param Visit $visit
-     * @return array Success status and message
-     */
     public function canBeBilled(Visit $visit): array
-    {
-        // Check if visit is already completed
-        if ($visit->status === 'completed') {
-            return [
-                'success' => false,
-                'message' => 'Cannot bill a completed visit.',
-                'errors' => ['visit' => ['This visit has already been completed and cannot be billed again.']],
-            ];
-        }
-
-        // Check if visit is cancelled
-        if ($visit->status === 'cancelled') {
-            return [
-                'success' => false,
-                'message' => 'Cannot bill a cancelled visit.',
-                'errors' => ['visit' => ['This visit has been cancelled and cannot be billed.']],
-            ];
-        }
-
-        // Check if visit is in terminal phase
-        $terminalPhases = ['discharged', 'expired', 'transferred'];
-        if (in_array($visit->current_phase, $terminalPhases)) {
-            return [
-                'success' => false,
-                'message' => 'Cannot bill a visit that is already ' . $visit->current_phase . '.',
-                'errors' => ['visit' => ['This visit is already in a terminal phase.']],
-            ];
-        }
-
-        // Check payment status - if already paid in full, prevent re-billing
-        if ($visit->payment_status === 'paid_in_full') {
-            return [
-                'success' => false,
-                'message' => 'Visit payment is already settled.',
-                'errors' => ['visit' => ['This visit has already been paid in full.']],
-            ];
-        }
-
+{
+    // Cancelled visits should never be billable
+    if ($visit->status === 'cancelled') {
         return [
-            'success' => true,
-            'message' => 'Visit is eligible for billing.',
+            'success' => false,
+            'message' => 'Cannot bill a cancelled visit.',
+            'errors' => ['visit' => ['This visit has been cancelled and cannot be billed.']],
         ];
     }
+
+    // Only truly terminal operational states should block billing
+    // NOTE:
+    // - discharged is intentionally NOT blocked here because billing may still continue
+    // - completed is also NOT blocked if payment is still pending/partial (legacy correction case)
+    if (in_array($visit->current_phase, ['expired', 'transferred'], true)) {
+        return [
+            'success' => false,
+            'message' => 'Cannot bill a visit that is already ' . $visit->current_phase . '.',
+            'errors' => ['visit' => ['This visit is already in a terminal phase.']],
+        ];
+    }
+
+    // Fully settled visits should not be billed again
+    if ($visit->payment_status === 'paid_in_full') {
+        return [
+            'success' => false,
+            'message' => 'Visit payment is already settled.',
+            'errors' => ['visit' => ['This visit has already been paid in full.']],
+        ];
+    }
+
+    // IMPORTANT:
+    // If a visit was incorrectly marked completed while money is still pending/partial,
+    // allow billing to continue so we can correct the financial state.
+    return [
+        'success' => true,
+        'message' => 'Visit is eligible for billing.',
+    ];
+}
 
     /**
      * Determine authoritative billing/payment state from actual money values.
@@ -120,44 +110,64 @@ trait BillingHelpers
     }
 
 
-    /**
-     * Check if visit already has an existing billing cycle
-     *
-     * @param int $visitId
-     * @param int $facilityId
-     * @return array Success status and message
-     */
-    public function checkExistingBilling(int $visitId, int $facilityId): array
-    {
-        $existingBillingCycle = BillingCycle::query()
-            ->where('visit_id', $visitId)
-            ->where('facility_id', $facilityId)
-            ->whereIn('billing_status', [
-                'pending',                // unpaid billing cycle already exists
-                'partially_paid',         // partially settled billing cycle already exists
-                'paid_in_full',
-                'pending_submission',
-                'submitted_to_insurance',
-                'payment_plan',
-                'collections',
-                'disputed',
-                ])
-                ->first();
+   public function checkExistingBilling(int $visitId, int $facilityId): array
+{
+    // Editable/open cycle: reuse it instead of blocking
+    $editableBillingCycle = BillingCycle::query()
+        ->where('visit_id', $visitId)
+        ->where('facility_id', $facilityId)
+        ->whereIn('billing_status', ['pending', 'partially_paid'])
+        ->latest('id')
+        ->first();
 
-
-        if ($existingBillingCycle) {
-            return [
-                'success' => false,
-                'message' => 'This visit already has an active billing cycle.',
-                'errors' => ['billing' => ['A billing cycle already exists for this visit.']],
-            ];
-        }
-
+    if ($editableBillingCycle) {
         return [
             'success' => true,
-            'message' => 'No existing billing cycle found.',
+            'message' => 'Editable billing cycle found for this visit.',
+            'data' => $editableBillingCycle,
+            'is_existing_editable' => true,
         ];
     }
+
+    // Locked/finalized states should still block mutation
+    $lockedBillingCycle = BillingCycle::query()
+        ->where('visit_id', $visitId)
+        ->where('facility_id', $facilityId)
+        ->whereIn('billing_status', [
+            'paid_in_full',
+            'pending_submission',
+            'submitted_to_insurance',
+            'payment_plan',
+            'collections',
+            'disputed',
+            'written_off',
+            'charity_care',
+            'partially_refunded',
+            'fully_refunded',
+        ])
+        ->latest('id')
+        ->first();
+
+    if ($lockedBillingCycle) {
+        return [
+            'success' => false,
+            'message' => 'This visit already has a locked billing cycle.',
+            'errors' => [
+                'billing' => [
+                    "Billing cycle already exists in status '{$lockedBillingCycle->billing_status}' and cannot be modified."
+                ]
+            ],
+        ];
+    }
+
+    return [
+        'success' => true,
+        'message' => 'No existing billing cycle found.',
+        'data' => null,
+        'is_existing_editable' => false,
+    ];
+}
+
 
     /**
      * Calculate discount amount based on type

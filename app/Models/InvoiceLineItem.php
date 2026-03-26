@@ -169,7 +169,14 @@ class InvoiceLineItem extends Model
             $model->audit_trail_hash = $model->generateAuditTrailHash();
         });
     }
-
+/**
+ * Add to the net amount
+ */
+public function addToNetAmount(float $amount): self
+{
+    $this->net_amount = round((float) $this->net_amount + $amount, 2);
+    return $this;
+}
     /**
      * Generate SHA-256 audit trail hash for tamper detection
      */

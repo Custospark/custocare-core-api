@@ -54,133 +54,146 @@ class BillingService
      * @param int $staffId Staff ID performing the operation
      * @return array Success status and result data
      */
-  public function finalizeBilling(array $data, int $facilityId, int $staffId): array
-    {
-        try {
-            // Step 1: Verify visit belongs to facility and patient
-            $visitVerification = $this->verifyVisit(
-                $data['visit_id'],
-                $facilityId,
-                $data['patient_id']
-            );
+    public function saveBilling(array $data, int $facilityId, int $staffId): array
+{
+    try {
+        // Step 1: Verify visit belongs to facility and patient
+        $visitVerification = $this->verifyVisit(
+            $data['visit_id'],
+            $facilityId,
+            $data['patient_id']
+        );
 
-            if (!$visitVerification['success']) {
-                return $visitVerification;
-            }
+        if (!$visitVerification['success']) {
+            return $visitVerification;
+        }
 
-            $visit = $visitVerification['data'];
+        $visit = $visitVerification['data'];
 
-            // Step 2: Check if visit can be billed
-            $billingEligibility = $this->canBeBilled($visit);
-            
-            if (!$billingEligibility['success']) {
-                return $billingEligibility;
-            }
+        // Step 2: Check if visit can be billed
+        $billingEligibility = $this->canBeBilled($visit);
+        
+        if (!$billingEligibility['success']) {
+            return $billingEligibility;
+        }
 
-            // Step 3: Check for existing billing cycle to prevent duplicate billing
-            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
-            
-            if (!$existingBillingCheck['success']) {
-                return $existingBillingCheck;
-            }
+        // Step 3: Check for existing billing cycle to prevent duplicate billing
+        $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
+        
+        if (!$existingBillingCheck['success']) {
+            return $existingBillingCheck;
+        }
 
-            // Step 4: Validate inventory availability BEFORE transaction
-            $inventoryValidation = $this->validation->validateInventoryAvailability($data['charge_items'], $staffId);
-            
-            if (!$inventoryValidation['success']) {
-                return $inventoryValidation;
-            }
+        // Step 4: Validate inventory availability BEFORE transaction
+        $inventoryValidation = $this->validation->validateInventoryAvailability($data['charge_items'], $staffId);
+        
+        if (!$inventoryValidation['success']) {
+            return $inventoryValidation;
+        }
 
-            // Step 5: Calculate discount amount
+        // Step 5: Calculate discount amount - Add null safety for discount
+        $discountAmount = 0;
+        if (isset($data['discount']) && is_array($data['discount'])) {
             $discountAmount = $this->calculateDiscountAmount(
-                $data['discount']['type'],
-                $data['discount']['value'],
-                $data['billing_data']['subtotal']
+                $data['discount']['type'] ?? 'fixed',
+                $data['discount']['value'] ?? 0,
+                $data['billing_data']['subtotal'] ?? 0
             );
+        }
 
-            // Step 6: Calculate payment split - FIXED: Now returns validated total
-            $paymentSplit = $this->calculatePaymentSplit(
-                $data['payment_methods'],
-                $data['billing_data']['totalPaid']
-            );
+        // Step 6: Calculate payment split - FIXED: Add null safety for payment methods
+        $paymentMethods = $data['payment_methods'] ?? [];
+        $totalPaid = $data['billing_data']['totalPaid'] ?? 0;
+        
+        $paymentSplit = $this->calculatePaymentSplit(
+            $paymentMethods,
+            $totalPaid
+        );
 
-            // Step 7: Determine primary payment method
-            $primaryPaymentMethod = collect($data['payment_methods'])
+        // Step 7: Determine primary payment method - FIXED: Handle empty payment methods
+        $primaryPaymentMethod = null;
+        $isPrimaryCash = false;
+        $isInsuranceInvolved = false;
+        
+        if (!empty($paymentMethods) && is_array($paymentMethods)) {
+            $primaryPaymentMethod = collect($paymentMethods)
                 ->sortByDesc('amount')
                 ->first();
-
-            $isPrimaryCash = $primaryPaymentMethod['type'] === 'cash';
-            $isInsuranceInvolved = $this->isInsuranceInvolved($data['payment_methods']);
-
-            // Step 8: Process billing within atomic transaction - FIXED: Pass full paymentSplit
-            $result = $this->processor->processBillingTransaction(
-                $data,
-                $facilityId,
-                $staffId,
-                $discountAmount,
-                $paymentSplit, // Now contains validated total
-                $isPrimaryCash,
-                $isInsuranceInvolved,
-                $visit
-            );
-
-            // Calculate balance for response context using validated total
-            $grandTotal = $data['billing_data']['grandTotal'];
-            $validatedTotalPaid = $paymentSplit['total_paid'];
-            $balance = max(0, $grandTotal - $validatedTotalPaid);
-            $isFullyPaid = $balance <= 0;
-
-            Log::info('Billing finalized successfully', [
-                'billing_cycle_id' => $result['billing_cycle']->id,
-                'visit_id' => $data['visit_id'],
-                'staff_id' => $staffId,
-                'grand_total' => $grandTotal,
-                'validated_total_paid' => $validatedTotalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => $isFullyPaid,
-            ]);
-
-            // Return success response with accurate data
-            return [
-                'success' => true,
-                'message' => $isFullyPaid 
-                    ? 'Payment successfully settled. Visit has been completed.' 
-                    : 'Billing finalized successfully.',
-                'data' => [
-                    'billing_cycle_id' => $result['billing_cycle']->id,
-                    'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid,
-                    'receipt_number' => "REC-{$result['billing_cycle']->id}",
-                    'billing_status' => $result['billing_cycle']->billing_status,
-                    'net_amount' => $result['billing_cycle']->net_amount,
-                    'total_paid' => $validatedTotalPaid,
-                    'balance' => $balance,
-                    'created_at' => $result['billing_cycle']->created_at->toISOString(),
-                    'line_items_count' => count($result['line_items']),
-                ],
-            ];
-
-        } catch (Throwable $e) {
-            Log::error('Failed to finalize billing', [
-                'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
-                'visit_id' => $data['visit_id'] ?? null,
-                'patient_id' => $data['patient_id'] ?? null,
-                'facility_id' => $facilityId,
-                'staff_id' => $staffId,
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'An unexpected error occurred while finalizing billing. Please try again or contact support if the issue persists.',
-                'errors' => ['system' => ['Billing transaction failed. All changes have been rolled back.']],
-                'error' => config('app.debug') ? $e->getMessage() : null,
-            ];
+            
+            $isPrimaryCash = isset($primaryPaymentMethod['type']) && $primaryPaymentMethod['type'] === 'cash';
+            $isInsuranceInvolved = $this->isInsuranceInvolved($paymentMethods);
         }
-    }
 
+        // Step 8: Process billing within atomic transaction
+        $result = $this->processor->processBillingTransaction(
+            $data,
+            $facilityId,
+            $staffId,
+            $discountAmount,
+            $paymentSplit,
+            $isPrimaryCash,
+            $isInsuranceInvolved,
+            $visit
+        );
+
+        // Calculate balance for response context using validated total
+        $grandTotal = $data['billing_data']['grandTotal'] ?? 0;
+        $validatedTotalPaid = $paymentSplit['total_paid'] ?? 0;
+        $balance = max(0, $grandTotal - $validatedTotalPaid);
+        $isFullyPaid = $balance <= 0;
+
+        Log::info('Billing finalized successfully', [
+            'billing_cycle_id' => $result['billing_cycle']->id ?? null,
+            'visit_id' => $data['visit_id'] ?? null,
+            'staff_id' => $staffId,
+            'grand_total' => $grandTotal,
+            'validated_total_paid' => $validatedTotalPaid,
+            'balance' => $balance,
+            'is_fully_paid' => $isFullyPaid,
+        ]);
+
+        // Return success response with accurate data
+        return [
+            'success' => true,
+            'message' => $isFullyPaid 
+                ? 'Payment successfully settled. Visit has been completed.' 
+                : 'Billing saved successfully.',
+            'data' => [
+                'billing_cycle_id' => $result['billing_cycle']->id ?? null,
+                'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid ?? null,
+                'receipt_number' => "REC-" . ($result['billing_cycle']->id ?? '0000'),
+                'billing_status' => $result['billing_cycle']->billing_status ?? null,
+                'net_amount' => $result['billing_cycle']->net_amount ?? 0,
+                'total_paid' => $validatedTotalPaid,
+                'balance' => $balance,
+                'created_at' => isset($result['billing_cycle']->created_at) 
+                    ? $result['billing_cycle']->created_at->toISOString() 
+                    : now()->toISOString(),
+                'line_items_count' => count($result['line_items'] ?? []),
+            ],
+        ];
+
+    } catch (Throwable $e) {
+        Log::error('Failed to finalize billing', [
+            'error_message' => $e->getMessage(),
+            'error_code' => $e->getCode(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString(),
+            'visit_id' => $data['visit_id'] ?? null,
+            'patient_id' => $data['patient_id'] ?? null,
+            'facility_id' => $facilityId,
+            'staff_id' => $staffId,
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'An unexpected error occurred while submitting billing. Please try again or contact support if the issue persists.',
+            'errors' => ['system' => ['Billing transaction failed. All changes have been rolled back.']],
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ];
+    }
+}
     /**
      * Get billing data for a visit
      *

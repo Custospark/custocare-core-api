@@ -33,9 +33,10 @@ class BillingController extends Controller
      * @param Request $request
      * @return JsonResponse
      */
-    public function finalize(Request $request): JsonResponse
-    {
-        // Log full incoming request for debugging
+    public function saveBilling(Request $request): JsonResponse
+    {           // Log full incoming request for debugging
+
+        Log::info("Request Data", ["request" => $request->all()]);
         Log::info('Billing finalization request received', [
             'method' => $request->method(),
             'url' => $request->fullUrl(),
@@ -132,9 +133,9 @@ class BillingController extends Controller
                 'taxes.*.name' => 'required|string',
                 'taxes.*.rate' => 'required|numeric|min:0|max:100',
                 'taxes.*.amount' => 'required|numeric|min:0',
-                'payment_methods' => 'required|array|min:1',
-                'payment_methods.*.type' => 'required|in:cash,card,insurance,mobile,bank_transfer,cheque,mixed,other',
-                'payment_methods.*.amount' => 'required|numeric|min:0',
+                'payment_methods' => 'nullable|array|min:0',
+                'payment_methods.*.type' => 'nullable|in:cash,card,insurance,mobile,bank_transfer,cheque,mixed,other',
+                'payment_methods.*.amount' => 'nullable|numeric|min:0',
                 'payment_methods.*.reference' => 'nullable|string',
                 'payment_methods.*.details' => 'nullable',
                 'billing_data' => 'required|array',
@@ -229,7 +230,7 @@ class BillingController extends Controller
             ]);
 
             // Process billing
-            $result = $this->billingService->finalizeBilling($validated, $facilityId, $staffId);
+            $result = $this->billingService->saveBilling($validated, $facilityId, $staffId);
 
             if (!$result['success']) {
                 Log::warning('Billing service returned error', [

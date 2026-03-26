@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Route;
 // Billing routes
 Route::prefix('billing')->middleware(['auth:sanctum'])->group(function () {
     // Finalize and persist billing data for a visit
-    Route::post('/finalize', [BillingController::class, 'finalize']);
+    Route::post('/save', [BillingController::class, 'saveBilling']);
     
     // Retrieve billing data for a specific visit
     Route::get('/visit/{visitId}', [BillingController::class, 'getByVisit']);

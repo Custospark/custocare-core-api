@@ -53,7 +53,7 @@ class BillingProcessor
             $isInsuranceInvolved,
             $visit
         ) {
-            // Create BillingCycle record with corrected payment amounts
+            // 1. Create BillingCycle record with corrected payment amounts
             $billingCycle = $this->createBillingCycle(
                 $data,
                 $facilityId,
@@ -64,7 +64,7 @@ class BillingProcessor
                 $isInsuranceInvolved
             );
 
-            // Create InvoiceLineItem records
+            // 2. Create InvoiceLineItem records
             $lineItems = $this->createLineItems(
                 $data,
                 $billingCycle->id,
@@ -72,10 +72,10 @@ class BillingProcessor
                 $discountAmount
             );
 
-            // Reduce inventory stock for inventory items
+            // 3. Reduce inventory stock for inventory items
             $this->deductInventoryStock($data['charge_items'], $staffId);
 
-            // Update visit with billing information using corrected payment data
+            // 4. Update visit with billing information using corrected payment data
             $this->updateVisitBillingStatus($visit, $data, $billingCycle, $staffId, $paymentSplit);
 
             return [
@@ -85,89 +85,92 @@ class BillingProcessor
         });
     }
 
-    /**
-     * Create BillingCycle record
-     * 
-     * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
-     * to ensure consistency with actual payment methods
-     *
-     * @param array $data Billing data
-     * @param int $facilityId Facility ID
-     * @param int $staffId Staff ID
-     * @param float $discountAmount Calculated discount amount
-     * @param array $paymentSplit Payment split data (with total_paid)
-     * @param bool $isPrimaryCash Is primary payment cash
-     * @param bool $isInsuranceInvolved Is insurance involved
-     * @return BillingCycle
-     */
-    protected function createBillingCycle(
-        array $data,
-        int $facilityId,
-        int $staffId,
-        float $discountAmount,
-        array $paymentSplit,
-        bool $isPrimaryCash,
-        bool $isInsuranceInvolved
-    ): BillingCycle {
-        // Use the validated total from payment methods
-        $validatedTotalPaid = $paymentSplit['total_paid'] ?? 
-            ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']);
+  /**
+ * Create BillingCycle record
+ * 
+ * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
+ * to ensure consistency with actual payment methods
+ *
+ * @param array $data Billing data
+ * @param int $facilityId Facility ID
+ * @param int $staffId Staff ID
+ * @param float $discountAmount Calculated discount amount
+ * @param array $paymentSplit Payment split data (with total_paid)
+ * @param bool $isPrimaryCash Is primary payment cash
+ * @param bool $isInsuranceInvolved Is insurance involved
+ * @return BillingCycle
+ */
+protected function createBillingCycle(
+    array $data,
+    int $facilityId,
+    int $staffId,
+    float $discountAmount,
+    array $paymentSplit,
+    bool $isPrimaryCash,
+    bool $isInsuranceInvolved
+): BillingCycle {
+    // Use the validated total from payment methods
+    $validatedTotalPaid = $paymentSplit['total_paid'] ?? 
+        ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']);
+    
+    // Calculate if this is truly paid in full
+    $grandTotal = $data['billing_data']['grandTotal'];
+    $isFullyPaid = abs($validatedTotalPaid - $grandTotal) < 0.01; // Account for floating point
+    
+    // Determine billing status based on payment completeness
+    $billingStatus = $isFullyPaid ? 'paid_in_full' : 'partially_paid';
+    
+    return BillingCycle::create([
+        'billing_cycle_uuid' => Str::uuid(),
+        'facility_id' => $facilityId,
+        'visit_id' => $data['visit_id'],
+        'patient_id' => $data['patient_id'],
         
-        // Calculate if this is truly paid in full
-        $grandTotal = $data['billing_data']['grandTotal'];
-        $isFullyPaid = abs($validatedTotalPaid - $grandTotal) < 0.01; // Account for floating point
+        'cycle_type' => 'visit_based',
+        'period_start' => now(),
+        'period_end' => now(),
+        'days_in_cycle' => 1,
         
-        return BillingCycle::create([
-            'billing_cycle_uuid' => Str::uuid(),
-            'facility_id' => $facilityId,
-            'visit_id' => $data['visit_id'],
-            'patient_id' => $data['patient_id'],
-            
-            'cycle_type' => 'visit_based',
-            'period_start' => now(),
-            'period_end' => now(),
-            'days_in_cycle' => 1,
-            
-            // Financial summary
-            'total_amount_charged' => $data['billing_data']['subtotal'],
-            'total_adjustments' => $discountAmount,
-            'net_amount' => $grandTotal,
-            
-            // Insurance (if applicable)
-            'insurance_covered_amount' => $paymentSplit['insurance_payment'],
-            'insurance_payment_received' => $paymentSplit['insurance_payment'],
-            'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
-            'insurance_payment_received_at' => $isInsuranceInvolved ? now() : null,
-            
-            // Patient responsibility - FIXED: Use actual patient payment from methods
-            'patient_responsibility_amount' => $paymentSplit['patient_payment'],
-            'patient_payment_received' => $paymentSplit['patient_payment'],
-            
-            // Discount
-            'discount_applied' => $discountAmount,
-            'discount_reason' => $data['discount']['reason'] ?? null,
-            
-            // Tax
-            'tax_details' => json_encode($data['taxes']),
-            'total_tax_amount' => $data['billing_data']['taxTotal'],
-            
-            // Status - Note:Currently processing only full payments.
-            'billing_status' => 'paid_in_full', 
-            'billed_at' => $validatedTotalPaid > 0 ? now() : null,
-            'payment_due_date' => now()->addDays(30),
-            
-            // Audit
-            'created_by_staff_id' => $staffId,
-            'updated_by_staff_id' => $staffId,
-            'metadata' => json_encode([
-                'payment_methods' => $data['payment_methods'],
-                'additional_notes' => $data['additional_notes'] ?? null,
-                'is_cash_payment' => $isPrimaryCash,
-                'validated_total_paid' => $validatedTotalPaid, // Store for audit
-            ]),
-        ]);
-    }
-
+        // Financial summary
+        'total_amount_charged' => $data['billing_data']['subtotal'],
+        'total_adjustments' => $discountAmount,
+        'net_amount' => $grandTotal,
+        
+        // Insurance (if applicable)
+        'insurance_covered_amount' => $paymentSplit['insurance_payment'],
+        'insurance_payment_received' => $paymentSplit['insurance_payment'],
+        'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
+        'insurance_payment_received_at' => $isInsuranceInvolved ? now() : null,
+        
+        // Patient responsibility - FIXED: Use actual patient payment from methods
+        'patient_responsibility_amount' => $paymentSplit['patient_payment'],
+        'patient_payment_received' => $paymentSplit['patient_payment'],
+        
+        // Discount
+        'discount_applied' => $discountAmount,
+        'discount_reason' => $data['discount']['reason'] ?? null,
+        
+        // Tax
+        'tax_details' => json_encode($data['taxes']),
+        'total_tax_amount' => $data['billing_data']['taxTotal'],
+        
+        // Status - Dynamically set based on payment completeness
+        'billing_status' => $billingStatus,
+        'billed_at' => $validatedTotalPaid > 0 ? now() : null,
+        'payment_due_date' => !$isFullyPaid ? now()->addDays(30) : null, // Only set due date if not fully paid
+        
+        // Audit
+        'created_by_staff_id' => $staffId,
+        'updated_by_staff_id' => $staffId,
+        'metadata' => json_encode([
+            'payment_methods' => $data['payment_methods'],
+            'additional_notes' => $data['additional_notes'] ?? null,
+            'is_cash_payment' => $isPrimaryCash,
+            'validated_total_paid' => $validatedTotalPaid, // Store for audit
+            'is_fully_paid' => $isFullyPaid, // Store flag for audit
+        ]),
+    ]);
+}
             /**
          * Create InvoiceLineItem records
          *

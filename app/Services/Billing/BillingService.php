@@ -10,6 +10,10 @@ use App\Services\Billing\Validation\BillingValidation;
 use App\Services\Billing\Processing\BillingProcessor;
 use Illuminate\Support\Facades\Log;
 use Throwable;
+use App\Models\InvoiceLineItem;
+use App\Models\Staff;
+use App\Models\User;
+use App\Models\FacilityStaffRole;
 
 /**
  * Billing Service
@@ -225,7 +229,7 @@ class BillingService
      * @param int $facilityId Facility ID
      * @return array Success status and billing data
      */
-    public function getBillingByVisit(int $visitId, int $facilityId): array
+        public function getBillingByVisit(int $visitId, int $facilityId, ?int $currentStaffId = null): array
     {
         try {
             // Verify visit exists and belongs to facility
@@ -277,7 +281,7 @@ class BillingService
             }
 
             // Parse and transform billing data
-            $billingData = $this->transformBillingData($billingCycle, $visit);
+            $billingData = $this->transformBillingData($billingCycle, $visit, $currentStaffId);
 
             Log::info('Billing data retrieved successfully', [
                 'visit_id' => $visitId,
@@ -319,7 +323,7 @@ class BillingService
  * @param Visit $visit Visit model
  * @return array Transformed billing data
  */
-public function transformBillingData(BillingCycle $billingCycle, Visit $visit): array
+public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?int $currentStaffId = null): array
 {
     // ---- Helpers ------------------------------------------------------------
 
@@ -402,24 +406,70 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
         'value'  => $discountApplied,
         'reason' => $discountReason,
     ];
-
     // ---- Line items -> charge_items ----------------------------------------
+
+    $resolveStaffDisplayName = function (?int $staffId): ?string {
+        if (!$staffId) {
+            return null;
+        }
+
+        $staff = Staff::query()->find($staffId);
+        if (!$staff) {
+            return null;
+        }
+
+        $user = User::query()->find($staff->user_id);
+        if (!$user) {
+            return null;
+        }
+
+        return $user->display_name
+            ?? trim((string) ($user->first_name ?? '') . ' ' . (string) ($user->last_name ?? ''));
+    };
 
     $lineItems = $billingCycle->lineItems ?? collect();
 
-    $chargeItems = $lineItems->map(function ($lineItem) use ($decodeJsonish) {
+    $chargeItems = $lineItems->map(function ($lineItem) use (
+        $decodeJsonish,
+        $currentStaffId,
+        $resolveStaffDisplayName,
+        $billingCycle
+    ) {
         $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
-        $lineMetadata    = $decodeJsonish($lineItem->metadata ?? null);
+        $lineMetadata = $decodeJsonish($lineItem->metadata ?? null);
 
         $serviceCode = (string) ($lineItem->service_code ?? '');
-        $serviceKey  = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
+        $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
 
         $uuid = $lineItem->line_item_uuid ?? null;
-        $chargeId = $uuid ? "charge::{$uuid}" : "charge::{$lineItem->id}";
+        $chargeId = $uuid ? "backend-charge::{$uuid}" : "backend-charge::{$lineItem->id}";
+
+        // Enterprise audit rule:
+        // originating staff is used to decide if a reason is required.
+        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
+            ?? $lineItem->created_by_staff_id
+            ?? $billingCycle->created_by_staff_id;
+
+        $enteredByStaffName = $resolveStaffDisplayName($enteredByStaffId);
+
+        $permissions = $this->buildLineItemEditPolicy(
+            $enteredByStaffId ? (int) $enteredByStaffId : null,
+            $currentStaffId
+        );
 
         return [
             'id' => $chargeId,
+            'source' => 'backend',
+            'persisted' => true,
+
+            'line_item_id' => $lineItem->id,
+            'line_item_uuid' => $lineItem->line_item_uuid,
+            'billing_cycle_id' => $billingCycle->id,
+
+            // Keep both naming styles for frontend compatibility
             'service_key' => $serviceKey,
+            'serviceKey' => $serviceKey,
+
             'service' => [
                 'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
                 'code' => $serviceCode,
@@ -427,10 +477,23 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
                 'unitPrice' => (float) ($lineItem->unit_price_at_time ?? 0),
                 'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
             ],
-            'quantity' => (int) ($lineItem->quantity ?? 0),
+            'quantity' => (float) ($lineItem->quantity ?? 0),
             'totalAmount' => (float) ($lineItem->line_total_amount ?? 0),
+
+            'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
+            'entered_by_staff_id' => $enteredByStaffId,
+            'entered_by_staff_name' => $enteredByStaffName,
+
+            'permissions' => $permissions,
+            'audit' => [
+                'originated_by_staff_id' => $enteredByStaffId,
+                'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
+                'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
+                'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
+            ],
         ];
     })->values()->toArray();
+
 
     // ---- Totals summary -----------------------------------------------------
 
@@ -553,6 +616,8 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
         'payment_status' => in_array($billingCycle->billing_status, ['pending', 'partially_paid', 'paid_in_full'], true)
             ? $billingCycle->billing_status
             : Visit::where('id', $visit->id)->value('payment_status'),
+        'status'            => $uiStatus,
+
 
         // Calculated - FIXED: Using accurate values
         'billing_data' => $billingData,
@@ -568,6 +633,8 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
         'is_processing'  => false,
     ];
 }
+
+
 
         /**
      * Get all billing data for a facility with pagination
@@ -804,4 +871,175 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
             ];
         }
     }
+
+
+    /**
+ * Adjust a persisted billing line item.
+ *
+ * Supported actions:
+ * - increase
+ * - decrease
+ * - remove
+ *
+ * Important:
+ * remove is not a hard delete; it becomes an audited adjustment.
+ */
+public function adjustBillingLineItem(int $lineItemId, array $data, int $facilityId, int $staffId): array
+{
+    try {
+        $lineItem = InvoiceLineItem::query()
+            ->where('id', $lineItemId)
+            ->whereHas('billingCycle', function ($query) use ($facilityId) {
+                $query->where('facility_id', $facilityId);
+            })
+            ->first();
+
+        if (!$lineItem) {
+            return [
+                'success' => false,
+                'message' => 'Billing line item not found for this facility.',
+                'errors' => ['line_item_id' => ['Invalid billing line item.']],
+            ];
+        }
+
+        $action = (string) ($data['action'] ?? '');
+        $quantity = (float) ($data['quantity'] ?? 1);
+        $reason = trim((string) ($data['reason'] ?? ''));
+
+        if (!in_array($action, ['increase', 'decrease', 'remove'], true)) {
+            return [
+                'success' => false,
+                'message' => 'Invalid billing adjustment action.',
+                'errors' => ['action' => ['Action must be increase, decrease, or remove.']],
+            ];
+        }
+
+        if ($action !== 'remove' && $quantity <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Quantity must be greater than zero.',
+                'errors' => ['quantity' => ['Quantity must be greater than zero for this action.']],
+            ];
+        }
+
+        $lineMetadata = $this->decodeJsonishToArray($lineItem->metadata ?? null);
+        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
+            ?? $lineItem->created_by_staff_id;
+
+        if ($this->shouldRequireCrossStaffReason($enteredByStaffId, $staffId) && $reason === '') {
+            return [
+                'success' => false,
+                'message' => 'Reason is required when editing an item entered by another staff member.',
+                'errors' => ['reason' => ['Please provide a reason for this cross-staff billing adjustment.']],
+            ];
+        }
+
+        // For increases, ensure stock still exists before transaction.
+        if ($action === 'increase') {
+            $inventoryValidation = $this->validation->validateInventoryAvailability([
+                [
+                    'service' => [
+                        'code' => $lineItem->service_code,
+                        'name' => $lineItem->service_description,
+                    ],
+                    'quantity' => $quantity,
+                ]
+            ], $staffId);
+
+            if (!$inventoryValidation['success']) {
+                return $inventoryValidation;
+            }
+        }
+
+        $result = $this->processor->processPersistedLineItemAdjustment(
+            $lineItem,
+            $action,
+            $quantity,
+            $reason !== '' ? $reason : null,
+            $staffId
+        );
+
+        return [
+            'success' => true,
+            'message' => 'Billing line item adjusted successfully.',
+            'data' => [
+                'billing_cycle_id' => $result['billing_cycle']->id ?? null,
+                'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid ?? null,
+                'line_item_id' => $result['line_item']->id ?? null,
+                'line_item_uuid' => $result['line_item']->line_item_uuid ?? null,
+                'billing_status' => $result['billing_cycle']->billing_status ?? null,
+                'total_paid' => $result['billing_cycle']->total_paid_amount ?? 0,
+                'balance' => $result['billing_cycle']->balance_amount ?? 0,
+            ],
+        ];
+    } catch (Throwable $e) {
+        Log::error('Failed to adjust billing line item', [
+            'line_item_id' => $lineItemId,
+            'facility_id' => $facilityId,
+            'staff_id' => $staffId,
+            'error_message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'An unexpected error occurred while adjusting the billing item.',
+            'errors' => ['system' => ['Billing adjustment failed.']],
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ];
+    }
+}
+
+
+    /**
+ * Determine whether a persisted line item requires a reason for edit.
+ *
+ * Enterprise policy:
+ * - same originating staff -> no reason required
+ * - different staff -> reason required
+ * - unresolved identity -> fail safe and require reason
+ */
+public function shouldRequireCrossStaffReason(?int $enteredByStaffId, ?int $currentStaffId): bool
+{
+    if (!$enteredByStaffId || !$currentStaffId) {
+        return true;
+    }
+
+    return (int) $enteredByStaffId !== (int) $currentStaffId;
+}
+
+/**
+ * Build UI permission metadata for a persisted line item.
+ */
+public function buildLineItemEditPolicy(?int $enteredByStaffId, ?int $currentStaffId): array
+{
+    $reasonRequired = $this->shouldRequireCrossStaffReason($enteredByStaffId, $currentStaffId);
+
+    return [
+        'entered_by_staff_id' => $enteredByStaffId,
+        'current_staff_id' => $currentStaffId,
+        'requires_reason_on_cross_staff_edit' => true,
+        'reason_required' => $reasonRequired,
+        'can_edit_without_reason' => !$reasonRequired,
+    ];
+}
+
+/**
+ * Safe JSON decoder used by edit/audit flows.
+ */
+public function decodeJsonishToArray($value): array
+{
+    if (is_array($value)) {
+        return $value;
+    }
+
+    if (is_string($value) && trim($value) !== '') {
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    return [];
+}
+
 }

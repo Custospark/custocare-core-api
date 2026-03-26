@@ -581,7 +581,7 @@ class VisitController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => new VisitResource($visit),
-                'message' => 'Visit assigned successfully.',
+                'message' => 'Patient forwarded successfully.',
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {

@@ -9,23 +9,79 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use App\Models\FacilityStaffRole;
+use App\Models\Staff;
+use Illuminate\Support\Facades\Validator;
+
 
 class BillingController extends Controller
 {
-    /**
-     * @var BillingService
-     */
-    protected BillingService $billingService;
+        protected BillingService $billingService;
 
-    /**
-     * BillingController constructor.
-     *
-     * @param BillingService $billingService
-     */
-    public function __construct(BillingService $billingService)
-    {
-        $this->billingService = $billingService;
+        public function __construct(BillingService $billingService)
+        {
+            $this->billingService = $billingService;
+        }
+
+
+        /**
+ * Resolve facility ID from request header.
+ *
+ * Frontend already sends X-Facility-Id, so we treat that as authoritative
+ * request context for billing operations.
+ */
+protected function resolveFacilityId(Request $request): int
+{
+    return (int) $request->header('X-Facility-Id');
+}
+
+/**
+ * Resolve the currently authenticated staff ID for the active facility.
+ *
+ * We do not trust frontend to send staff_id directly for audit-sensitive actions.
+ * Instead, we derive the staff record from the authenticated user and facility.
+ */
+protected function resolveCurrentStaffId(Request $request, int $facilityId): ?int
+{
+    $user = $request->user();
+    if (!$user) {
+        return null;
     }
+
+    $staffIds = Staff::query()
+        ->where('user_id', $user->id)
+        ->pluck('id');
+
+    if ($staffIds->isEmpty()) {
+        return null;
+    }
+
+    $facilityScopedStaffId = FacilityStaffRole::query()
+        ->where('facility_id', $facilityId)
+        ->whereIn('staff_id', $staffIds)
+        ->value('staff_id');
+
+    return $facilityScopedStaffId ?: $staffIds->first();
+}
+
+/**
+ * Consistent JSON response helper.
+ */
+protected function respond(array $result, int $successStatus = 200): JsonResponse
+{
+    $status = $result['success'] ? $successStatus : 422;
+
+    if (!$result['success'] && isset($result['errors']['visit_id'])) {
+        $status = 404;
+    }
+
+    if (!$result['success'] && isset($result['errors']['line_item_id'])) {
+        $status = 404;
+    }
+
+    return response()->json($result, $status);
+}
+
 
     /**
      * Finalize billing for a visit
@@ -295,44 +351,70 @@ class BillingController extends Controller
     }
 
     /**
-     * Get billing data for a specific visit
-     *
-     * @param Request $request
-     * @param int $visitId
-     * @return JsonResponse
-     */
+ * Retrieve billing data for a visit.
+ *
+ * The service returns persisted billing in the same structural shape
+ * used by the frontend billing slice renderer.
+ */
     public function getByVisit(Request $request, int $visitId): JsonResponse
     {
-        try {
-            $facilityId = (int) $request->header('X-Facility-Id');
+        $facilityId = $this->resolveFacilityId($request);
+        $staffId = $this->resolveCurrentStaffId($request, $facilityId);
 
-            if (!$facilityId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Missing X-Facility-Id header.',
-                ], 422);
-            }
+        $result = $this->billingService->getBillingByVisit(
+            $visitId,
+            $facilityId,
+            $staffId
+        );
 
-            $result = $this->billingService->getBillingByVisit($visitId, $facilityId);
-
-            if (!$result['success']) {
-                return response()->json($result, 404);
-            }
-
-            return response()->json($result);
-
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve visit billing', [
-                'visit_id' => $visitId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to retrieve billing data.',
-            ], 500);
-        }
+        return $this->respond($result);
     }
+
+/**
+ * Adjust an already persisted billing line item.
+ *
+ * Enterprise billing rule:
+ * - persisted line items are never casually changed on frontend only
+ * - any such change must go through audited backend adjustment flow
+ */
+public function adjustLineItem(Request $request, int $lineItemId): JsonResponse
+{
+    $facilityId = $this->resolveFacilityId($request);
+    $staffId = $this->resolveCurrentStaffId($request, $facilityId);
+
+    if (!$staffId) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unable to resolve current staff context for this billing action.',
+            'errors' => [
+                'staff' => ['Authenticated staff could not be determined for this facility.'],
+            ],
+        ], 403);
+    }
+
+    $validator = Validator::make($request->all(), [
+        'action' => ['required', 'in:increase,decrease,remove'],
+        'quantity' => ['nullable', 'numeric', 'min:0'],
+        'reason' => ['nullable', 'string', 'max:1000'],
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Billing adjustment validation failed.',
+            'errors' => $validator->errors()->toArray(),
+        ], 422);
+    }
+
+    $result = $this->billingService->adjustBillingLineItem(
+        $lineItemId,
+        $validator->validated(),
+        $facilityId,
+        $staffId
+    );
+
+    return $this->respond($result);
+}
 
     /**
      * Get all billing data for a facility with pagination and filters

@@ -159,7 +159,7 @@ class VisitController extends Controller
                 ->where('facility_id', $facilityId)
                 ->where('assigned_staff_id', $staffId)
                 ->whereIn('status', ['active', 'in_progress'])
-                ->when($phase, fn ($q) => $q->where('current_phase', $phase))
+                // ->when($phase, fn ($q) => $q->where('current_phase', $phase))
                 ->with(['patient.user'])
                 ->orderBy('acuity_score', 'asc')
                 ->orderBy('waiting_since', 'asc')

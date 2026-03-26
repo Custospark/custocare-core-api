@@ -164,347 +164,497 @@ class PatientController extends Controller
      * Staff creates a patient + user account in one go (atomic).
      * Returns lean PatientSearchResource for immediate UI use.
      */
-    public function createPatientByStaff(Request $request): JsonResponse
-    {
-        try {
-            // $this->authorize('create', Patient::class);
+   
 
-            $data = $request->validate([
-                // USER minimal
-                'first_name' => 'required|string|max:100',
-                'last_name'  => 'required|string|max:100',
-                'email'      => 'nullable|email|max:255',
-                'phone'      => 'nullable|string|max:30',
+    public function createPatientByAdmin(Request $request): JsonResponse
+{
+    try {
+        $data = $request->validate([
+            'first_name' => 'required|string|max:100',
+            'last_name'  => 'required|string|max:100',
+            'email'      => 'nullable|email|max:255',
+            'phone'      => 'nullable|string|max:30',
 
-                // PATIENT minimal
-                'date_of_birth'  => 'required|date',
-                'biological_sex' => 'required|in:male,female,intersex,unknown',
+            'date_of_birth'  => 'required|date',
+            'biological_sex' => 'required|in:male,female,intersex,unknown',
 
-                // Optional context
-                'created_from_facility_id' => 'nullable|integer|exists:facilities,id',
+            'created_from_facility_id' => 'nullable|integer|exists:facilities,id',
 
-                // Duplicate-handling controls (driven by UI)
-                'action_on_possible_duplicate' => 'nullable|in:block,allow',
-                'existing_user_action' => 'nullable|in:use_existing,block',
-            ]);
+            'action_on_possible_duplicate' => 'nullable|in:block,allow',
+            'existing_user_action' => 'nullable|in:use_existing,block',
+        ]);
 
-            if (empty($data['email']) && empty($data['phone'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Provide at least email or phone.',
-                    'errors'  => ['contact' => ['Email or phone is required.']],
-                    'data'    => [],
-                ], 422);
+        if (blank($data['email'] ?? null) && blank($data['phone'] ?? null)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Provide at least email or phone.',
+                'errors' => [
+                    'contact' => ['Email or phone is required.'],
+                ],
+                'data' => [],
+            ], 422);
+        }
+
+        $staffId = Staff::where('user_id', Auth::id())->value('id');
+        if (!$staffId) {
+            abort(403, 'Authenticated user is not linked to a staff record.');
+        }
+
+        $normalizeHumanName = static function (?string $value): ?string {
+            if (!filled($value)) {
+                return null;
             }
 
-            // Resolve current staff (required for visit assignment + auditing)
-            $staffId = Staff::where('user_id', Auth::id())->value('id');
-            if (!$staffId) {
-                abort(403, 'Authenticated user is not linked to a staff record.');
+            return (string) Str::of($value)->trim()->squish();
+        };
+
+        $normalizeComparableName = static function (?string $value): ?string {
+            if (!filled($value)) {
+                return null;
             }
 
-            $result = DB::transaction(function () use ($data, $request, $staffId) {
+            return mb_strtolower((string) Str::of($value)->trim()->squish());
+        };
 
-                // -------------------- NORMALIZE CONTACT --------------------
-                $email = isset($data['email']) ? strtolower(trim($data['email'])) : null;
-                $phone = isset($data['phone']) ? preg_replace('/\s+/', '', $data['phone']) : null;
+        $normalizePhone = static function (?string $value): ?string {
+            if (!filled($value)) {
+                return null;
+            }
 
-                $emailHash = $email ? hash('sha256', $email) : null;
-                $phoneHash = $phone ? hash('sha256', $phone) : null;
+            $trimmed = trim($value);
+            $normalized = preg_replace('/(?!^\+)[^\d]/', '', $trimmed);
 
-                $emailEncrypted = $email ? Crypt::encryptString($email) : null;
-                $phoneEncrypted = $phone ? Crypt::encryptString($phone) : null;
+            return $normalized !== '' ? $normalized : null;
+        };
 
-                // -------------------- 1) FIND EXISTING USER (EXACT MATCH) --------------------
-                $user = User::query()
-                    ->where(function ($q) use ($emailHash, $phoneHash) {
-                        if ($emailHash) $q->where('email_hash', $emailHash);
-                        if ($phoneHash) $q->orWhere('phone_hash', $phoneHash);
-                    })
+        $generateUniquePatientUuid = static function (): string {
+            $attempts = 0;
+
+            do {
+                $attempts++;
+                $candidate = HealthcareIdGenerator::generate('patient');
+                $exists = Patient::where('patient_uuid', $candidate)->exists();
+
+                if (!$exists) {
+                    return $candidate;
+                }
+            } while ($attempts < 10);
+
+            throw new \RuntimeException('Unable to generate a unique patient identifier.');
+        };
+
+        $generateUniqueMedicalRecord = static function (): array {
+            $attempts = 0;
+
+            do {
+                $attempts++;
+                $plain = 'MRN-' . strtoupper(Str::random(10));
+                $hash = hash('sha256', $plain);
+                $exists = Patient::where('medical_record_number_hash', $hash)->exists();
+
+                if (!$exists) {
+                    return [$plain, $hash, Crypt::encryptString($plain)];
+                }
+            } while ($attempts < 10);
+
+            throw new \RuntimeException('Unable to generate a unique medical record number.');
+        };
+
+        $firstName = $normalizeHumanName($data['first_name']);
+        $lastName = $normalizeHumanName($data['last_name']);
+        $firstNameComparable = $normalizeComparableName($firstName);
+        $lastNameComparable = $normalizeComparableName($lastName);
+
+        $email = filled($data['email'] ?? null)
+            ? mb_strtolower(trim($data['email']))
+            : null;
+
+        $phone = $normalizePhone($data['phone'] ?? null);
+
+        $emailHash = $email ? hash('sha256', $email) : null;
+        $phoneHash = $phone ? hash('sha256', $phone) : null;
+
+        $emailEncrypted = $email ? Crypt::encryptString($email) : null;
+        $phoneEncrypted = $phone ? Crypt::encryptString($phone) : null;
+
+        $duplicateAction = $data['action_on_possible_duplicate'] ?? 'block';
+        $existingUserAction = $data['existing_user_action'] ?? 'block';
+
+        $result = DB::transaction(function () use (
+            $data,
+            $request,
+            $staffId,
+            $firstName,
+            $lastName,
+            $firstNameComparable,
+            $lastNameComparable,
+            $emailHash,
+            $phoneHash,
+            $emailEncrypted,
+            $phoneEncrypted,
+            $duplicateAction,
+            $existingUserAction,
+            $generateUniquePatientUuid,
+            $generateUniqueMedicalRecord
+        ) {
+            $matchedContactFields = [];
+
+            $user = User::query()
+                ->where(function ($query) use ($emailHash, $phoneHash) {
+                    if ($emailHash) {
+                        $query->where('email_hash', $emailHash);
+                    }
+
+                    if ($phoneHash) {
+                        if ($emailHash) {
+                            $query->orWhere('phone_hash', $phoneHash);
+                        } else {
+                            $query->where('phone_hash', $phoneHash);
+                        }
+                    }
+                })
+                ->lockForUpdate()
+                ->first();
+
+            if ($user) {
+                if ($emailHash && !empty($user->email_hash) && hash_equals($user->email_hash, $emailHash)) {
+                    $matchedContactFields[] = 'email';
+                }
+
+                if ($phoneHash && !empty($user->phone_hash) && hash_equals($user->phone_hash, $phoneHash)) {
+                    $matchedContactFields[] = 'phone';
+                }
+            }
+
+            $existingPatient = null;
+            $possibleDuplicatePatient = null;
+            $demographicMatch = false;
+
+            if ($user) {
+                $existingPatient = Patient::query()
+                    ->where('user_id', $user->id)
+                    ->with('user')
                     ->lockForUpdate()
                     ->first();
 
-                // Existing user found; allow UI-driven action
-                if ($user && ($data['existing_user_action'] ?? 'use_existing') === 'block') {
-                    $existingPatient = Patient::query()
-                        ->where('user_id', $user->id)
-                        ->with('user')
-                        ->first();
+                $userFirstComparable = filled($user->first_name)
+                    ? mb_strtolower((string) Str::of($user->first_name)->trim()->squish())
+                    : null;
+
+                $userLastComparable = filled($user->last_name)
+                    ? mb_strtolower((string) Str::of($user->last_name)->trim()->squish())
+                    : null;
+
+                $nameMatch = $userFirstComparable === $firstNameComparable
+                    && $userLastComparable === $lastNameComparable;
+
+                if ($existingPatient) {
+                    $existingDob = $existingPatient->date_of_birth
+                        ? \Illuminate\Support\Carbon::parse($existingPatient->date_of_birth)->format('Y-m-d')
+                        : null;
+
+                    $dobMatch = $existingDob === $data['date_of_birth'];
+                    $sexMatch = $existingPatient->biological_sex === $data['biological_sex'];
+
+                    $demographicMatch = $nameMatch && $dobMatch && $sexMatch;
+
+                    if ($demographicMatch) {
+                        return [
+                            'status' => 'already_has_patient',
+                            'patient' => $existingPatient,
+                            'existing_patient' => $existingPatient,
+                            'existing_user' => $user,
+                            'possible_duplicate' => null,
+                            'created_new_user' => false,
+                            'onboarding_link_required' => false,
+                            'matched_contact_fields' => $matchedContactFields,
+                            'matched_fields' => ['email', 'phone', 'first_name', 'last_name', 'date_of_birth', 'biological_sex'],
+                            'demographic_match' => true,
+                            'conflict_code' => 'USER_ALREADY_HAS_PATIENT',
+                        ];
+                    }
 
                     return [
-                        'status' => $existingPatient ? 'already_has_patient' : 'existing_user_found',
-                        'patient' => $existingPatient,
+                        'status' => 'existing_user_found',
+                        'patient' => null,
+                        'existing_patient' => $existingPatient,
                         'existing_user' => $user,
                         'possible_duplicate' => null,
                         'created_new_user' => false,
                         'onboarding_link_required' => false,
-                        'visit' => null,
+                        'matched_contact_fields' => $matchedContactFields,
+                        'matched_fields' => ['email', 'phone'],
+                        'demographic_match' => false,
+                        'conflict_code' => 'IDENTITY_MISMATCH',
                     ];
                 }
 
-                // -------------------- 2) POSSIBLE DUPLICATE CHECK --------------------
-                $possibleDuplicatePatient = null;
-
-                if (!$user) {
-                    $possibleDuplicatePatient = Patient::query()
-                        ->whereDate('date_of_birth', $data['date_of_birth'])
-                        ->where('biological_sex', $data['biological_sex'])
-                        ->whereHas('user', function ($u) use ($data) {
-                            $u->where('first_name', $data['first_name'])
-                            ->where('last_name', $data['last_name']);
-                        })
-                        ->with('user')
-                        ->first();
-
-                    if ($possibleDuplicatePatient && ($data['action_on_possible_duplicate'] ?? 'block') === 'block') {
-                        return [
-                            'status' => 'possible_duplicate',
-                            'patient' => null,
-                            'existing_user' => null,
-                            'possible_duplicate' => $possibleDuplicatePatient,
-                            'created_new_user' => false,
-                            'onboarding_link_required' => false,
-                            'visit' => null,
-                        ];
-                    }
+                if (!$nameMatch) {
+                    return [
+                        'status' => 'existing_user_found',
+                        'patient' => null,
+                        'existing_patient' => null,
+                        'existing_user' => $user,
+                        'possible_duplicate' => null,
+                        'created_new_user' => false,
+                        'onboarding_link_required' => false,
+                        'matched_contact_fields' => $matchedContactFields,
+                        'matched_fields' => ['email', 'phone'],
+                        'demographic_match' => false,
+                        'conflict_code' => 'IDENTITY_MISMATCH',
+                    ];
                 }
 
-                // -------------------- 3) CREATE OR UPDATE USER --------------------
-                $createdNewUser = false;
-
-                if (!$user) {
-                    $user = User::create([
-                        'global_user_uuid' => (string) Str::uuid(),
-
-                        'first_name' => $data['first_name'],
-                        'last_name'  => $data['last_name'],
-                        'display_name' => trim($data['first_name'] . ' ' . $data['last_name']),
-
-                        'email_encrypted' => $emailEncrypted,
-                        'email_hash'      => $emailHash,
-                        'phone_encrypted' => $phoneEncrypted,
-                        'phone_hash'      => $phoneHash,
-
-                        'password_hash' => null,
-                        'requires_password_change' => true,
-
-                        'created_from_facility_id' => $data['created_from_facility_id'] ?? null,
-                        // if your users.created_by_staff_id expects staff_id, keep $staffId
-                        'created_by_staff_id' => $staffId,
-                        'created_ip' => $request->ip(),
-                    ]);
-
-                    $createdNewUser = true;
-                } else {
-                    $dirty = false;
-
-                    if ($emailHash && empty($user->email_hash)) {
-                        $user->email_hash = $emailHash;
-                        $user->email_encrypted = $emailEncrypted;
-                        $dirty = true;
-                    }
-
-                    if ($phoneHash && empty($user->phone_hash)) {
-                        $user->phone_hash = $phoneHash;
-                        $user->phone_encrypted = $phoneEncrypted;
-                        $dirty = true;
-                    }
-
-                    if ($dirty) {
-                        // if users.updated_by_staff_id expects staff_id, use $staffId
-                        $user->updated_by_staff_id = $staffId;
-                        $user->save();
-                    }
+                if ($existingUserAction !== 'use_existing') {
+                    return [
+                        'status' => 'existing_user_found',
+                        'patient' => null,
+                        'existing_patient' => null,
+                        'existing_user' => $user,
+                        'possible_duplicate' => null,
+                        'created_new_user' => false,
+                        'onboarding_link_required' => false,
+                        'matched_contact_fields' => $matchedContactFields,
+                        'matched_fields' => ['email', 'phone'],
+                        'demographic_match' => false,
+                        'conflict_code' => 'CONTACT_MATCH',
+                    ];
                 }
+            }
 
-                // -------------------- 4) IF PATIENT ALREADY EXISTS, RETURN IT --------------------
-                $existingPatient = Patient::query()
-                    ->where('user_id', $user->id)
+            if (!$user) {
+                $possibleDuplicatePatient = Patient::query()
                     ->with('user')
+                    ->whereDate('date_of_birth', $data['date_of_birth'])
+                    ->where('biological_sex', $data['biological_sex'])
+                    ->whereHas('user', function ($query) use ($firstNameComparable, $lastNameComparable) {
+                        $query
+                            ->whereRaw('LOWER(TRIM(first_name)) = ?', [$firstNameComparable])
+                            ->whereRaw('LOWER(TRIM(last_name)) = ?', [$lastNameComparable]);
+                    })
+                    ->lockForUpdate()
                     ->first();
 
-                if ($existingPatient) {
+                if ($possibleDuplicatePatient && $duplicateAction !== 'allow') {
                     return [
-                        'status' => 'already_has_patient',
-                        'patient' => $existingPatient,
-                        'existing_user' => $user,
+                        'status' => 'possible_duplicate',
+                        'patient' => null,
+                        'existing_patient' => null,
+                        'existing_user' => null,
                         'possible_duplicate' => $possibleDuplicatePatient,
-                        'created_new_user' => $createdNewUser,
+                        'created_new_user' => false,
                         'onboarding_link_required' => false,
-                        'visit' => null,
+                        'matched_contact_fields' => [],
+                        'matched_fields' => ['first_name', 'last_name', 'date_of_birth', 'biological_sex'],
+                        'demographic_match' => true,
+                        'conflict_code' => 'DEMOGRAPHIC_DUPLICATE',
                     ];
                 }
+            }
 
-                // -------------------- 5) CREATE PATIENT --------------------
-                $patientUuid = HealthcareIdGenerator::generate('patient');
+            $createdNewUser = false;
 
-                $mrnPlain = 'MRN-' . strtoupper(Str::random(10));
-                $mrnHash  = hash('sha256', $mrnPlain);
-                $mrnEncrypted = Crypt::encryptString($mrnPlain);
+            if (!$user) {
+                $user = User::create([
+                    'global_user_uuid' => (string) Str::uuid(),
 
-                $patient = Patient::create([
-                    'patient_uuid' => $patientUuid,
-                    'user_id' => $user->id,
+                    'first_name' => $firstName,
+                    'last_name' => $lastName,
+                    'display_name' => trim($firstName . ' ' . $lastName),
 
-                    'medical_record_number_hash' => $mrnHash,
-                    'medical_record_number_encrypted' => $mrnEncrypted,
+                    'email_encrypted' => $emailEncrypted,
+                    'email_hash' => $emailHash,
+                    'phone_encrypted' => $phoneEncrypted,
+                    'phone_hash' => $phoneHash,
 
-                    'date_of_birth' => $data['date_of_birth'],
-                    'biological_sex' => $data['biological_sex'],
+                    'password_hash' => null,
+                    'requires_password_change' => true,
 
-                    'status' => 'active',
-                    'portal_access_enabled' => true,
-
-                    // if patients.created_by_staff_id expects staff_id, use $staffId
+                    'created_from_facility_id' => $data['created_from_facility_id'] ?? null,
                     'created_by_staff_id' => $staffId,
-                ])->load('user');
+                    'created_ip' => $request->ip(),
+                ]);
 
-                // -------------------- 6) CREATE VISIT (ASSIGN TO CURRENT STAFF) --------------------
-                $visitMeta = null;
+                $createdNewUser = true;
+            } else {
+                $dirty = false;
 
-                $facilityId = $data['created_from_facility_id'] ?? null;
-                if ($facilityId) {
-                    $visit = Visit::create([
-                        'visit_uuid' => (string) Str::uuid(),
-                        'facility_id' => $facilityId,
-                        'patient_id' => $patient->id,
-
-                        // ✅ assign visit to current staff
-                        'assigned_staff_id' => $staffId,
-                        'assigned_at' => now(),
-
-                        // minimal required visit fields
-                        'visit_type' => 'outpatient',
-                        'acuity_score' => 3,
-                        'arrived_at' => now(),
-                        'waiting_since' => now(),
-
-                        // sane defaults aligned to your schema
-                        'is_walk_in' => true,
-                        'status' => 'active',
-                        'current_phase' => 'registration',
-
-                        // audit
-                        'created_by_staff_id' => $staffId,
-                        'updated_by_staff_id' => $staffId,
-                    ]);
-
-                    // Return only a few fields (safe for legacy)
-                    $visitMeta = [
-                        'id' => $visit->id,
-                        'visit_uuid' => $visit->visit_uuid,
-                        'facility_id' => $visit->facility_id,
-                        'patient_id' => $visit->patient_id,
-                        'assigned_staff_id' => $visit->assigned_staff_id,
-                        'current_phase' => $visit->current_phase,
-                        'status' => $visit->status,
-                        'arrived_at' => optional($visit->arrived_at)->toISOString(),
-                    ];
+                if ($emailHash && empty($user->email_hash)) {
+                    $user->email_hash = $emailHash;
+                    $user->email_encrypted = $emailEncrypted;
+                    $dirty = true;
                 }
 
-                // -------------------- 7) CREATE ONBOARDING TOKEN (HASH ONLY) --------------------
+                if ($phoneHash && empty($user->phone_hash)) {
+                    $user->phone_hash = $phoneHash;
+                    $user->phone_encrypted = $phoneEncrypted;
+                    $dirty = true;
+                }
+
+                if ($dirty) {
+                    $user->updated_by_staff_id = $staffId;
+                    $user->save();
+                }
+            }
+
+            $patientUuid = $generateUniquePatientUuid();
+            [$mrnPlain, $mrnHash, $mrnEncrypted] = $generateUniqueMedicalRecord();
+
+            $patient = Patient::create([
+                'patient_uuid' => $patientUuid,
+                'user_id' => $user->id,
+
+                'medical_record_number_hash' => $mrnHash,
+                'medical_record_number_encrypted' => $mrnEncrypted,
+
+                'date_of_birth' => $data['date_of_birth'],
+                'biological_sex' => $data['biological_sex'],
+
+                'status' => 'active',
+                'portal_access_enabled' => true,
+                'created_by_staff_id' => $staffId,
+            ])->load('user');
+
+            $shouldIssueOnboardingToken = $createdNewUser || (
+                empty($user->password_hash) || (bool) $user->requires_password_change
+            );
+
+            if ($shouldIssueOnboardingToken) {
                 $rawToken = Str::random(64);
 
                 OnboardingToken::create([
                     'user_id' => $user->id,
                     'token_hash' => hash('sha256', $rawToken),
                     'expires_at' => now()->addMinutes(30),
-                    'channel' => $email ? 'email' : 'sms',
+                    'channel' => filled($data['email'] ?? null) ? 'email' : 'sms',
                     'created_by_staff_id' => $staffId,
                     'created_ip' => $request->ip(),
                 ]);
-
-                return [
-                    'status' => 'created',
-                    'patient' => $patient,
-                    'existing_user' => $user,
-                    'possible_duplicate' => $possibleDuplicatePatient,
-                    'created_new_user' => $createdNewUser,
-                    'onboarding_link_required' => true,
-                    'visit' => $visitMeta,
-                    // 'raw_token' => $rawToken, // do NOT return in production
-                ];
-            });
-
-            // -------------------- RESPONSE SHAPING (LEGACY SAFE) --------------------
-            if ($result['status'] === 'possible_duplicate') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Possible duplicate patient found. Confirm action to proceed.',
-                    'data' => [],
-                    'meta' => [
-                        'status' => 'possible_duplicate',
-                        'possible_duplicate' => new PatientSearchResource($result['possible_duplicate']),
-                    ],
-                ], 409);
             }
 
-            if ($result['status'] === 'existing_user_found') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'A user with the same email/phone already exists. Confirm action to proceed.',
-                    'data' => [],
-                    'meta' => [
-                        'status' => 'existing_user_found',
-                        'existing_user_global_user_uuid' => $result['existing_user']->global_user_uuid,
-                    ],
-                ], 409);
-            }
+            return [
+                'status' => 'created',
+                'patient' => $patient,
+                'existing_patient' => null,
+                'existing_user' => $user,
+                'possible_duplicate' => $possibleDuplicatePatient,
+                'created_new_user' => $createdNewUser,
+                'onboarding_link_required' => $shouldIssueOnboardingToken,
+                'matched_contact_fields' => $matchedContactFields,
+                'matched_fields' => $matchedContactFields,
+                'demographic_match' => false,
+                'conflict_code' => null,
+            ];
+        });
 
-            if ($result['status'] === 'already_has_patient') {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'User already has a patient record.',
-                    'data' => new PatientSearchResource($result['patient']),
-                    'meta' => [
-                        'status' => 'already_has_patient',
-                        'possible_duplicate' => $result['possible_duplicate']
-                            ? new PatientSearchResource($result['possible_duplicate'])
-                            : null,
-                        // Keep legacy stable; visit is null here
-                        'visit' => null,
-                    ],
-                ], 200);
-            }
+        if ($result['status'] === 'possible_duplicate') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Possible duplicate patient found. Review before proceeding.',
+                'data' => [],
+                'meta' => [
+                    'status' => 'possible_duplicate',
+                    'created_new_user' => false,
+                    'possible_duplicate' => new PatientSearchResource($result['possible_duplicate']),
+                    'existing_patient' => null,
+                    'onboarding_link_required' => false,
+                    'existing_user_global_user_uuid' => null,
+                    'matched_contact_fields' => $result['matched_contact_fields'] ?? [],
+                    'matched_fields' => $result['matched_fields'] ?? [],
+                    'demographic_match' => $result['demographic_match'] ?? false,
+                    'conflict_code' => $result['conflict_code'] ?? 'DEMOGRAPHIC_DUPLICATE',
+                ],
+            ], 409);
+        }
 
-            // ✅ Legacy "data" unchanged; only add visit info into meta
+        if ($result['status'] === 'existing_user_found') {
+            return response()->json([
+                'success' => false,
+                'message' => 'An existing user/contact match was found. Review before proceeding.',
+                'data' => [],
+                'meta' => [
+                    'status' => 'existing_user_found',
+                    'created_new_user' => false,
+                    'possible_duplicate' => null,
+                    'existing_patient' => $result['existing_patient']
+                        ? new PatientSearchResource($result['existing_patient'])
+                        : null,
+                    'onboarding_link_required' => false,
+                    'existing_user_global_user_uuid' => $result['existing_user']?->global_user_uuid,
+                    'matched_contact_fields' => $result['matched_contact_fields'] ?? [],
+                    'matched_fields' => $result['matched_fields'] ?? [],
+                    'demographic_match' => $result['demographic_match'] ?? false,
+                    'conflict_code' => $result['conflict_code'] ?? 'CONTACT_MATCH',
+                ],
+            ], 409);
+        }
+
+        if ($result['status'] === 'already_has_patient') {
             return response()->json([
                 'success' => true,
-                'message' => 'Patient created successfully by staff.',
+                'message' => 'Matching patient record already exists.',
                 'data' => new PatientSearchResource($result['patient']),
                 'meta' => [
-                    'status' => 'created',
-                    'created_new_user' => $result['created_new_user'],
-                    'possible_duplicate' => $result['possible_duplicate']
-                        ? new PatientSearchResource($result['possible_duplicate'])
+                    'status' => 'already_has_patient',
+                    'created_new_user' => false,
+                    'possible_duplicate' => null,
+                    'existing_patient' => $result['existing_patient']
+                        ? new PatientSearchResource($result['existing_patient'])
                         : null,
-                    'onboarding_link_required' => $result['onboarding_link_required'],
-                    'visit' => $result['visit'], // 👈 minimal visit payload
+                    'onboarding_link_required' => false,
+                    'existing_user_global_user_uuid' => $result['existing_user']?->global_user_uuid,
+                    'matched_contact_fields' => $result['matched_contact_fields'] ?? [],
+                    'matched_fields' => $result['matched_fields'] ?? [],
+                    'demographic_match' => true,
+                    'conflict_code' => $result['conflict_code'] ?? 'USER_ALREADY_HAS_PATIENT',
                 ],
-            ], 201);
-
-        } catch (\Illuminate\Database\QueryException $e) {
-            Log::warning('createPatientByStaff DB constraint error', ['error' => $e->getMessage()]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'A conflicting patient/user record already exists.',
-                'data' => [],
-            ], 409);
-
-        } catch (\Exception $e) {
-            Log::error('Failed to createPatientByStaff', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create patient.',
-                'data' => [],
-            ], 500);
+            ], 200);
         }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Patient created successfully.',
+            'data' => new PatientSearchResource($result['patient']),
+            'meta' => [
+                'status' => 'created',
+                'created_new_user' => $result['created_new_user'],
+                'possible_duplicate' => $result['possible_duplicate']
+                    ? new PatientSearchResource($result['possible_duplicate'])
+                    : null,
+                'existing_patient' => null,
+                'onboarding_link_required' => $result['onboarding_link_required'],
+                'existing_user_global_user_uuid' => $result['existing_user']?->global_user_uuid,
+                'matched_contact_fields' => $result['matched_contact_fields'] ?? [],
+                'matched_fields' => $result['matched_fields'] ?? [],
+                'demographic_match' => $result['demographic_match'] ?? false,
+                'conflict_code' => null,
+            ],
+        ], 201);
+
+    } catch (\Illuminate\Database\QueryException $e) {
+        Log::warning('createPatientByAdmin DB constraint error', [
+            'error' => $e->getMessage(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'A conflicting patient or user record already exists.',
+            'data' => [],
+        ], 409);
+
+    } catch (\Throwable $e) {
+        Log::error('Failed to createPatientByAdmin', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to create patient.',
+            'data' => [],
+        ], 500);
     }
+}
 
 
 

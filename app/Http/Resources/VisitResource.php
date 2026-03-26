@@ -22,6 +22,8 @@ class VisitResource extends JsonResource
         return [
             'id' => $this->id,
             'visit_uuid' => $this->visit_uuid,
+            'patient_id' => $this->patient_id,
+            'facility_id' => $this->facility_id,
             'facility' => $this->whenLoaded('facility', new FacilityResource($this->facility)),
             'patient' => $this->whenLoaded('patient', new PatientResource($this->patient)),
             'visit_type' => $this->visit_type,

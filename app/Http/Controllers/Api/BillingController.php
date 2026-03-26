@@ -94,22 +94,25 @@ class BillingController extends Controller
                 'has_payment_methods' => isset($data['payment_methods']),
                 'payment_methods_count' => isset($data['payment_methods']) ? count($data['payment_methods']) : 0,
                 'has_billing_data' => isset($data['billing_data']),
-                'has_status' => isset($data['status']),
+               'has_status' => isset($data['status']),
                 'status_value' => $data['status'] ?? null,
-            ]);
+                'has_payment_status' => isset($data['payment_status']),
+                'payment_status_value' => $data['payment_status'] ?? null,
 
-            // Transform status from 'ready' to 'settled' BEFORE validation
+                            ]);
+
+           // Keep the UI status exactly as the frontend sent it.
+            // IMPORTANT:
+            // - draft   => still editable
+            // - ready   => prepared for billing but not necessarily paid
+            // - settled => only valid when fully paid
+            //
+            // The authoritative payment/billing state will be derived later
+            // from actual amounts and payment methods in the service layer.
             $originalStatus = $data['status'] ?? null;
-            if (isset($data['status']) && $data['status'] === 'ready') {
-                $data['status'] = 'settled';
-                Log::info('Status transformed', [
-                    'original' => $originalStatus,
-                    'transformed' => 'settled'
-                ]);
-            }
-            
-            // Create new request with transformed data for validation
+
             $request->replace($data);
+
 
             // Define validation rules for reference
             $rules = [
@@ -147,7 +150,10 @@ class BillingController extends Controller
                 'billing_data.totalPaid' => 'required|numeric|min:0',
                 'billing_data.balance' => 'required|numeric|min:0',
                 'additional_notes' => 'nullable|string',
-                'status' => 'required|in:draft,settled',
+                // Frontend may send UI status + payment_status.
+                // We accept them, but payment_status will still be re-derived from actual amounts later.
+                'payment_status' => 'nullable|in:pending,partially_paid,paid_in_full',
+                'status' => 'required|in:draft,ready,settled',
             ];
 
             try {
@@ -356,7 +362,7 @@ class BillingController extends Controller
 
             // Validate filter parameters
             $filters = $request->validate([
-                'status' => 'nullable|string|in:draft,pending_review,pending_submission,submitted_to_insurance,partially_paid,paid_in_full,payment_plan,collections,disputed,written_off,charity_care',
+              'status' => 'nullable|string|in:draft,pending,pending_review,pending_submission,submitted_to_insurance,partially_paid,paid_in_full,payment_plan,collections,disputed,written_off,charity_care',
                 'date_from' => 'nullable|date',
                 'date_to' => 'nullable|date|after_or_equal:date_from',
                 'payment_method' => 'nullable|string|in:cash,insurance,card,bank_transfer,mobile_money,other',

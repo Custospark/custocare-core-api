@@ -6,6 +6,7 @@ use App\Models\BillingCycle;
 use App\Models\InvoiceLineItem;
 use App\Models\InventoryItem;
 use App\Models\Visit;
+use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -85,92 +86,117 @@ class BillingProcessor
         });
     }
 
-  /**
- * Create BillingCycle record
- * 
- * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
- * to ensure consistency with actual payment methods
- *
- * @param array $data Billing data
- * @param int $facilityId Facility ID
- * @param int $staffId Staff ID
- * @param float $discountAmount Calculated discount amount
- * @param array $paymentSplit Payment split data (with total_paid)
- * @param bool $isPrimaryCash Is primary payment cash
- * @param bool $isInsuranceInvolved Is insurance involved
- * @return BillingCycle
- */
-protected function createBillingCycle(
-    array $data,
-    int $facilityId,
-    int $staffId,
-    float $discountAmount,
-    array $paymentSplit,
-    bool $isPrimaryCash,
-    bool $isInsuranceInvolved
-): BillingCycle {
-    // Use the validated total from payment methods
-    $validatedTotalPaid = $paymentSplit['total_paid'] ?? 
-        ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']);
-    
-    // Calculate if this is truly paid in full
-    $grandTotal = $data['billing_data']['grandTotal'];
-    $isFullyPaid = abs($validatedTotalPaid - $grandTotal) < 0.01; // Account for floating point
-    
-    // Determine billing status based on payment completeness
-    $billingStatus = $isFullyPaid ? 'paid_in_full' : 'partially_paid';
-    
-    return BillingCycle::create([
-        'billing_cycle_uuid' => Str::uuid(),
-        'facility_id' => $facilityId,
-        'visit_id' => $data['visit_id'],
-        'patient_id' => $data['patient_id'],
-        
-        'cycle_type' => 'visit_based',
-        'period_start' => now(),
-        'period_end' => now(),
-        'days_in_cycle' => 1,
-        
-        // Financial summary
-        'total_amount_charged' => $data['billing_data']['subtotal'],
-        'total_adjustments' => $discountAmount,
-        'net_amount' => $grandTotal,
-        
-        // Insurance (if applicable)
-        'insurance_covered_amount' => $paymentSplit['insurance_payment'],
-        'insurance_payment_received' => $paymentSplit['insurance_payment'],
-        'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
-        'insurance_payment_received_at' => $isInsuranceInvolved ? now() : null,
-        
-        // Patient responsibility - FIXED: Use actual patient payment from methods
-        'patient_responsibility_amount' => $paymentSplit['patient_payment'],
-        'patient_payment_received' => $paymentSplit['patient_payment'],
-        
-        // Discount
-        'discount_applied' => $discountAmount,
-        'discount_reason' => $data['discount']['reason'] ?? null,
-        
-        // Tax
-        'tax_details' => json_encode($data['taxes']),
-        'total_tax_amount' => $data['billing_data']['taxTotal'],
-        
-        // Status - Dynamically set based on payment completeness
-        'billing_status' => $billingStatus,
-        'billed_at' => $validatedTotalPaid > 0 ? now() : null,
-        'payment_due_date' => !$isFullyPaid ? now()->addDays(30) : null, // Only set due date if not fully paid
-        
-        // Audit
-        'created_by_staff_id' => $staffId,
-        'updated_by_staff_id' => $staffId,
-        'metadata' => json_encode([
-            'payment_methods' => $data['payment_methods'],
-            'additional_notes' => $data['additional_notes'] ?? null,
-            'is_cash_payment' => $isPrimaryCash,
-            'validated_total_paid' => $validatedTotalPaid, // Store for audit
-            'is_fully_paid' => $isFullyPaid, // Store flag for audit
-        ]),
-    ]);
-}
+        /**
+         * Create BillingCycle record
+         * 
+         * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
+         * to ensure consistency with actual payment methods
+         *
+         * @param array $data Billing data
+         * @param int $facilityId Facility ID
+         * @param int $staffId Staff ID
+         * @param float $discountAmount Calculated discount amount
+         * @param array $paymentSplit Payment split data (with total_paid)
+         * @param bool $isPrimaryCash Is primary payment cash
+         * @param bool $isInsuranceInvolved Is insurance involved
+         * @return BillingCycle
+         */
+        protected function createBillingCycle(
+            array $data,
+            int $facilityId,
+            int $staffId,
+            float $discountAmount,
+            array $paymentSplit,
+            bool $isPrimaryCash,
+            bool $isInsuranceInvolved
+        ): BillingCycle {
+            $subtotalAmount = (float) ($data['billing_data']['subtotal'] ?? 0);
+            $taxableAmount = (float) ($data['billing_data']['taxableAmount'] ?? max(0, $subtotalAmount - $discountAmount));
+            $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
+
+            $validatedTotalPaid = (float) (
+                $data['resolved_total_paid']
+                ?? ($paymentSplit['total_paid'] ?? ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']))
+            );
+
+            $balanceAmount = (float) (
+                $data['resolved_balance']
+                ?? max(0, $grandTotal - $validatedTotalPaid)
+            );
+
+            $isFullyPaid = (bool) (
+                $data['resolved_is_fully_paid']
+                ?? (abs($balanceAmount) < 0.01)
+            );
+
+            // IMPORTANT:
+            // - pending when nothing has been paid
+            // - partially_paid only when paid > 0 and balance remains
+            // - paid_in_full when balance is zero
+            $billingStatus = $data['resolved_billing_status']
+                ?? ($isFullyPaid ? 'paid_in_full' : ($validatedTotalPaid > 0 ? 'partially_paid' : 'pending'));
+
+            return BillingCycle::create([
+                'billing_cycle_uuid' => HealthcareIdGenerator::generate('billing'),
+                'facility_id' => $facilityId,
+                'visit_id' => $data['visit_id'],
+                'patient_id' => $data['patient_id'],
+
+                'cycle_type' => 'visit_based',
+                'period_start' => now(),
+                'period_end' => now(),
+                'days_in_cycle' => 1,
+
+                // Financial summary
+                'subtotal_amount' => $subtotalAmount,                 // NEW direct snapshot field
+                'total_amount_charged' => $subtotalAmount,           // legacy field retained
+                'total_adjustments' => $discountAmount,
+                'taxable_amount' => $taxableAmount,                  // NEW direct snapshot field
+                'net_amount' => $grandTotal,                         // legacy field retained
+                'grand_total_amount' => $grandTotal,                 // NEW direct snapshot field
+
+                // Insurance
+                'insurance_covered_amount' => $paymentSplit['insurance_payment'],
+                'insurance_payment_received' => $paymentSplit['insurance_payment'],
+                'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
+                'insurance_payment_received_at' => $isInsuranceInvolved ? now() : null,
+
+                // Patient and payment snapshots
+                'patient_responsibility_amount' => max(0, $grandTotal - $paymentSplit['insurance_payment']),
+                'patient_payment_received' => $paymentSplit['patient_payment'],
+                'total_paid_amount' => $validatedTotalPaid,          // NEW direct snapshot field
+                'balance_amount' => $balanceAmount,                  // NEW direct snapshot field
+
+                // Discount
+                'discount_applied' => $discountAmount,
+                'discount_reason' => $data['discount']['reason'] ?? null,
+
+                // Tax
+                'tax_details' => json_encode($data['taxes']),
+                'total_tax_amount' => $data['billing_data']['taxTotal'],
+
+                // Status
+                'billing_status' => $billingStatus,
+                'billed_at' => now(), // bill exists now, even if unpaid
+                'payment_due_date' => !$isFullyPaid ? now()->addDays(30) : null,
+
+                // Audit
+                'created_by_staff_id' => $staffId,
+                'updated_by_staff_id' => $staffId,
+                'metadata' => json_encode([
+                    'payment_methods' => $data['payment_methods'],
+                    'additional_notes' => $data['additional_notes'] ?? null,
+                    'is_cash_payment' => $isPrimaryCash,
+                    'validated_total_paid' => $validatedTotalPaid,
+                    'balance_amount' => $balanceAmount,
+                    'resolved_billing_status' => $billingStatus,
+                    'resolved_payment_status' => $data['payment_status'] ?? null,
+                    'frontend_ui_status' => $data['status'] ?? null,
+                    'is_fully_paid' => $isFullyPaid,
+                ]),
+            ]);
+        }
+
             /**
          * Create InvoiceLineItem records
          *
@@ -250,8 +276,9 @@ protected function createBillingCycle(
                     'staff_performed_id' => $staffId,
                     'service_performed_at' => now(),
                     
-                    // Status
-                    'line_item_status' => $data['status'] === 'settled' ? 'paid' : 'pending',
+                    // Only mark line items as paid when the bill is actually fully paid.
+                    'line_item_status' => !empty($data['resolved_is_fully_paid']) ? 'paid' : 'pending',
+
                     
                     // Audit trail
                     'audit_trail_hash' => hash('sha256', json_encode([
@@ -435,7 +462,8 @@ protected function createBillingCycle(
 
         // Update financial snapshot with accurate values
         $visit->estimated_total_charges = $grandTotal;
-        $visit->patient_estimated_responsibility = $totalPaid;
+        // Store the remaining patient balance, not the amount already paid.
+        $visit->patient_estimated_responsibility = $balance;
 
         // Update audit trail
         $visit->updated_by_staff_id = $staffId;

@@ -39,9 +39,11 @@ class BillingCycle extends Model
         'period_start',
         'period_end',
         'days_in_cycle',
+        'subtotal_amount',
         'total_amount_charged',
         'total_adjustments',
         'net_amount',
+        'grand_total_amount',
         'primary_insurance_claim_number',
         'insurance_covered_amount',
         'insurance_adjustment_amount',
@@ -53,7 +55,10 @@ class BillingCycle extends Model
         'patient_deductible_amount',
         'patient_coinsurance_amount',
         'patient_payment_received',
+        'total_paid_amount',
+        'balance_amount',
         'discount_applied',
+        'taxable_amount',
         'discount_reason',
         'contractual_adjustment',
         'charity_care_adjustment',
@@ -86,9 +91,11 @@ class BillingCycle extends Model
         'billing_cycle_uuid' => 'string',
         'period_start' => 'datetime',
         'period_end' => 'datetime',
+        'subtotal_amount' => 'decimal:2',
         'total_amount_charged' => 'decimal:2',
         'total_adjustments' => 'decimal:2',
         'net_amount' => 'decimal:2',
+        'grand_total_amount' => 'decimal:2',
         'insurance_covered_amount' => 'decimal:2',
         'insurance_adjustment_amount' => 'decimal:2',
         'insurance_payment_received' => 'decimal:2',
@@ -99,7 +106,10 @@ class BillingCycle extends Model
         'patient_deductible_amount' => 'decimal:2',
         'patient_coinsurance_amount' => 'decimal:2',
         'patient_payment_received' => 'decimal:2',
+        'total_paid_amount' => 'decimal:2',
+        'balance_amount' => 'decimal:2',
         'discount_applied' => 'decimal:2',
+        'taxable_amount' => 'decimal:2',
         'contractual_adjustment' => 'decimal:2',
         'charity_care_adjustment' => 'decimal:2',
         'bad_debt_adjustment' => 'decimal:2',
@@ -156,6 +166,7 @@ class BillingCycle extends Model
     {
         return $this->belongsTo(Visit::class);
     }
+    
     public function financialAdjustments()
     {
         return $this->hasMany(FinancialAdjustment::class);
@@ -173,9 +184,8 @@ class BillingCycle extends Model
     /**
      * Billing cycle having many invoice line items.
      */
-       public function lineItems()
+    public function lineItems()
     {
-        
         return $this->hasMany(InvoiceLineItem::class, 'billing_cycle_id');
     }
 

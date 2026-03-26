@@ -66,6 +66,61 @@ trait BillingHelpers
     }
 
     /**
+     * Determine authoritative billing/payment state from actual money values.
+     *
+     * Rules:
+     * - pending        => total paid is exactly zero
+     * - partially_paid => total paid is greater than zero but balance remains
+     * - paid_in_full   => balance is zero
+     *
+     * @param float $grandTotal
+     * @param float $totalPaid
+     * @param string $requestedUiStatus
+     * @return array
+     */
+    public function determineBillingState(
+        float $grandTotal,
+        float $totalPaid,
+        string $requestedUiStatus = 'ready'
+    ): array {
+        $balance = max(0, round($grandTotal - $totalPaid, 2));
+        $isFullyPaid = abs($balance) < 0.01;
+
+        if ($isFullyPaid) {
+            return [
+                'billing_status' => 'paid_in_full',
+                'payment_status' => 'paid_in_full',
+                'ui_status' => 'settled',
+                'total_paid' => $totalPaid,
+                'balance' => $balance,
+                'is_fully_paid' => true,
+            ];
+        }
+
+        if ($totalPaid > 0) {
+            return [
+                'billing_status' => 'partially_paid',
+                'payment_status' => 'partially_paid',
+                'ui_status' => 'ready',
+                'total_paid' => $totalPaid,
+                'balance' => $balance,
+                'is_fully_paid' => false,
+            ];
+        }
+
+        return [
+            // IMPORTANT: zero payment must remain pending, never partially_paid
+            'billing_status' => 'pending',
+            'payment_status' => 'pending',
+            'ui_status' => $requestedUiStatus === 'draft' ? 'draft' : 'ready',
+            'total_paid' => 0.00,
+            'balance' => $balance,
+            'is_fully_paid' => false,
+        ];
+    }
+
+
+    /**
      * Check if visit already has an existing billing cycle
      *
      * @param int $visitId
@@ -77,8 +132,18 @@ trait BillingHelpers
         $existingBillingCycle = BillingCycle::query()
             ->where('visit_id', $visitId)
             ->where('facility_id', $facilityId)
-            ->whereIn('billing_status', ['paid_in_full', 'submitted_to_insurance', 'pending_submission'])
-            ->first();
+            ->whereIn('billing_status', [
+                'pending',                // unpaid billing cycle already exists
+                'partially_paid',         // partially settled billing cycle already exists
+                'paid_in_full',
+                'pending_submission',
+                'submitted_to_insurance',
+                'payment_plan',
+                'collections',
+                'disputed',
+                ])
+                ->first();
+
 
         if ($existingBillingCycle) {
             return [
@@ -176,19 +241,21 @@ trait BillingHelpers
      */
     public function mapBillingStatusToUI(string $billingStatus): string
     {
-        $statusMap = [
-            'draft' => 'draft',
-            'pending_review' => 'draft',
-            'pending_submission' => 'ready',
-            'submitted_to_insurance' => 'ready',
-            'partially_paid' => 'ready',
-            'paid_in_full' => 'settled',
-            'payment_plan' => 'ready',
-            'collections' => 'ready',
-            'disputed' => 'ready',
-            'written_off' => 'settled',
-            'charity_care' => 'settled',
-        ];
+       $statusMap = [
+        'draft' => 'draft',
+        'pending' => 'ready',             // unpaid bill but already created
+        'pending_review' => 'draft',
+        'pending_submission' => 'ready',
+        'submitted_to_insurance' => 'ready',
+        'partially_paid' => 'ready',
+        'paid_in_full' => 'settled',
+        'payment_plan' => 'ready',
+        'collections' => 'ready',
+        'disputed' => 'ready',
+        'written_off' => 'settled',
+        'charity_care' => 'settled',
+    ];
+
 
         return $statusMap[$billingStatus] ?? 'draft';
     }

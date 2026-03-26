@@ -100,29 +100,40 @@ class BillingService
                 $data['billing_data']['subtotal'] ?? 0
             );
         }
-
-        // Step 6: Calculate payment split - FIXED: Add null safety for payment methods
+        // Step 6: Calculate payment split from actual payment methods
         $paymentMethods = $data['payment_methods'] ?? [];
         $totalPaid = $data['billing_data']['totalPaid'] ?? 0;
-        
+
         $paymentSplit = $this->calculatePaymentSplit(
             $paymentMethods,
             $totalPaid
         );
 
-        // Step 7: Determine primary payment method - FIXED: Handle empty payment methods
-        $primaryPaymentMethod = null;
+        // Derive the authoritative payment/billing state from actual amounts.
+        // This prevents "partially_paid" from being set when total paid is zero.
+        $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
+
+        $paymentState = $this->determineBillingState(
+            $grandTotal,
+            (float) ($paymentSplit['total_paid'] ?? 0),
+            $data['status'] ?? 'ready'
+        );
+
+        // Persist the authoritative values back into the working payload
+        // so downstream processing uses one single source of truth.
+        $data['payment_status'] = $paymentState['payment_status'];
+        $data['resolved_billing_status'] = $paymentState['billing_status'];
+        $data['resolved_ui_status'] = $paymentState['ui_status'];
+        $data['resolved_total_paid'] = $paymentState['total_paid'];
+        $data['resolved_balance'] = $paymentState['balance'];
+        $data['resolved_is_fully_paid'] = $paymentState['is_fully_paid'];
+
+        $data['billing_data']['totalPaid'] = $paymentState['total_paid'];
+        $data['billing_data']['balance'] = $paymentState['balance'];
+
+        // Step 7: Determine primary payment method
         $isPrimaryCash = false;
         $isInsuranceInvolved = false;
-        
-        if (!empty($paymentMethods) && is_array($paymentMethods)) {
-            $primaryPaymentMethod = collect($paymentMethods)
-                ->sortByDesc('amount')
-                ->first();
-            
-            $isPrimaryCash = isset($primaryPaymentMethod['type']) && $primaryPaymentMethod['type'] === 'cash';
-            $isInsuranceInvolved = $this->isInsuranceInvolved($paymentMethods);
-        }
 
         // Step 8: Process billing within atomic transaction
         $result = $this->processor->processBillingTransaction(
@@ -136,11 +147,12 @@ class BillingService
             $visit
         );
 
-        // Calculate balance for response context using validated total
-        $grandTotal = $data['billing_data']['grandTotal'] ?? 0;
-        $validatedTotalPaid = $paymentSplit['total_paid'] ?? 0;
-        $balance = max(0, $grandTotal - $validatedTotalPaid);
-        $isFullyPaid = $balance <= 0;
+       // Use the authoritative resolved values
+            $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
+            $validatedTotalPaid = (float) ($data['resolved_total_paid'] ?? 0);
+            $balance = (float) ($data['resolved_balance'] ?? max(0, $grandTotal - $validatedTotalPaid));
+            $isFullyPaid = (bool) ($data['resolved_is_fully_paid'] ?? ($balance <= 0));
+
 
         Log::info('Billing finalized successfully', [
             'billing_cycle_id' => $result['billing_cycle']->id ?? null,
@@ -408,29 +420,38 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit): 
 
     // ---- Totals summary -----------------------------------------------------
 
-    $totalCharged = (float) ($billingCycle->total_amount_charged ?? 0);
+    // Fallback to legacy fields for backward compatibility.
+    $totalCharged = (float) ($billingCycle->subtotal_amount ?? $billingCycle->total_amount_charged ?? 0);
     $totalTax     = (float) ($billingCycle->total_tax_amount ?? 0);
-    $netAmount    = (float) ($billingCycle->net_amount ?? 0);
+    $grandTotal   = (float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0);
 
-    $patientPaid   = (float) ($billingCycle->patient_payment_received ?? 0);
-    $insurancePaid = (float) ($billingCycle->insurance_payment_received ?? 0);
-    $totalPaid = $patientPaid + $insurancePaid;
+    $totalPaid = (float) (
+        $billingCycle->total_paid_amount
+        ?? (
+            (float) ($billingCycle->patient_payment_received ?? 0)
+            + (float) ($billingCycle->insurance_payment_received ?? 0)
+        )
+    );
 
-    // FIXED: Calculate actual balance
-    $balance = max(0, $netAmount - $totalPaid);
-    $isPaid = abs($netAmount - $totalPaid) < 0.01; // Account for floating point
+    $balance = (float) (
+        $billingCycle->balance_amount
+        ?? max(0, $grandTotal - $totalPaid)
+    );
+
+    $isPaid = abs($balance) < 0.01;
 
     $billingData = [
         'subtotal'       => $totalCharged,
         'discountAmount' => $discountApplied,
-        'taxableAmount'  => max(0, $totalCharged - $discountApplied),
+        'taxableAmount'  => (float) ($billingCycle->taxable_amount ?? max(0, $totalCharged - $discountApplied)),
         'taxes'          => $taxes,
         'taxTotal'       => $totalTax,
-        'grandTotal'     => $netAmount,
+        'grandTotal'     => $grandTotal,
         'totalPaid'      => $totalPaid,
-        'balance'        => $balance, // FIXED: Actual balance
-        'isPaid'         => $isPaid, // FIXED: Only true if balance is effectively zero
+        'balance'        => $balance,
+        'isPaid'         => $isPaid,
     ];
+
 
     // ---- Status mapping -----------------------------------------------------
 

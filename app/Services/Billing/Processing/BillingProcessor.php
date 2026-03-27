@@ -750,6 +750,7 @@ public function processPersistedLineItemAdjustment(
                 $newQuantity = 0;
                 break;
         }
+        Log::info("Action",["Action"=>$action]);
 
         $deltaQuantity = round($newQuantity - $oldQuantity, 2);
 

@@ -379,6 +379,7 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
  */
 public function adjustLineItem(Request $request, int $lineItemId): JsonResponse
 {
+    Log::info("Data",["Data"=>$request->all()]);
     $facilityId = $this->resolveFacilityId($request);
     $staffId = $this->resolveCurrentStaffId($request, $facilityId);
 

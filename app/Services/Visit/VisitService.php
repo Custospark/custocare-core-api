@@ -296,10 +296,12 @@ public function createVisit(array $data, int $staffId): array
         // Set required fields
         $data['patient_id'] = $patient->id;
         $data['created_by_staff_id'] = $staffId;
+        $data['assigned_staff_id'] = $staffId;
         $data['updated_by_staff_id'] = $staffId;
         $data['arrived_at'] = $data['arrived_at'] ?? now();
         $data['current_phase'] = $data['current_phase'] ?? 'registration';
         $data['status'] = $data['status'] ?? 'active';
+        Log::info('Sent Visit state', ['state' => $data['status']]);
         $data['visit_uuid'] = $data['visit_uuid'] ?? (string) Str::uuid();
 
         // Create the visit

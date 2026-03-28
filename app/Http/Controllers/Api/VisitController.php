@@ -425,7 +425,7 @@ class VisitController extends Controller
     
    
    /**
-    * Forwarding patient to anoother staff member within the same facility.
+    * Forwarding patient to another staff member within the same facility.
     */
 
     public function assignStaffToVisit(Request $request): JsonResponse

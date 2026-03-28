@@ -287,6 +287,117 @@ trait BillingHelpers
         return ($lineTotal / $subtotal) * $totalDiscount;
     }
 
+            public function normalizeChargeItems(array $chargeItems): array
+        {
+            return collect($chargeItems)->map(function ($chargeItem) {
+                $service = $chargeItem['service'] ?? [];
+
+                $quantity = round((float) ($chargeItem['quantity'] ?? 0), 2);
+                $unitPrice = round((float) ($service['unitPrice'] ?? 0), 2);
+                $lineTotal = round($quantity * $unitPrice, 2);
+
+                $chargeItem['quantity'] = $quantity;
+                $chargeItem['totalAmount'] = $lineTotal;
+                $chargeItem['service']['unitPrice'] = $unitPrice;
+
+                if (!isset($chargeItem['service_key']) && isset($chargeItem['serviceKey'])) {
+                    $chargeItem['service_key'] = $chargeItem['serviceKey'];
+                }
+
+                if (!isset($chargeItem['serviceKey']) && isset($chargeItem['service_key'])) {
+                    $chargeItem['serviceKey'] = $chargeItem['service_key'];
+                }
+
+                return $chargeItem;
+            })->values()->all();
+        }
+
+        public function normalizePaymentMethods(array $paymentMethods): array
+        {
+            return collect($paymentMethods)->map(function ($method) {
+                $type = (string) ($method['type'] ?? '');
+
+                if ($type === 'mobile') {
+                    $type = 'mobile_money';
+                }
+
+                $method['type'] = $type;
+                $method['amount'] = round((float) ($method['amount'] ?? 0), 2);
+
+                return $method;
+            })->filter(function ($method) {
+                return !empty($method['type']) || ((float) ($method['amount'] ?? 0)) > 0;
+            })->values()->all();
+        }
+
+        public function buildAuthoritativeBillingData(
+            array $chargeItems,
+            array $discount = [],
+            array $taxes = []
+        ): array {
+            $subtotal = round(
+                (float) collect($chargeItems)->sum(function ($item) {
+                    return (float) ($item['totalAmount'] ?? 0);
+                }),
+                2
+            );
+
+            $discountType = (string) ($discount['type'] ?? 'fixed');
+            $discountValue = (float) ($discount['value'] ?? 0);
+
+            $discountAmount = round(
+                min($subtotal, $this->calculateDiscountAmount($discountType, $discountValue, $subtotal)),
+                2
+            );
+
+            $taxableAmount = round(max(0, $subtotal - $discountAmount), 2);
+
+            $normalizedTaxes = collect($taxes)->map(function ($tax) use ($taxableAmount) {
+                $rate = round((float) ($tax['rate'] ?? 0), 2);
+
+                return [
+                    'name' => (string) ($tax['name'] ?? 'Tax'),
+                    'rate' => $rate,
+                    'amount' => round($taxableAmount * ($rate / 100), 2),
+                ];
+            })->values()->all();
+
+            $taxTotal = round(
+                (float) collect($normalizedTaxes)->sum(function ($tax) {
+                    return (float) ($tax['amount'] ?? 0);
+                }),
+                2
+            );
+
+            $grandTotal = round($taxableAmount + $taxTotal, 2);
+
+            return [
+                'subtotal' => $subtotal,
+                'discountAmount' => $discountAmount,
+                'taxableAmount' => $taxableAmount,
+                'taxes' => $normalizedTaxes,
+                'taxTotal' => $taxTotal,
+                'grandTotal' => $grandTotal,
+            ];
+        }
+
+        public function billingDataMismatch(array $provided, array $computed): bool
+        {
+            $keys = ['subtotal', 'discountAmount', 'taxableAmount', 'taxTotal', 'grandTotal'];
+
+            foreach ($keys as $key) {
+                $providedValue = round((float) ($provided[$key] ?? 0), 2);
+                $computedValue = round((float) ($computed[$key] ?? 0), 2);
+
+                if (abs($providedValue - $computedValue) > 0.01) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
     /**
      * Verify visit belongs to facility and patient
      *

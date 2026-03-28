@@ -61,7 +61,7 @@ protected function resolveCurrentStaffId(Request $request, int $facilityId): ?in
         ->whereIn('staff_id', $staffIds)
         ->value('staff_id');
 
-    return $facilityScopedStaffId ?: $staffIds->first();
+    return $facilityScopedStaffId ?: null;
 }
 
 /**
@@ -106,26 +106,19 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
         ]);
 
         try {
-            // Get facility and staff IDs from headers/context
-            $facilityId = (int) $request->header('X-Facility-Id');
-            $staffId = (int) $request->header('X-Staff-Id');
+            $facilityId = $this->resolveFacilityId($request);
+            $staffId = $this->resolveCurrentStaffId($request, $facilityId);
 
-            // Validate headers first
             $headerErrors = [];
-            
+
             if (!$facilityId) {
                 $headerErrors['facility_id'] = ['X-Facility-Id header is required.'];
-                Log::error('Missing X-Facility-Id header', [
-                    'headers' => $request->headers->all(),
-                ]);
             }
 
             if (!$staffId) {
-                $headerErrors['staff_id'] = ['X-Staff-Id header is required.'];
-                Log::error('Missing X-Staff-Id header', [
-                    'headers' => $request->headers->all(),
-                ]);
+                $headerErrors['staff_id'] = ['Authenticated staff could not be resolved for this facility.'];
             }
+
 
             if (!empty($headerErrors)) {
                 return response()->json([
@@ -192,9 +185,9 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
                 'taxes.*.name' => 'required|string',
                 'taxes.*.rate' => 'required|numeric|min:0|max:100',
                 'taxes.*.amount' => 'required|numeric|min:0',
-                'payment_methods' => 'nullable|array|min:0',
-                'payment_methods.*.type' => 'nullable|in:cash,card,insurance,mobile,bank_transfer,cheque,mixed,other',
-                'payment_methods.*.amount' => 'nullable|numeric|min:0',
+                'payment_methods' => 'nullable|array',
+                'payment_methods.*.type' => 'required_with:payment_methods.*.amount|in:cash,card,insurance,mobile,mobile_money,bank_transfer,cheque,mixed,other',
+                'payment_methods.*.amount' => 'required_with:payment_methods.*.type|numeric|min:0',
                 'payment_methods.*.reference' => 'nullable|string',
                 'payment_methods.*.details' => 'nullable',
                 'billing_data' => 'required|array',
@@ -287,7 +280,7 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
                 'grand_total' => $validated['billing_data']['grandTotal'],
                 'total_paid' => $validated['billing_data']['totalPaid'],
                 'balance' => $validated['billing_data']['balance'],
-                'payment_methods_count' => count($validated['payment_methods']),
+                'payment_methods_count' => count($validated['payment_methods'] ?? []),
                 'charge_items_count' => count($validated['charge_items']),
             ]);
 
@@ -449,7 +442,7 @@ public function adjustLineItem(Request $request, int $lineItemId): JsonResponse
               'status' => 'nullable|string|in:draft,pending,pending_review,pending_submission,submitted_to_insurance,partially_paid,paid_in_full,payment_plan,collections,disputed,written_off,charity_care',
                 'date_from' => 'nullable|date',
                 'date_to' => 'nullable|date|after_or_equal:date_from',
-                'payment_method' => 'nullable|string|in:cash,insurance,card,bank_transfer,mobile_money,other',
+                'payment_method' => 'nullable|string|in:cash,insurance,card,bank_transfer,mobile,mobile_money,other',
                 'min_amount' => 'nullable|numeric|min:0',
                 'max_amount' => 'nullable|numeric|min:0|gt:min_amount',
             ]);

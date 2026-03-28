@@ -81,7 +81,28 @@ class BillingService
             return $billingEligibility;
         }
 
-       // Step 3: Find existing editable billing cycle (pending / partially_paid)
+        // Normalize charge items and payment methods before validation
+        $data['charge_items'] = $this->normalizeChargeItems($data['charge_items'] ?? []);
+        $data['payment_methods'] = $this->normalizePaymentMethods($data['payment_methods'] ?? []);
+
+        $authoritativeBillingData = $this->buildAuthoritativeBillingData(
+            $data['charge_items'],
+            $data['discount'] ?? [],
+            $data['taxes'] ?? []
+        );
+
+        if ($this->billingDataMismatch($data['billing_data'] ?? [], $authoritativeBillingData)) {
+            Log::warning('Frontend billing_data mismatch detected; backend authoritative totals applied.', [
+                'visit_id' => $data['visit_id'] ?? null,
+                'provided_billing_data' => $data['billing_data'] ?? [],
+                'computed_billing_data' => $authoritativeBillingData,
+            ]);
+        }
+
+        $data['billing_data'] = array_merge($data['billing_data'] ?? [], $authoritativeBillingData);
+        $data['taxes'] = $authoritativeBillingData['taxes'];
+
+        // Step 3: Find existing editable billing cycle (pending / partially_paid)
         // If found, we will append into it instead of creating a new one.
         $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
 
@@ -91,7 +112,6 @@ class BillingService
 
         $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
 
-
         // Step 4: Validate inventory availability BEFORE transaction
         $inventoryValidation = $this->validation->validateInventoryAvailability($data['charge_items'], $staffId);
         
@@ -100,14 +120,7 @@ class BillingService
         }
 
         // Step 5: Calculate discount amount - Add null safety for discount
-        $discountAmount = 0;
-        if (isset($data['discount']) && is_array($data['discount'])) {
-            $discountAmount = $this->calculateDiscountAmount(
-                $data['discount']['type'] ?? 'fixed',
-                $data['discount']['value'] ?? 0,
-                $data['billing_data']['subtotal'] ?? 0
-            );
-        }
+        $discountAmount = (float) ($data['billing_data']['discountAmount'] ?? 0);
         // Step 6: Calculate payment split from actual payment methods
         $paymentMethods = $data['payment_methods'] ?? [];
         $totalPaid = $data['billing_data']['totalPaid'] ?? 0;
@@ -140,11 +153,16 @@ class BillingService
         $data['billing_data']['balance'] = $paymentState['balance'];
 
         // Step 7: Determine primary payment method
-        $isPrimaryCash = false;
-        $isInsuranceInvolved = false;
+        $paymentMethods = $data['payment_methods'] ?? [];
+        $largestPaymentMethod = collect($paymentMethods)
+            ->sortByDesc('amount')
+            ->first();
+        $isPrimaryCash = ($largestPaymentMethod['type'] ?? null) === 'cash';
+        $isInsuranceInvolved = $this->isInsuranceInvolved($paymentMethods);
+
 
         // Step 8: Process billing within atomic transaction
-            $result = $this->processor->processBillingTransaction(
+        $result = $this->processor->processBillingTransaction(
             $data,
             $facilityId,
             $staffId,
@@ -156,13 +174,11 @@ class BillingService
             $existingEditableBillingCycle
         );
 
-
-       // Use the authoritative resolved values
-            $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
-            $validatedTotalPaid = (float) ($data['resolved_total_paid'] ?? 0);
-            $balance = (float) ($data['resolved_balance'] ?? max(0, $grandTotal - $validatedTotalPaid));
-            $isFullyPaid = (bool) ($data['resolved_is_fully_paid'] ?? ($balance <= 0));
-
+        // Use the authoritative resolved values
+        $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
+        $validatedTotalPaid = (float) ($data['resolved_total_paid'] ?? 0);
+        $balance = (float) ($data['resolved_balance'] ?? max(0, $grandTotal - $validatedTotalPaid));
+        $isFullyPaid = (bool) ($data['resolved_is_fully_paid'] ?? ($balance <= 0));
 
         Log::info('Billing finalized successfully', [
             'billing_cycle_id' => $result['billing_cycle']->id ?? null,
@@ -175,7 +191,7 @@ class BillingService
         ]);
 
         // Return success response with accurate data
-      $wasExistingCycleUpdated = !empty($existingEditableBillingCycle);
+        $wasExistingCycleUpdated = !empty($existingEditableBillingCycle);
 
         return [
             'success' => true,
@@ -199,7 +215,6 @@ class BillingService
                 'was_existing_cycle_updated' => $wasExistingCycleUpdated,
             ],
         ];
-
 
     } catch (Throwable $e) {
         Log::error('Failed to finalize billing', [
@@ -315,404 +330,443 @@ class BillingService
     }
 
     /**
- * Transform billing data for response
- * 
- * FIXED: Correct balance calculation and payment status determination
- *
- * @param BillingCycle $billingCycle Billing cycle model
- * @param Visit $visit Visit model
- * @return array Transformed billing data
- */
-
-public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?int $currentStaffId = null): array
-{
-    // ---- Helpers ------------------------------------------------------------
-
-    /**
-     * Safely decode JSON data with fallback to empty array
+     * Transform billing data for response
+     * 
+     * FIXED: Correct balance calculation and payment status determination
+     *
+     * @param BillingCycle $billingCycle Billing cycle model
+     * @param Visit $visit Visit model
+     * @return array Transformed billing data
      */
-    $decodeJsonish = function ($value): array {
-        if (is_array($value)) {
-            return $value;
-        }
 
-        if (is_string($value) && trim($value) !== '') {
-            $decoded = json_decode($value, true);
-            return is_array($decoded) ? $decoded : [];
-        }
+    public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?int $currentStaffId = null): array
+    {
+        // ---- Helpers ------------------------------------------------------------
 
-        return [];
-    };
+        /**
+         * Safely decode JSON data with fallback to empty array
+         */
+        $decodeJsonish = function ($value): array {
+            if (is_array($value)) {
+                return $value;
+            }
 
-    /**
-     * Convert various date formats to ISO 8601 string
-     */
-    $toIso = function ($date): ?string {
-        if (!$date) {
+            if (is_string($value) && trim($value) !== '') {
+                $decoded = json_decode($value, true);
+                return is_array($decoded) ? $decoded : [];
+            }
+
+            return [];
+        };
+
+        /**
+         * Convert various date formats to ISO 8601 string
+         */
+        $toIso = function ($date): ?string {
+            if (!$date) {
+                return null;
+            }
+
+            if (is_object($date)) {
+                if (method_exists($date, 'toIso8601String')) {
+                    return $date->toIso8601String();
+                }
+                if (method_exists($date, 'format')) {
+                    return $date->format('c');
+                }
+            }
+
+            if (is_string($date) && trim($date) !== '') {
+                $ts = strtotime($date);
+                return $ts ? date(DATE_ATOM, $ts) : null;
+            }
+
             return null;
-        }
+        };
 
-        if (is_object($date)) {
-            if (method_exists($date, 'toIso8601String')) {
-                return $date->toIso8601String();
+        /**
+         * Convert various date formats to epoch milliseconds
+         */
+        $toEpochMs = function ($date): int {
+            if (!$date) {
+                return 0;
             }
-            if (method_exists($date, 'format')) {
-                return $date->format('c');
+
+            if (is_object($date)) {
+                if (method_exists($date, 'getTimestamp')) {
+                    return (int) $date->getTimestamp() * 1000;
+                }
+                if (method_exists($date, 'timestamp')) {
+                    try {
+                        $ts = $date->timestamp;
+                        return is_numeric($ts) ? ((int) $ts * 1000) : 0;
+                    } catch (Throwable $e) {
+                        return 0;
+                    }
+                }
             }
-        }
 
-        if (is_string($date) && trim($date) !== '') {
-            $ts = strtotime($date);
-            return $ts ? date(DATE_ATOM, $ts) : null;
-        }
+            if (is_string($date) && trim($date) !== '') {
+                $ts = strtotime($date);
+                return $ts ? ((int) $ts * 1000) : 0;
+            }
 
-        return null;
-    };
-
-    /**
-     * Convert various date formats to epoch milliseconds
-     */
-    $toEpochMs = function ($date): int {
-        if (!$date) {
             return 0;
+        };
+
+        // ---- Parse cycle-level blobs -------------------------------------------
+
+        // Extract metadata and payment methods
+        $metadata = $decodeJsonish($billingCycle->metadata ?? null);
+        $paymentMethods = is_array($metadata['payment_methods'] ?? null) ? $metadata['payment_methods'] : [];
+        $additionalNotes = (string) ($metadata['additional_notes'] ?? '');
+
+        // Parse tax details
+        $taxes = $decodeJsonish($billingCycle->tax_details ?? null);
+
+        // Normalize discount information
+        $discountApplied = (float) ($billingCycle->discount_applied ?? 0);
+        $discountReason  = $billingCycle->discount_reason ?? null;
+
+        $discount = [
+            'type'   => $discountApplied > 0 ? ($discountReason ? 'fixed' : 'percentage') : 'percentage',
+            'value'  => $discountApplied,
+            'reason' => $discountReason,
+        ];
+        
+        // ---- Line items -> charge_items ----------------------------------------
+
+        /**
+         * Resolve staff display name from staff ID
+         * Traverses Staff -> User relationship to get the display name
+         */
+        $resolveStaffDisplayName = function (?int $staffId): ?string {
+            if (!$staffId) {
+                return null;
+            }
+
+            $staff = Staff::query()->find($staffId);
+            if (!$staff) {
+                return null;
+            }
+
+            $user = User::query()->find($staff->user_id);
+            if (!$user) {
+                return null;
+            }
+
+            return trim(($user->last_name ?? '') . ' ' . ($user->first_name ?? '')) ?: $user->display_name;        };
+
+        /**
+         * FILTERING: Remove line items with zero quantity
+         * 
+         * We filter out line items where:
+         * 1. Quantity is zero or less (invalid items)
+         * 2. The last adjustment action was 'remove' (item was completely removed)
+         * 3. Line item status indicates removal/void/cancellation
+         * 
+         * This prevents items that have been adjusted to zero from appearing in the UI
+         * while maintaining audit trail in the database.
+         */
+        $lineItems = $billingCycle->lineItems ?? collect();
+        
+        $filteredLineItems = $lineItems->filter(function ($lineItem) {
+            // Cast quantity to float for accurate comparison
+            $quantity = (float) ($lineItem->quantity ?? 0);
+            
+            // PRIMARY FILTER: Exclude items with zero or negative quantity
+            if ($quantity <= 0) {
+                return false;
+            }
+            
+            // SECONDARY FILTER: Check metadata for removal action
+            $metadata = json_decode($lineItem->metadata ?? '{}', true);
+            $lastAdjustmentAction = $metadata['last_adjustment_action'] ?? null;
+            
+            // If the last action was 'remove', the item should not be shown
+            if ($lastAdjustmentAction === 'remove') {
+                return false;
+            }
+            
+            // TERTIARY FILTER: Check line item status for removal indicators
+            $status = strtolower($lineItem->line_item_status ?? '');
+            $excludedStatuses = ['removed', 'voided', 'cancelled', 'deleted'];
+            if (in_array($status, $excludedStatuses)) {
+                return false;
+            }
+            
+            // Additional consistency check: ensure total amount makes sense
+            // If quantity > 0 but total amount is zero, this might indicate a data issue
+            $lineTotal = (float) ($lineItem->line_total_amount ?? 0);
+            $netAmount = (float) ($lineItem->net_amount ?? 0);
+            
+            // If quantity > 0 but both totals are zero, log warning but still include
+            // (This could be a valid scenario with 100% discount)
+            if ($quantity > 0 && $lineTotal <= 0 && $netAmount <= 0) {
+                // Log for monitoring but don't filter out - could be valid discount case
+                Log::warning("Line item {$lineItem->id} has quantity {$quantity} but zero totals", [
+                    'billing_cycle_id' => $lineItem->billing_cycle_id,
+                    'line_total_amount' => $lineTotal,
+                    'net_amount' => $netAmount
+                ]);
+            }
+            
+            return true;
+        });
+        
+        $chargeItems = $filteredLineItems->map(function ($lineItem) use (
+            $decodeJsonish,
+            $currentStaffId,
+            $resolveStaffDisplayName,
+            $billingCycle
+        ) {
+            // Decode service snapshot and line item metadata
+            $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
+            $lineMetadata = $decodeJsonish($lineItem->metadata ?? null);
+
+            // Build service key for frontend matching
+            $serviceCode = (string) ($lineItem->service_code ?? '');
+            $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
+
+            // Generate unique charge ID for frontend
+            $uuid = $lineItem->line_item_uuid ?? null;
+            $chargeId = $uuid ? "backend-charge::{$uuid}" : "backend-charge::{$lineItem->id}";
+
+            // Determine originating staff for audit trail and edit permissions
+            $enteredByStaffId = $lineMetadata['originated_by_staff_id']
+                ?? $lineItem->created_by_staff_id
+                ?? $billingCycle->created_by_staff_id;
+
+            $enteredByStaffName = $resolveStaffDisplayName($enteredByStaffId);
+
+            // Build edit permissions based on staff relationship
+            $permissions = $this->buildLineItemEditPolicy(
+                $enteredByStaffId ? (int) $enteredByStaffId : null,
+                $currentStaffId
+            );
+
+            return [
+                // Frontend identification
+                'id' => $chargeId,
+                'source' => 'backend',
+                'persisted' => true,
+
+                // Database references
+                'line_item_id' => $lineItem->id,
+                'line_item_uuid' => $lineItem->line_item_uuid,
+                'billing_cycle_id' => $billingCycle->id,
+
+                // Service key (both naming styles for compatibility)
+                'service_key' => $serviceKey,
+                'serviceKey' => $serviceKey,
+
+                // Service details
+                'service' => [
+                    'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
+                    'code' => $serviceCode,
+                    'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
+                    'unitPrice' => (float) ($lineItem->unit_price_at_time ?? 0),
+                    'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
+                ],
+                
+                // Quantity and amount
+                'quantity' => (float) ($lineItem->quantity ?? 0),
+                'totalAmount' => (float) ($lineItem->line_total_amount ?? 0),
+
+                // Status and audit information
+                'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
+                'entered_by_staff_id' => $enteredByStaffId,
+                'entered_by_staff_name' => $enteredByStaffName,
+
+                // Edit permissions
+                'permissions' => $permissions,
+                
+                // Audit trail
+                'audit' => [
+                    'originated_by_staff_id' => $enteredByStaffId,
+                    'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
+                    'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
+                    'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
+                ],
+            ];
+        })->values()->toArray();
+
+        // ---- Totals summary -----------------------------------------------------
+
+        // Calculate derived totals from filtered line items (source of truth)
+        $derivedSubtotal = round((float) $filteredLineItems->sum(function ($lineItem) {
+            return (float) ($lineItem->line_total_amount ?? 0);
+        }), 2);
+
+        $derivedDiscount = round((float) $filteredLineItems->sum(function ($lineItem) {
+            return (float) ($lineItem->discount_amount ?? 0);
+        }), 2);
+
+        $derivedTaxableAmount = round(max(0, $derivedSubtotal - $derivedDiscount), 2);
+
+        // Recalculate taxes from stored tax details based on derived taxable amount
+        $storedTaxes = $decodeJsonish($billingCycle->tax_details ?? null);
+        $derivedTaxes = collect($storedTaxes)->map(function ($tax) use ($derivedTaxableAmount) {
+            $rate = round((float) ($tax['rate'] ?? 0), 2);
+
+            return [
+                'name' => (string) ($tax['name'] ?? 'Tax'),
+                'rate' => $rate,
+                'amount' => round($derivedTaxableAmount * ($rate / 100), 2),
+            ];
+        })->values()->toArray();
+
+        $derivedTaxTotal = round((float) collect($derivedTaxes)->sum('amount'), 2);
+        $derivedGrandTotal = round($derivedTaxableAmount + $derivedTaxTotal, 2);
+
+        // Use stored values with derived fallbacks when stale
+        $totalCharged = round((float) ($billingCycle->subtotal_amount ?? $derivedSubtotal), 2);
+        $discountApplied = round((float) ($billingCycle->discount_applied ?? $derivedDiscount), 2);
+        $totalTax = round((float) ($billingCycle->total_tax_amount ?? $derivedTaxTotal), 2);
+        $grandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? $derivedGrandTotal), 2);
+
+        // Apply correction if stored values are stale (variance > 0.01)
+        if (abs($totalCharged - $derivedSubtotal) > 0.01) {
+            $totalCharged = $derivedSubtotal;
+        }
+        if (abs($discountApplied - $derivedDiscount) > 0.01) {
+            $discountApplied = $derivedDiscount;
+        }
+        if (abs($totalTax - $derivedTaxTotal) > 0.01) {
+            $totalTax = $derivedTaxTotal;
+        }
+        if (abs($grandTotal - $derivedGrandTotal) > 0.01) {
+            $grandTotal = $derivedGrandTotal;
         }
 
-        if (is_object($date)) {
-            if (method_exists($date, 'getTimestamp')) {
-                return (int) $date->getTimestamp() * 1000;
-            }
-            if (method_exists($date, 'timestamp')) {
-                try {
-                    $ts = $date->timestamp;
-                    return is_numeric($ts) ? ((int) $ts * 1000) : 0;
-                } catch (Throwable $e) {
-                    return 0;
+        // Calculate total paid from various possible sources
+        $totalPaid = round((float) (
+            $billingCycle->total_paid_amount
+            ?? (
+                (float) ($billingCycle->patient_payment_received ?? 0)
+                + (float) ($billingCycle->insurance_payment_received ?? 0)
+            )
+        ), 2);
+
+        $balance = round((float) (
+            $billingCycle->balance_amount
+            ?? max(0, $grandTotal - $totalPaid)
+        ), 2);
+
+        $isPaid = abs($balance) < 0.01;
+
+        // Build billing data structure for frontend with derived taxes fallback
+        $billingData = [
+            'subtotal'       => $totalCharged,
+            'discountAmount' => $discountApplied,
+            'taxableAmount'  => round((float) ($billingCycle->taxable_amount ?? max(0, $totalCharged - $discountApplied)), 2),
+            'taxes'          => !empty($taxes) ? $taxes : $derivedTaxes,
+            'taxTotal'       => $totalTax,
+            'grandTotal'     => $grandTotal,
+            'totalPaid'      => $totalPaid,
+            'balance'        => $balance,
+            'isPaid'         => $isPaid,
+        ];
+
+        // ---- Status mapping -----------------------------------------------------
+
+        $uiStatus = $this->mapBillingStatusToUI($billingCycle->billing_status);
+
+        // ---- Patient name safe fallback ----------------------------------------
+
+        $patientUser = $visit->patient->user ?? null;
+        $patientName = null;
+
+        if ($patientUser) {
+            $patientName = $patientUser->display_name
+                ?? trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
+        }
+
+        // ---- Attending Staff Information ----------------------------------------
+        
+        $attendingStaffName = null;
+        $attendingStaffRole = null;
+        $attendingStaffDisplay = null;
+
+        if ($billingCycle->created_by_staff_id) {
+            $staff = \App\Models\Staff::where('id', $billingCycle->created_by_staff_id)->first();
+            
+            if ($staff) {
+                // Get user display name
+                $user = \App\Models\User::where('id', $staff->user_id)->first();
+                if ($user) {
+                    $attendingStaffName = $user->display_name 
+                        ?? trim((string) ($user->first_name ?? '') . ' ' . (string) ($user->last_name ?? ''));
+                }
+                
+                // Get staff role for display
+                $facilityStaffRole = \App\Models\FacilityStaffRole::where('staff_id', $staff->id)
+                    ->where('facility_id', $visit->facility_id)
+                    ->first();
+                    
+                if ($facilityStaffRole) {
+                    $attendingStaffRole = $facilityStaffRole->role_code;
+                    
+                    // Format role for display (replace underscores/hyphens, capitalize)
+                    $formattedRole = str_replace(['_', '-'], ' ', $attendingStaffRole);
+                    $formattedRole = ucwords(strtolower($formattedRole));
+                    
+                    $attendingStaffDisplay = "{$attendingStaffName} ({$formattedRole})";
+                } else {
+                    $attendingStaffDisplay = $attendingStaffName;
                 }
             }
         }
 
-        if (is_string($date) && trim($date) !== '') {
-            $ts = strtotime($date);
-            return $ts ? ((int) $ts * 1000) : 0;
-        }
-
-        return 0;
-    };
-
-    // ---- Parse cycle-level blobs -------------------------------------------
-
-    // Extract metadata and payment methods
-    $metadata = $decodeJsonish($billingCycle->metadata ?? null);
-    $paymentMethods = is_array($metadata['payment_methods'] ?? null) ? $metadata['payment_methods'] : [];
-    $additionalNotes = (string) ($metadata['additional_notes'] ?? '');
-
-    // Parse tax details
-    $taxes = $decodeJsonish($billingCycle->tax_details ?? null);
-
-    // Normalize discount information
-    $discountApplied = (float) ($billingCycle->discount_applied ?? 0);
-    $discountReason  = $billingCycle->discount_reason ?? null;
-
-    $discount = [
-        'type'   => $discountApplied > 0 ? ($discountReason ? 'fixed' : 'percentage') : 'percentage',
-        'value'  => $discountApplied,
-        'reason' => $discountReason,
-    ];
-    
-    // ---- Line items -> charge_items ----------------------------------------
-
-    /**
-     * Resolve staff display name from staff ID
-     * Traverses Staff -> User relationship to get the display name
-     */
-    $resolveStaffDisplayName = function (?int $staffId): ?string {
-        if (!$staffId) {
-            return null;
-        }
-
-        $staff = Staff::query()->find($staffId);
-        if (!$staff) {
-            return null;
-        }
-
-        $user = User::query()->find($staff->user_id);
-        if (!$user) {
-            return null;
-        }
-
-        return $user->display_name
-            ?? trim((string) ($user->first_name ?? '') . ' ' . (string) ($user->last_name ?? ''));
-    };
-
-    /**
-     * FILTERING: Remove line items with zero quantity
-     * 
-     * We filter out line items where:
-     * 1. Quantity is zero or less (invalid items)
-     * 2. The last adjustment action was 'remove' (item was completely removed)
-     * 3. Line item status indicates removal/void/cancellation
-     * 
-     * This prevents items that have been adjusted to zero from appearing in the UI
-     * while maintaining audit trail in the database.
-     */
-    $lineItems = $billingCycle->lineItems ?? collect();
-    
-    $filteredLineItems = $lineItems->filter(function ($lineItem) {
-        // Cast quantity to float for accurate comparison
-        $quantity = (float) ($lineItem->quantity ?? 0);
-        
-        // PRIMARY FILTER: Exclude items with zero or negative quantity
-        if ($quantity <= 0) {
-            return false;
-        }
-        
-        // SECONDARY FILTER: Check metadata for removal action
-        $metadata = json_decode($lineItem->metadata ?? '{}', true);
-        $lastAdjustmentAction = $metadata['last_adjustment_action'] ?? null;
-        
-        // If the last action was 'remove', the item should not be shown
-        if ($lastAdjustmentAction === 'remove') {
-            return false;
-        }
-        
-        // TERTIARY FILTER: Check line item status for removal indicators
-        $status = strtolower($lineItem->line_item_status ?? '');
-        $excludedStatuses = ['removed', 'voided', 'cancelled', 'deleted'];
-        if (in_array($status, $excludedStatuses)) {
-            return false;
-        }
-        
-        // Additional consistency check: ensure total amount makes sense
-        // If quantity > 0 but total amount is zero, this might indicate a data issue
-        $lineTotal = (float) ($lineItem->line_total_amount ?? 0);
-        $netAmount = (float) ($lineItem->net_amount ?? 0);
-        
-        // If quantity > 0 but both totals are zero, log warning but still include
-        // (This could be a valid scenario with 100% discount)
-        if ($quantity > 0 && $lineTotal <= 0 && $netAmount <= 0) {
-            // Log for monitoring but don't filter out - could be valid discount case
-            \Log::warning("Line item {$lineItem->id} has quantity {$quantity} but zero totals", [
-                'billing_cycle_id' => $lineItem->billing_cycle_id,
-                'line_total_amount' => $lineTotal,
-                'net_amount' => $netAmount
-            ]);
-        }
-        
-        return true;
-    });
-    
-    $chargeItems = $filteredLineItems->map(function ($lineItem) use (
-        $decodeJsonish,
-        $currentStaffId,
-        $resolveStaffDisplayName,
-        $billingCycle
-    ) {
-        // Decode service snapshot and line item metadata
-        $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
-        $lineMetadata = $decodeJsonish($lineItem->metadata ?? null);
-
-        // Build service key for frontend matching
-        $serviceCode = (string) ($lineItem->service_code ?? '');
-        $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
-
-        // Generate unique charge ID for frontend
-        $uuid = $lineItem->line_item_uuid ?? null;
-        $chargeId = $uuid ? "backend-charge::{$uuid}" : "backend-charge::{$lineItem->id}";
-
-        // Determine originating staff for audit trail and edit permissions
-        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
-            ?? $lineItem->created_by_staff_id
-            ?? $billingCycle->created_by_staff_id;
-
-        $enteredByStaffName = $resolveStaffDisplayName($enteredByStaffId);
-
-        // Build edit permissions based on staff relationship
-        $permissions = $this->buildLineItemEditPolicy(
-            $enteredByStaffId ? (int) $enteredByStaffId : null,
-            $currentStaffId
-        );
+        // ---- Response -----------------------------------------------------------
 
         return [
-            // Frontend identification
-            'id' => $chargeId,
-            'source' => 'backend',
-            'persisted' => true,
+            'has_billing' => true,
 
-            // Database references
-            'line_item_id' => $lineItem->id,
-            'line_item_uuid' => $lineItem->line_item_uuid,
-            'billing_cycle_id' => $billingCycle->id,
+            // Visit & patient information
+            'visit_id'      => $visit->id,
+            'visit_uuid'    => $visit->visit_uuid,
+            'patient_id'    => $visit->patient_id,
+            'patient_number'    => Patient::where('id', $visit->patient_id)->value('patient_uuid'),
+            'patient_name'  => $patientName ?: 'Unknown',
 
-            // Service key (both naming styles for compatibility)
-            'service_key' => $serviceKey,
-            'serviceKey' => $serviceKey,
-
-            // Service details
-            'service' => [
-                'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
-                'code' => $serviceCode,
-                'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
-                'unitPrice' => (float) ($lineItem->unit_price_at_time ?? 0),
-                'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
-            ],
+            // Billing cycle information
+            'billing_cycle_id'   => $billingCycle->id,
+            'billing_status'     => $billingCycle->billing_status,
+            'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+            'receipt_number'     => "REC-{$billingCycle->id}",
             
-            // Quantity and amount
-            'quantity' => (float) ($lineItem->quantity ?? 0),
-            'totalAmount' => (float) ($lineItem->line_total_amount ?? 0),
+            // Attending staff information
+            'attending_staff_id'      => $billingCycle->created_by_staff_id,
+            'attending_staff_name'    => $attendingStaffName,
+            'attending_staff_role'    => $attendingStaffRole,
+            'attending_staff_display' => $attendingStaffDisplay,
 
-            // Status and audit information
-            'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
-            'entered_by_staff_id' => $enteredByStaffId,
-            'entered_by_staff_name' => $enteredByStaffName,
+            // Redux-shaped billing state
+            'charge_items'      => $chargeItems,        // Filtered line items (zero quantity removed)
+            'discount'          => $discount,
+            'taxes'             => $taxes,
+            'payment_methods'   => $paymentMethods,
+            'additional_notes'  => $additionalNotes,
+            'payment_status' => in_array($billingCycle->billing_status, ['pending', 'partially_paid', 'paid_in_full'], true)
+                ? $billingCycle->billing_status
+                : Visit::where('id', $visit->id)->value('payment_status'),
+            'status'            => $uiStatus,
 
-            // Edit permissions
-            'permissions' => $permissions,
-            
-            // Audit trail
-            'audit' => [
-                'originated_by_staff_id' => $enteredByStaffId,
-                'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
-                'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
-                'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
-            ],
+            // Calculated totals
+            'billing_data' => $billingData,
+
+            // Timestamps (ISO format)
+            'billed_at'  => $toIso($billingCycle->billed_at ?? null),
+            'created_at' => $toIso($billingCycle->created_at ?? null),
+            'updated_at' => $toIso($billingCycle->updated_at ?? null),
+
+            // Metadata for frontend state management
+            'last_updated'   => $toEpochMs($billingCycle->updated_at ?? null),
+            'is_dirty'       => false,
+            'is_processing'  => false,
         ];
-    })->values()->toArray();
-
-    // ---- Totals summary -----------------------------------------------------
-
-    // Calculate totals with fallback to legacy fields for backward compatibility
-    $totalCharged = (float) ($billingCycle->subtotal_amount ?? $billingCycle->total_amount_charged ?? 0);
-    $totalTax     = (float) ($billingCycle->total_tax_amount ?? 0);
-    $grandTotal   = (float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0);
-
-    // Calculate total paid from various possible sources
-    $totalPaid = (float) (
-        $billingCycle->total_paid_amount
-        ?? (
-            (float) ($billingCycle->patient_payment_received ?? 0)
-            + (float) ($billingCycle->insurance_payment_received ?? 0)
-        )
-    );
-
-    $balance = (float) (
-        $billingCycle->balance_amount
-        ?? max(0, $grandTotal - $totalPaid)
-    );
-
-    $isPaid = abs($balance) < 0.01;
-
-    // Build billing data structure for frontend
-    $billingData = [
-        'subtotal'       => $totalCharged,
-        'discountAmount' => $discountApplied,
-        'taxableAmount'  => (float) ($billingCycle->taxable_amount ?? max(0, $totalCharged - $discountApplied)),
-        'taxes'          => $taxes,
-        'taxTotal'       => $totalTax,
-        'grandTotal'     => $grandTotal,
-        'totalPaid'      => $totalPaid,
-        'balance'        => $balance,
-        'isPaid'         => $isPaid,
-    ];
-
-    // ---- Status mapping -----------------------------------------------------
-
-    $uiStatus = $this->mapBillingStatusToUI($billingCycle->billing_status);
-
-    // ---- Patient name safe fallback ----------------------------------------
-
-    $patientUser = $visit->patient->user ?? null;
-    $patientName = null;
-
-    if ($patientUser) {
-        $patientName = $patientUser->display_name
-            ?? trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
     }
-
-    // ---- Attending Staff Information ----------------------------------------
-    
-    $attendingStaffName = null;
-    $attendingStaffRole = null;
-    $attendingStaffDisplay = null;
-
-    if ($billingCycle->created_by_staff_id) {
-        $staff = \App\Models\Staff::where('id', $billingCycle->created_by_staff_id)->first();
-        
-        if ($staff) {
-            // Get user display name
-            $user = \App\Models\User::where('id', $staff->user_id)->first();
-            if ($user) {
-                $attendingStaffName = $user->display_name 
-                    ?? trim((string) ($user->first_name ?? '') . ' ' . (string) ($user->last_name ?? ''));
-            }
-            
-            // Get staff role for display
-            $facilityStaffRole = \App\Models\FacilityStaffRole::where('staff_id', $staff->id)
-                ->where('facility_id', $visit->facility_id)
-                ->first();
-                
-            if ($facilityStaffRole) {
-                $attendingStaffRole = $facilityStaffRole->role_code;
-                
-                // Format role for display (replace underscores/hyphens, capitalize)
-                $formattedRole = str_replace(['_', '-'], ' ', $attendingStaffRole);
-                $formattedRole = ucwords(strtolower($formattedRole));
-                
-                $attendingStaffDisplay = "{$attendingStaffName} ({$formattedRole})";
-            } else {
-                $attendingStaffDisplay = $attendingStaffName;
-            }
-        }
-    }
-
-    // ---- Response -----------------------------------------------------------
-
-    return [
-        'has_billing' => true,
-
-        // Visit & patient information
-        'visit_id'      => $visit->id,
-        'visit_uuid'    => $visit->visit_uuid,
-        'patient_id'    => $visit->patient_id,
-        'patient_number'    => Patient::where('id', $visit->patient_id)->value('patient_uuid'),
-        'patient_name'  => $patientName ?: 'Unknown',
-
-        // Billing cycle information
-        'billing_cycle_id'   => $billingCycle->id,
-        'billing_status'     => $billingCycle->billing_status,
-        'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
-        'receipt_number'     => "REC-{$billingCycle->id}",
-        
-        // Attending staff information
-        'attending_staff_id'      => $billingCycle->created_by_staff_id,
-        'attending_staff_name'    => $attendingStaffName,
-        'attending_staff_role'    => $attendingStaffRole,
-        'attending_staff_display' => $attendingStaffDisplay,
-
-        // Redux-shaped billing state
-        'charge_items'      => $chargeItems,        // Filtered line items (zero quantity removed)
-        'discount'          => $discount,
-        'taxes'             => $taxes,
-        'payment_methods'   => $paymentMethods,
-        'additional_notes'  => $additionalNotes,
-        'payment_status' => in_array($billingCycle->billing_status, ['pending', 'partially_paid', 'paid_in_full'], true)
-            ? $billingCycle->billing_status
-            : Visit::where('id', $visit->id)->value('payment_status'),
-        'status'            => $uiStatus,
-
-        // Calculated totals
-        'billing_data' => $billingData,
-
-        // Timestamps (ISO format)
-        'billed_at'  => $toIso($billingCycle->billed_at ?? null),
-        'created_at' => $toIso($billingCycle->created_at ?? null),
-        'updated_at' => $toIso($billingCycle->updated_at ?? null),
-
-        // Metadata for frontend state management
-        'last_updated'   => $toEpochMs($billingCycle->updated_at ?? null),
-        'is_dirty'       => false,
-        'is_processing'  => false,
-    ];
-}
 
 
 

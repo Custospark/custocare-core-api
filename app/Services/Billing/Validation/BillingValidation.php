@@ -27,7 +27,7 @@ class BillingValidation
 
         foreach ($chargeItems as $chargeItem) {
             $service = $chargeItem['service'];
-            $quantity = (int) $chargeItem['quantity'];
+            $quantity = (float) ($chargeItem['quantity'] ?? 0);
 
             if ($quantity <= 0) {
                 continue;

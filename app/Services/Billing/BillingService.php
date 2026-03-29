@@ -267,7 +267,7 @@ class BillingService
                             ->where('visit_id', $visitId)
                             ->where('facility_id', $facilityId)
                             ->with(['lineItems'])
-                            ->orderByRaw("CASE WHEN billing_status IN ('pending', 'partially_paid') THEN 0 ELSE 1 END")
+                            ->orderByRaw("CASE WHEN billing_status IN ('paid_in_full', 'partially_paid') THEN 0 ELSE 1 END")
                             ->orderByDesc('created_at')
                             ->first();
 
@@ -915,6 +915,120 @@ class BillingService
                 'facility_id' => $facilityId,
                 'filters' => $filters,
                 'search' => $search,
+                'error_message' => $e->getMessage(),
+                'error_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support.',
+                'errors' => ['system' => ['Failed to retrieve billing information.']],
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
+    }
+
+
+    /**
+     * Get billing data for a visit in the same format as getByFacility
+     * This returns a single billing cycle in the standardized format
+     *
+     * @param int $visitId Visit ID
+     * @param int $facilityId Facility ID
+     * @param int|null $currentStaffId Current staff ID for permissions
+     * @return array Success status and billing data in facility format
+     */
+    public function getBillingByVisitForFacility(int $visitId, int $facilityId, ?int $currentStaffId = null): array
+    {
+        try {
+            // Verify visit exists and belongs to facility
+            $visit = Visit::query()
+                ->where('id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['patient.user'])
+                ->first();
+
+            if (!$visit) {
+                return [
+                    'success' => false,
+                    'message' => 'Visit not found or does not belong to this facility.',
+                    'errors' => ['visit_id' => ['Invalid visit for this facility.']],
+                ];
+            }
+
+            // Get billing cycle for this visit
+            $billingCycle = BillingCycle::query()
+                ->where('visit_id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['lineItems' => fn($q) => $q->withTrashed()])
+                ->orderByRaw("CASE WHEN billing_status IN ('pending', 'partially_paid') THEN 0 ELSE 1 END")
+                ->orderByDesc('created_at')
+                ->first();
+
+            // If no billing cycle exists, return empty state in facility format
+            if (!$billingCycle) {
+                return [
+                    'success' => true,
+                    'message' => 'No billing record found for this visit.',
+                    'data' => [
+                        'items' => [], // Empty items array matching facility response format
+                        'pagination' => [
+                            'current_page' => 1,
+                            'per_page' => 1,
+                            'total_items' => 0,
+                            'total_pages' => 0,
+                            'from' => null,
+                            'to' => null,
+                            'has_previous' => false,
+                            'has_next' => false,
+                        ],
+                        'filters_applied' => [],
+                        'search_term' => null,
+                        // Additional single-visit metadata
+                        'visit_id' => $visitId,
+                        'has_billing' => false,
+                    ],
+                ];
+            }
+
+            // Transform the billing cycle using the existing transform method
+            $transformedCycle = $this->transformBillingData($billingCycle, $visit, $currentStaffId);
+
+            // Wrap in items array to match facility endpoint format
+            $transformedData = [
+                'items' => [$transformedCycle],
+                'pagination' => [
+                    'current_page' => 1,
+                    'per_page' => 1,
+                    'total_items' => 1,
+                    'total_pages' => 1,
+                    'from' => 1,
+                    'to' => 1,
+                    'has_previous' => false,
+                    'has_next' => false,
+                ],
+                'filters_applied' => [],
+                'search_term' => null,
+            ];
+
+            Log::info('Billing data retrieved successfully (facility format)', [
+                'visit_id' => $visitId,
+                'billing_cycle_id' => $billingCycle->id,
+            ]);
+
+            return [
+                'success' => true,
+                'message' => 'Billing data retrieved successfully.',
+                'data' => $transformedData,
+            ];
+
+        } catch (Throwable $e) {
+            Log::error('Failed to retrieve billing data (facility format)', [
+                'visit_id' => $visitId,
+                'facility_id' => $facilityId,
                 'error_message' => $e->getMessage(),
                 'error_code' => $e->getCode(),
                 'file' => $e->getFile(),

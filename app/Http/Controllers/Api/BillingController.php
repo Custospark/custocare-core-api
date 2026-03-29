@@ -343,6 +343,38 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
         }
     }
 
+     /**
+     * Retrieve billing data for a visit with facility context.
+     *
+     * This method returns billing data in the SAME format as getByFacility,
+     * making it suitable for single-visit billing review.
+     *
+     * @param Request $request
+     * @param int $visitId
+     * @return JsonResponse
+     */
+    public function getByVisitForFacility(Request $request, int $visitId): JsonResponse
+    {
+        $facilityId = $this->resolveFacilityId($request);
+        
+        if (!$facilityId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Missing X-Facility-Id header.',
+                'errors' => ['facility_id' => ['Facility ID is required for billing operations.']],
+            ], 422);
+        }
+
+        $staffId = $this->resolveCurrentStaffId($request, $facilityId);
+
+        $result = $this->billingService->getBillingByVisitForFacility(
+            $visitId,
+            $facilityId,
+            $staffId
+        );
+
+        return $this->respond($result);
+    }
     /**
  * Retrieve billing data for a visit.
  *

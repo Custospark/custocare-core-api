@@ -3,49 +3,29 @@
 namespace App\Services\Billing\Processing;
 
 use App\Models\BillingCycle;
-use App\Models\InvoiceLineItem;
 use App\Models\InventoryItem;
+use App\Models\InvoiceLineItem;
 use App\Models\Visit;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Throwable;
 use RuntimeException;
 
-
-/**
- * Billing Processor Service
- *
- * Handles core processing logic including transactions, inventory deduction,
- * and creation of billing records
- */
 class BillingProcessor
 {
     public function processBillingTransaction(
-    array $data,
-    int $facilityId,
-    int $staffId,
-    float $discountAmount,
-    array $paymentSplit,
-    bool $isPrimaryCash,
-    bool $isInsuranceInvolved,
-    Visit $visit,
-    ?BillingCycle $existingBillingCycle = null
-): array {
-    return DB::transaction(function () use (
-        $data,
-        $facilityId,
-        $staffId,
-        $discountAmount,
-        $paymentSplit,
-        $isPrimaryCash,
-        $isInsuranceInvolved,
-        $visit,
-        $existingBillingCycle
-    ) {
-        // 1. Create or update the billing cycle
-        $billingCycle = $this->createOrUpdateBillingCycle(
+        array $data,
+        int $facilityId,
+        int $staffId,
+        float $discountAmount,
+        array $paymentSplit,
+        bool $isPrimaryCash,
+        bool $isInsuranceInvolved,
+        Visit $visit,
+        ?BillingCycle $existingBillingCycle = null
+    ): array {
+        return DB::transaction(function () use (
             $data,
             $facilityId,
             $staffId,
@@ -53,1033 +33,990 @@ class BillingProcessor
             $paymentSplit,
             $isPrimaryCash,
             $isInsuranceInvolved,
-            $existingBillingCycle
-        );
-
-        // 2. Create or update invoice line items by ADDING values
-        $lineItems = $this->createOrUpdateLineItems(
-            $data,
-            $billingCycle->id,
-            $staffId,
-            $discountAmount,
-            $existingBillingCycle
-        );
-
-        // 3. Reduce stock only for newly submitted quantities
-        $this->deductInventoryStock($data['charge_items'], $staffId);
-
-        // 4. Rebuild aggregate billing totals from persisted line items
-        $billingCycle = $this->recalculateBillingCycleTotalsFromLineItems($billingCycle, $staffId);
-
-        // 5. Ensure all line-item statuses follow the refreshed billing status
-        $this->syncCycleLineItemStatuses(
-            $billingCycle->id,
-            $billingCycle->billing_status === 'paid_in_full'
-        );
-
-        // 6. Update visit based on FULL refreshed cycle totals
-        $this->updateVisitBillingStatus(
             $visit,
-            $data,
-            $billingCycle,
-            $staffId,
-            $paymentSplit,
-            $existingBillingCycle !== null
-        );
-
-        return [
-            'billing_cycle' => $billingCycle->fresh(),
-            'line_items' => $lineItems,
-        ];
-    });
-}
-
-
-        /**
-         * Create BillingCycle record
-         * 
-         * FIXED: Use paymentSplit['total_paid'] instead of data['billing_data']['totalPaid']
-         * to ensure consistency with actual payment methods
-         *
-         * @param array $data Billing data
-         * @param int $facilityId Facility ID
-         * @param int $staffId Staff ID
-         * @param float $discountAmount Calculated discount amount
-         * @param array $paymentSplit Payment split data (with total_paid)
-         * @param bool $isPrimaryCash Is primary payment cash
-         * @param bool $isInsuranceInvolved Is insurance involved
-         * @return BillingCycle
-         */
-       protected function createOrUpdateBillingCycle(
-            array $data,
-            int $facilityId,
-            int $staffId,
-            float $discountAmount,
-            array $paymentSplit,
-            bool $isPrimaryCash,
-            bool $isInsuranceInvolved,
-            ?BillingCycle $existingBillingCycle = null
-        ): BillingCycle {
-            $subtotalAmount = (float) ($data['billing_data']['subtotal'] ?? 0);
-            $taxableAmount = (float) ($data['billing_data']['taxableAmount'] ?? max(0, $subtotalAmount - $discountAmount));
-            $taxTotal = (float) ($data['billing_data']['taxTotal'] ?? 0);
-            $grandTotal = (float) ($data['billing_data']['grandTotal'] ?? 0);
-
-            $incomingTotalPaid = (float) (
-                $data['resolved_total_paid']
-                ?? ($paymentSplit['total_paid'] ?? ($paymentSplit['insurance_payment'] + $paymentSplit['patient_payment']))
+            $existingBillingCycle
+        ) {
+            $billingCycle = $this->createOrUpdateBillingCycle(
+                $data,
+                $facilityId,
+                $staffId,
+                $discountAmount,
+                $paymentSplit,
+                $isPrimaryCash,
+                $isInsuranceInvolved,
+                $existingBillingCycle
             );
 
-            if ($existingBillingCycle) {
-                $existingMetadata = $this->decodeJsonArray($existingBillingCycle->metadata ?? null);
-                $existingTaxes = $this->decodeJsonArray($existingBillingCycle->tax_details ?? null);
+            $lineItems = $this->createOrUpdateLineItems(
+                $data,
+                $billingCycle->id,
+                $staffId,
+                $existingBillingCycle
+            );
 
-                $mergedPaymentMethods = array_values(array_merge(
-                    $existingMetadata['payment_methods'] ?? [],
-                    $data['payment_methods'] ?? []
-                ));
+            $this->deductInventoryStock($data['charge_items'], $staffId);
 
-                $mergedTaxes = $this->mergeTaxDetails($existingTaxes, $data['taxes'] ?? []);
+            $this->reallocateCycleLineItemDiscounts(
+                $billingCycle->fresh(),
+                $data['discount'] ?? [],
+                $staffId
+            );
 
-                $newSubtotal = round((float) $existingBillingCycle->subtotal_amount + $subtotalAmount, 2);
-                $newDiscount = round((float) $existingBillingCycle->discount_applied + $discountAmount, 2);
-                $newTaxableAmount = round((float) $existingBillingCycle->taxable_amount + $taxableAmount, 2);
-                $newTaxTotal = round((float) $existingBillingCycle->total_tax_amount + $taxTotal, 2);
-                $newGrandTotal = round((float) $existingBillingCycle->grand_total_amount + $grandTotal, 2);
+            $billingCycle = $this->recalculateBillingCycleTotalsFromLineItems(
+                $billingCycle->fresh(),
+                $staffId
+            );
 
-                $newInsurancePayment = round((float) $existingBillingCycle->insurance_payment_received + (float) ($paymentSplit['insurance_payment'] ?? 0), 2);
-                $newPatientPayment = round((float) $existingBillingCycle->patient_payment_received + (float) ($paymentSplit['patient_payment'] ?? 0), 2);
-                $newTotalPaid = round((float) $existingBillingCycle->total_paid_amount + $incomingTotalPaid, 2);
+            $this->syncCycleLineItemStatuses(
+                $billingCycle->id,
+                $billingCycle->billing_status === 'paid_in_full'
+            );
 
-                $newBalance = round(max(0, $newGrandTotal - $newTotalPaid), 2);
-                $isFullyPaid = abs($newBalance) < 0.01;
+            $this->updateVisitBillingStatus(
+                $visit,
+                $data,
+                $billingCycle,
+                $staffId,
+                $paymentSplit,
+                $existingBillingCycle !== null
+            );
 
-                $newBillingStatus = $isFullyPaid
-                    ? 'paid_in_full'
-                    : ($newTotalPaid > 0 ? 'partially_paid' : 'pending');
+            return [
+                'billing_cycle' => $billingCycle->fresh(),
+                'line_items' => $lineItems,
+            ];
+        });
+    }
 
-                $existingBillingCycle->fill([
-                    'subtotal_amount' => $newSubtotal,
-                    'total_amount_charged' => $newSubtotal,
-                    'total_adjustments' => $newDiscount,
-                    'taxable_amount' => $newTaxableAmount,
-                    'net_amount' => $newGrandTotal,
-                    'grand_total_amount' => $newGrandTotal,
+    protected function createOrUpdateBillingCycle(
+        array $data,
+        int $facilityId,
+        int $staffId,
+        float $discountAmount,
+        array $paymentSplit,
+        bool $isPrimaryCash,
+        bool $isInsuranceInvolved,
+        ?BillingCycle $existingBillingCycle = null
+    ): BillingCycle {
+        $subtotalAmount = round((float) ($data['billing_data']['subtotal'] ?? 0), 2);
+        $taxableAmount = round((float) ($data['billing_data']['taxableAmount'] ?? max(0, $subtotalAmount - $discountAmount)), 2);
+        $taxTotal = round((float) ($data['billing_data']['taxTotal'] ?? 0), 2);
+        $grandTotal = round((float) ($data['billing_data']['grandTotal'] ?? 0), 2);
 
-                    'insurance_covered_amount' => $newInsurancePayment,
-                    'insurance_payment_received' => $newInsurancePayment,
-                    'patient_responsibility_amount' => max(0, $newGrandTotal - $newInsurancePayment),
-                    'patient_payment_received' => $newPatientPayment,
-                    'total_paid_amount' => $newTotalPaid,
-                    'balance_amount' => $newBalance,
+        $incomingTotalPaid = round((float) (
+            $data['resolved_total_paid']
+            ?? ($paymentSplit['total_paid'] ?? (($paymentSplit['insurance_payment'] ?? 0) + ($paymentSplit['patient_payment'] ?? 0)))
+        ), 2);
 
-                    'discount_applied' => $newDiscount,
-                    'discount_reason' => $data['discount']['reason'] ?? $existingBillingCycle->discount_reason,
+        $discountRule = [
+            'type' => $data['discount']['type'] ?? null,
+            'value' => round((float) ($data['discount']['value'] ?? 0), 2),
+            'reason' => $data['discount']['reason'] ?? null,
+        ];
 
-                    'tax_details' => json_encode($mergedTaxes),
-                    'total_tax_amount' => $newTaxTotal,
+        $authoritativeTaxes = array_values(array_map(function ($tax) {
+            return [
+                'name' => (string) ($tax['name'] ?? 'Tax'),
+                'rate' => round((float) ($tax['rate'] ?? 0), 2),
+                'amount' => round((float) ($tax['amount'] ?? 0), 2),
+            ];
+        }, $data['taxes'] ?? []));
 
-                    'billing_status' => $newBillingStatus,
-                    'payment_due_date' => !$isFullyPaid
-                        ? ($existingBillingCycle->payment_due_date ?? now()->addDays(30))
-                        : null,
+        if ($existingBillingCycle) {
+            $existingMetadata = $this->decodeJsonArray($existingBillingCycle->metadata ?? null);
 
-                    'updated_by_staff_id' => $staffId,
-                ]);
+            $mergedPaymentMethods = array_values(array_merge(
+                $existingMetadata['payment_methods'] ?? [],
+                $data['payment_methods'] ?? []
+            ));
 
-                if ($isInsuranceInvolved && !$existingBillingCycle->insurance_claim_submitted_at) {
-                    $existingBillingCycle->insurance_claim_submitted_at = now();
-                }
+            $newInsurancePayment = round(
+                (float) ($existingBillingCycle->insurance_payment_received ?? 0) + (float) ($paymentSplit['insurance_payment'] ?? 0),
+                2
+            );
 
-                if ($newInsurancePayment > 0) {
-                    $existingBillingCycle->insurance_payment_received_at =
-                        $existingBillingCycle->insurance_payment_received_at ?? now();
-                }
+            $newPatientPayment = round(
+                (float) ($existingBillingCycle->patient_payment_received ?? 0) + (float) ($paymentSplit['patient_payment'] ?? 0),
+                2
+            );
 
-                $existingBillingCycle->metadata = json_encode(array_merge($existingMetadata, [
-                    'payment_methods' => $mergedPaymentMethods,
-                    'additional_notes' => $this->mergeAdditionalNotes(
-                        $existingMetadata['additional_notes'] ?? null,
-                        $data['additional_notes'] ?? null
-                    ),
-                    'is_cash_payment' => $isPrimaryCash,
-                    'validated_total_paid' => $newTotalPaid,
-                    'balance_amount' => $newBalance,
-                    'resolved_billing_status' => $newBillingStatus,
-                    'resolved_payment_status' => $newBillingStatus,
-                    'frontend_ui_status' => $data['status'] ?? null,
-                    'is_fully_paid' => $isFullyPaid,
-                    'last_appended_at' => now()->toIso8601String(),
-                    'last_appended_by_staff_id' => $staffId,
-                ]));
+            $newTotalPaid = round(
+                (float) ($existingBillingCycle->total_paid_amount ?? 0) + $incomingTotalPaid,
+                2
+            );
 
-                $existingBillingCycle->save();
+            $newBalance = round(max(0, $grandTotal - $newTotalPaid), 2);
+            $isFullyPaid = abs($newBalance) < 0.01;
 
-                return $existingBillingCycle->fresh();
-            }
-
-            $validatedTotalPaid = $incomingTotalPaid;
-            $balanceAmount = round(max(0, $grandTotal - $validatedTotalPaid), 2);
-            $isFullyPaid = abs($balanceAmount) < 0.01;
-
-            $billingStatus = $isFullyPaid
+            $newBillingStatus = $isFullyPaid
                 ? 'paid_in_full'
-                : ($validatedTotalPaid > 0 ? 'partially_paid' : 'pending');
+                : ($newTotalPaid > 0 ? 'partially_paid' : 'pending');
 
-            return BillingCycle::create([
-                'billing_cycle_uuid' => HealthcareIdGenerator::generate('billing'),
-                'facility_id' => $facilityId,
-                'visit_id' => $data['visit_id'],
-                'patient_id' => $data['patient_id'],
-
-                'cycle_type' => 'visit_based',
-                'period_start' => now(),
-                'period_end' => now(),
-                'days_in_cycle' => 1,
-
+            $existingBillingCycle->fill([
                 'subtotal_amount' => $subtotalAmount,
                 'total_amount_charged' => $subtotalAmount,
                 'total_adjustments' => $discountAmount,
+                'discount_applied' => $discountAmount,
                 'taxable_amount' => $taxableAmount,
+                'total_tax_amount' => $taxTotal,
+                'tax_details' => json_encode($authoritativeTaxes),
                 'net_amount' => $grandTotal,
                 'grand_total_amount' => $grandTotal,
 
-                'insurance_covered_amount' => $paymentSplit['insurance_payment'],
-                'insurance_payment_received' => $paymentSplit['insurance_payment'],
-                'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
-                'insurance_payment_received_at' => ($paymentSplit['insurance_payment'] ?? 0) > 0 ? now() : null,
+                'insurance_covered_amount' => $newInsurancePayment,
+                'insurance_payment_received' => $newInsurancePayment,
+                'patient_responsibility_amount' => round(max(0, $grandTotal - $newInsurancePayment), 2),
+                'patient_payment_received' => $newPatientPayment,
+                'total_paid_amount' => $newTotalPaid,
+                'balance_amount' => $newBalance,
 
-                'patient_responsibility_amount' => max(0, $grandTotal - $paymentSplit['insurance_payment']),
-                'patient_payment_received' => $paymentSplit['patient_payment'],
-                'total_paid_amount' => $validatedTotalPaid,
-                'balance_amount' => $balanceAmount,
-
-                'discount_applied' => $discountAmount,
-                'discount_reason' => $data['discount']['reason'] ?? null,
-
-                'tax_details' => json_encode($data['taxes'] ?? []),
-                'total_tax_amount' => $taxTotal,
-
-                'billing_status' => $billingStatus,
-                'billed_at' => now(),
-                'payment_due_date' => !$isFullyPaid ? now()->addDays(30) : null,
-
-                'created_by_staff_id' => $staffId,
+                'discount_reason' => $discountRule['reason'],
+                'billing_status' => $newBillingStatus,
+                'payment_due_date' => !$isFullyPaid
+                    ? ($existingBillingCycle->payment_due_date ?? now()->addDays(30))
+                    : null,
                 'updated_by_staff_id' => $staffId,
-                'metadata' => json_encode([
-                    'payment_methods' => $data['payment_methods'] ?? [],
-                    'additional_notes' => $data['additional_notes'] ?? null,
-                    'is_cash_payment' => $isPrimaryCash,
-                    'validated_total_paid' => $validatedTotalPaid,
-                    'balance_amount' => $balanceAmount,
-                    'resolved_billing_status' => $billingStatus,
-                    'resolved_payment_status' => $data['payment_status'] ?? null,
-                    'frontend_ui_status' => $data['status'] ?? null,
-                    'is_fully_paid' => $isFullyPaid,
-                ]),
             ]);
-        }
 
+            if ($isInsuranceInvolved && !$existingBillingCycle->insurance_claim_submitted_at) {
+                $existingBillingCycle->insurance_claim_submitted_at = now();
+            }
 
-            /**
-         * Create InvoiceLineItem records
-         *
-         * @param array $data Billing data
-         * @param int $billingCycleId Billing cycle ID
-         * @param int $staffId Staff ID
-         * @param float $discountAmount Total discount amount
-         * @return array Created line items
-         */ 
-      protected function createOrUpdateLineItems(
-    array $data,
-    int $billingCycleId,
-    int $staffId,
-    float $discountAmount,
-    ?BillingCycle $existingBillingCycle = null
-): array {
-    $lineItems = [];
+            if ($newInsurancePayment > 0) {
+                $existingBillingCycle->insurance_payment_received_at =
+                    $existingBillingCycle->insurance_payment_received_at ?? now();
+            }
 
-    $serviceCodes = array_map(function ($chargeItem) {
-        return $chargeItem['service']['code'];
-    }, $data['charge_items']);
-
-    $inventoryItems = \App\Models\InventoryItem::whereIn('item_code', $serviceCodes)
-        ->get()
-        ->keyBy('item_code');
-
-    $serviceCatalogs = \App\Models\ServiceCatalog::whereIn('service_code', $serviceCodes)
-        ->get()
-        ->keyBy('service_code');
-
-    $existingLineItemsIndex = [];
-
-    if ($existingBillingCycle) {
-        $existingLineItems = InvoiceLineItem::query()
-            ->where('billing_cycle_id', $billingCycleId)
-            ->get();
-
-        foreach ($existingLineItems as $existingLineItem) {
-            $existingMeta = $this->decodeJsonArray($existingLineItem->metadata ?? null);
-            $indexKey = ($existingLineItem->service_code ?? '') . '|' . ($existingMeta['service_key'] ?? '');
-            $existingLineItemsIndex[$indexKey] = $existingLineItem;
-        }
-    }
-
-    foreach ($data['charge_items'] as $chargeItem) {
-        $service = $chargeItem['service'];
-        $quantity = (float) $chargeItem['quantity'];
-        $unitPrice = (float) $service['unitPrice'];
-        $lineTotal = (float) $chargeItem['totalAmount'];
-        $serviceCode = $service['code'];
-        $serviceKey = $chargeItem['service_key'] ?? '';
-
-        $inventoryItem = $inventoryItems->get($serviceCode);
-        $serviceCatalog = $serviceCatalogs->get($serviceCode);
-
-        $lineDiscountAmount = $this->calculateLineItemDiscount(
-            $lineTotal,
-            (float) ($data['billing_data']['subtotal'] ?? 0),
-            $discountAmount
-        );
-
-        $netAmount = round($lineTotal - $lineDiscountAmount, 2);
-        $indexKey = $serviceCode . '|' . $serviceKey;
-
-        // Calculate applied discount percentage
-        $appliedDiscountPercentage = $lineTotal > 0
-            ? round(($lineDiscountAmount / $lineTotal) * 100, 2)
-            : 0;
-
-        if (isset($existingLineItemsIndex[$indexKey])) {
-            $existingLineItem = $existingLineItemsIndex[$indexKey];
-            $existingMeta = $this->decodeJsonArray($existingLineItem->metadata ?? null);
-            
-            // Calculate new totals after append
-            $newQuantity = round((float) $existingLineItem->quantity + $quantity, 2);
-            $newLineTotal = round((float) $existingLineItem->line_total_amount + $lineTotal, 2);
-            $newDiscountAmount = round((float) $existingLineItem->discount_amount + $lineDiscountAmount, 2);
-            $newNetAmount = round((float) $existingLineItem->net_amount + $netAmount, 2);
-            
-            // Recalculate discount percentage based on final totals
-            $updatedDiscountPercentage = $newLineTotal > 0
-                ? round(($newDiscountAmount / $newLineTotal) * 100, 2)
-                : 0;
-
-            $existingLineItem->quantity = $newQuantity;
-            $existingLineItem->line_total_amount = $newLineTotal;
-            $existingLineItem->discount_amount = $newDiscountAmount;
-            $existingLineItem->addToNetAmount($netAmount);
-            $existingLineItem->applied_discount_percentage = $updatedDiscountPercentage;
-            $existingLineItem->unit_price_at_time = $unitPrice;
-            $existingLineItem->staff_performed_id = $staffId;
-            $existingLineItem->service_performed_at = now();
-            $existingLineItem->line_item_status = !empty($data['resolved_is_fully_paid']) ? 'paid' : 'pending';
-            $existingLineItem->metadata = json_encode(array_merge($existingMeta, [
-                'service_key' => $serviceKey,
-                'category' => $service['category'],
-                'source_type' => $inventoryItem ? 'inventory' : ($serviceCatalog ? 'service_catalog' : 'unknown'),
+            $existingBillingCycle->metadata = json_encode(array_merge($existingMetadata, [
+                'payment_methods' => $mergedPaymentMethods,
+                'additional_notes' => $this->mergeAdditionalNotes(
+                    $existingMetadata['additional_notes'] ?? null,
+                    $data['additional_notes'] ?? null
+                ),
+                'discount_rule' => $discountRule,
+                'is_cash_payment' => $isPrimaryCash,
+                'validated_total_paid' => $newTotalPaid,
+                'balance_amount' => $newBalance,
+                'resolved_billing_status' => $newBillingStatus,
+                'resolved_payment_status' => $newBillingStatus,
+                'frontend_ui_status' => $data['status'] ?? null,
+                'is_fully_paid' => $isFullyPaid,
+                'last_submission_fingerprint' => $data['submission_fingerprint'] ?? null,
+                'last_submission_at' => now()->toIso8601String(),
                 'last_appended_at' => now()->toIso8601String(),
                 'last_appended_by_staff_id' => $staffId,
             ]));
-            $existingLineItem->audit_trail_hash = hash('sha256', json_encode([
-                'service_code' => $serviceCode,
-                'quantity' => $existingLineItem->quantity,
-                'unit_price' => $unitPrice,
-                'timestamp' => now()->toIso8601String(),
-            ]));
-            $existingLineItem->save();
 
-            $lineItems[] = $existingLineItem;
-            continue;
+            $existingBillingCycle->save();
+
+            return $existingBillingCycle->fresh();
         }
 
-        $lineItemData = [
-            'line_item_uuid' => Str::uuid(),
-            'billing_cycle_id' => $billingCycleId,
+        $validatedTotalPaid = $incomingTotalPaid;
+        $balanceAmount = round(max(0, $grandTotal - $validatedTotalPaid), 2);
+        $isFullyPaid = abs($balanceAmount) < 0.01;
+
+        $billingStatus = $isFullyPaid
+            ? 'paid_in_full'
+            : ($validatedTotalPaid > 0 ? 'partially_paid' : 'pending');
+
+        return BillingCycle::create([
+            'billing_cycle_uuid' => HealthcareIdGenerator::generate('billing'),
+            'facility_id' => $facilityId,
             'visit_id' => $data['visit_id'],
+            'patient_id' => $data['patient_id'],
 
-            'service_version_snapshot' => json_encode($service),
-            'service_code' => $serviceCode,
-            'service_description' => $service['name'],
+            'cycle_type' => 'visit_based',
+            'period_start' => now(),
+            'period_end' => now(),
+            'days_in_cycle' => 1,
 
-            'inventory_item_id' => $inventoryItem?->id,
-            'service_catalog_id' => $serviceCatalog?->id,
+            'subtotal_amount' => $subtotalAmount,
+            'total_amount_charged' => $subtotalAmount,
+            'total_adjustments' => $discountAmount,
+            'discount_applied' => $discountAmount,
+            'taxable_amount' => $taxableAmount,
+            'tax_details' => json_encode($authoritativeTaxes),
+            'total_tax_amount' => $taxTotal,
+            'net_amount' => $grandTotal,
+            'grand_total_amount' => $grandTotal,
 
-            'quantity' => $quantity,
-            'unit_of_measure' => 'each',
-            'unit_price_at_time' => $unitPrice,
-            'line_total_amount' => $lineTotal,
+            'insurance_covered_amount' => round((float) ($paymentSplit['insurance_payment'] ?? 0), 2),
+            'insurance_payment_received' => round((float) ($paymentSplit['insurance_payment'] ?? 0), 2),
+            'insurance_claim_submitted_at' => $isInsuranceInvolved ? now() : null,
+            'insurance_payment_received_at' => ((float) ($paymentSplit['insurance_payment'] ?? 0)) > 0 ? now() : null,
 
-            'discount_amount' => $lineDiscountAmount,
-            'applied_discount_percentage' => $appliedDiscountPercentage,
-            'net_amount' => $netAmount,
+            'patient_responsibility_amount' => round(max(0, $grandTotal - (float) ($paymentSplit['insurance_payment'] ?? 0)), 2),
+            'patient_payment_received' => round((float) ($paymentSplit['patient_payment'] ?? 0), 2),
+            'total_paid_amount' => $validatedTotalPaid,
+            'balance_amount' => $balanceAmount,
 
-            'staff_performed_id' => $staffId,
-            'service_performed_at' => now(),
-            'line_item_status' => !empty($data['resolved_is_fully_paid']) ? 'paid' : 'pending',
-
-            'audit_trail_hash' => hash('sha256', json_encode([
-                'service_code' => $serviceCode,
-                'quantity' => $quantity,
-                'unit_price' => $unitPrice,
-                'timestamp' => now()->toIso8601String(),
-            ])),
+            'discount_reason' => $discountRule['reason'],
+            'billing_status' => $billingStatus,
+            'billed_at' => now(),
+            'payment_due_date' => !$isFullyPaid ? now()->addDays(30) : null,
 
             'created_by_staff_id' => $staffId,
+            'updated_by_staff_id' => $staffId,
             'metadata' => json_encode([
-                'service_key' => $serviceKey,
-                'category' => $service['category'],
-                'source_type' => $inventoryItem ? 'inventory' : ($serviceCatalog ? 'service_catalog' : 'unknown'),
+                'payment_methods' => $data['payment_methods'] ?? [],
+                'additional_notes' => $data['additional_notes'] ?? null,
+                'discount_rule' => $discountRule,
+                'is_cash_payment' => $isPrimaryCash,
+                'validated_total_paid' => $validatedTotalPaid,
+                'balance_amount' => $balanceAmount,
+                'resolved_billing_status' => $billingStatus,
+                'resolved_payment_status' => $data['payment_status'] ?? null,
+                'frontend_ui_status' => $data['status'] ?? null,
+                'is_fully_paid' => $isFullyPaid,
+                'last_submission_fingerprint' => $data['submission_fingerprint'] ?? null,
+                'last_submission_at' => now()->toIso8601String(),
             ]),
-        ];
-
-        $lineItem = InvoiceLineItem::create($lineItemData);
-        $lineItems[] = $lineItem;
+        ]);
     }
 
-    return $lineItems;
-}
+    protected function createOrUpdateLineItems(
+        array $data,
+        int $billingCycleId,
+        int $staffId,
+        ?BillingCycle $existingBillingCycle = null
+    ): array {
+        $lineItems = [];
 
+        $serviceCodes = array_map(function ($chargeItem) {
+            return $chargeItem['service']['code'];
+        }, $data['charge_items']);
 
-    /**
-     * Deduct inventory stock for billed inventory items with proper locking
-     *
-     * @param array $chargeItems Charge items from billing payload
-     * @param int $staffId Staff performing the action
-     * @return void
-     * @throws \Exception
-     */
+        $inventoryItems = \App\Models\InventoryItem::query()
+            ->whereIn('item_code', $serviceCodes)
+            ->get()
+            ->keyBy('item_code');
+
+        $serviceCatalogs = \App\Models\ServiceCatalog::query()
+            ->whereIn('service_code', $serviceCodes)
+            ->get()
+            ->keyBy('service_code');
+
+        $existingLineItemsIndex = [];
+
+        if ($existingBillingCycle) {
+            $existingLineItems = InvoiceLineItem::query()
+                ->where('billing_cycle_id', $billingCycleId)
+                ->get();
+
+            foreach ($existingLineItems as $existingLineItem) {
+                $existingMeta = $this->decodeJsonArray($existingLineItem->metadata ?? null);
+                $indexKey = ($existingLineItem->service_code ?? '') . '|' . ($existingMeta['service_key'] ?? '');
+                $existingLineItemsIndex[$indexKey] = $existingLineItem;
+            }
+        }
+
+        foreach ($data['charge_items'] as $chargeItem) {
+            $service = $chargeItem['service'];
+            $quantity = round((float) $chargeItem['quantity'], 2);
+            $unitPrice = round((float) $service['unitPrice'], 2);
+            $lineTotal = round((float) $chargeItem['totalAmount'], 2);
+            $serviceCode = (string) $service['code'];
+            $serviceKey = (string) ($chargeItem['service_key'] ?? '');
+
+            $inventoryItem = $inventoryItems->get($serviceCode);
+            $serviceCatalog = $serviceCatalogs->get($serviceCode);
+
+            $indexKey = $serviceCode . '|' . $serviceKey;
+
+            if (isset($existingLineItemsIndex[$indexKey])) {
+                $existingLineItem = $existingLineItemsIndex[$indexKey];
+                $existingMeta = $this->decodeJsonArray($existingLineItem->metadata ?? null);
+
+                $newQuantity = round((float) $existingLineItem->quantity + $quantity, 2);
+                $newLineTotal = round((float) $existingLineItem->line_total_amount + $lineTotal, 2);
+
+                $existingLineItem->quantity = $newQuantity;
+                $existingLineItem->line_total_amount = $newLineTotal;
+                $existingLineItem->discount_amount = 0.00;
+                $existingLineItem->applied_discount_percentage = 0.00;
+                $existingLineItem->addToNetAmount($newLineTotal);
+                $existingLineItem->unit_price_at_time = $unitPrice;
+                $existingLineItem->staff_performed_id = $staffId;
+                $existingLineItem->service_performed_at = now();
+                $existingLineItem->line_item_status = !empty($data['resolved_is_fully_paid']) ? 'paid' : 'pending';
+                $existingLineItem->metadata = json_encode(array_merge($existingMeta, [
+                    'service_key' => $serviceKey,
+                    'category' => $service['category'],
+                    'source_type' => $inventoryItem ? 'inventory' : ($serviceCatalog ? 'service_catalog' : 'unknown'),
+                    'originated_by_staff_id' => $existingMeta['originated_by_staff_id'] ?? $existingLineItem->created_by_staff_id,
+                    'last_appended_at' => now()->toIso8601String(),
+                    'last_appended_by_staff_id' => $staffId,
+                ]));
+                $existingLineItem->audit_trail_hash = hash('sha256', json_encode([
+                    'service_code' => $serviceCode,
+                    'quantity' => $existingLineItem->quantity,
+                    'unit_price' => $unitPrice,
+                    'timestamp' => now()->toIso8601String(),
+                ]));
+                $existingLineItem->save();
+
+                $lineItems[] = $existingLineItem;
+                continue;
+            }
+
+            $lineItem = InvoiceLineItem::create([
+                'line_item_uuid' => (string) Str::uuid(),
+                'billing_cycle_id' => $billingCycleId,
+                'visit_id' => $data['visit_id'],
+
+                'service_version_snapshot' => json_encode($service),
+                'service_code' => $serviceCode,
+                'service_description' => $service['name'],
+
+                'inventory_item_id' => $inventoryItem?->id,
+                'service_catalog_id' => $serviceCatalog?->id,
+
+                'quantity' => $quantity,
+                'unit_of_measure' => 'each',
+                'unit_price_at_time' => $unitPrice,
+                'line_total_amount' => $lineTotal,
+
+                'discount_amount' => 0.00,
+                'applied_discount_percentage' => 0.00,
+                'net_amount' => $lineTotal,
+
+                'staff_performed_id' => $staffId,
+                'service_performed_at' => now(),
+                'line_item_status' => !empty($data['resolved_is_fully_paid']) ? 'paid' : 'pending',
+
+                'audit_trail_hash' => hash('sha256', json_encode([
+                    'service_code' => $serviceCode,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'timestamp' => now()->toIso8601String(),
+                ])),
+
+                'created_by_staff_id' => $staffId,
+                'metadata' => json_encode([
+                    'service_key' => $serviceKey,
+                    'category' => $service['category'],
+                    'source_type' => $inventoryItem ? 'inventory' : ($serviceCatalog ? 'service_catalog' : 'unknown'),
+                    'originated_by_staff_id' => $staffId,
+                ]),
+            ]);
+
+            $lineItems[] = $lineItem;
+        }
+
+        return $lineItems;
+    }
+
+    protected function reallocateCycleLineItemDiscounts(
+        BillingCycle $billingCycle,
+        array $discountRule,
+        int $staffId
+    ): void {
+        $lineItems = InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycle->id)
+            ->lockForUpdate()
+            ->orderBy('id')
+            ->get()
+            ->filter(function ($lineItem) {
+                $quantity = (float) ($lineItem->quantity ?? 0);
+                $status = strtolower((string) ($lineItem->line_item_status ?? ''));
+
+                return $quantity > 0 && !in_array($status, [
+                    'removed',
+                    'voided',
+                    'cancelled',
+                    'deleted',
+                    'adjusted',
+                ], true);
+            })
+            ->values();
+
+        if ($lineItems->isEmpty()) {
+            return;
+        }
+
+        $subtotal = round((float) $lineItems->sum(function ($lineItem) {
+            return (float) ($lineItem->line_total_amount ?? 0);
+        }), 2);
+
+        $discountType = (string) ($discountRule['type'] ?? 'fixed');
+        $discountValue = round((float) ($discountRule['value'] ?? 0), 2);
+
+        $totalDiscount = $discountType === 'percentage'
+            ? round($subtotal * ($discountValue / 100), 2)
+            : round($discountValue, 2);
+
+        $totalDiscount = round(min($subtotal, max(0, $totalDiscount)), 2);
+
+        if ($totalDiscount <= 0 || $subtotal <= 0) {
+            foreach ($lineItems as $lineItem) {
+                $lineTotal = round((float) ($lineItem->line_total_amount ?? 0), 2);
+                $lineItem->discount_amount = 0.00;
+                $lineItem->applied_discount_percentage = 0.00;
+                $lineItem->net_amount = $lineTotal;
+                $lineItem->updated_at = now();
+                $lineItem->save();
+            }
+
+            return;
+        }
+
+        $allocated = 0.00;
+        $lastIndex = $lineItems->count() - 1;
+
+        foreach ($lineItems as $index => $lineItem) {
+            $lineTotal = round((float) ($lineItem->line_total_amount ?? 0), 2);
+
+            if ($index === $lastIndex) {
+                $lineDiscount = round(max(0, $totalDiscount - $allocated), 2);
+            } else {
+                $lineDiscount = round(($lineTotal / $subtotal) * $totalDiscount, 2);
+                $allocated = round($allocated + $lineDiscount, 2);
+            }
+
+            $lineDiscount = round(min($lineTotal, max(0, $lineDiscount)), 2);
+            $netAmount = round(max(0, $lineTotal - $lineDiscount), 2);
+            $discountPercent = $lineTotal > 0
+                ? round(($lineDiscount / $lineTotal) * 100, 2)
+                : 0.00;
+
+            $metadata = $this->decodeJsonArray($lineItem->metadata ?? null);
+
+            $lineItem->discount_amount = $lineDiscount;
+            $lineItem->applied_discount_percentage = $discountPercent;
+            $lineItem->net_amount = $netAmount;
+            $lineItem->metadata = json_encode(array_merge($metadata, [
+                'last_discount_reallocated_at' => now()->toIso8601String(),
+                'last_discount_reallocated_by_staff_id' => $staffId,
+            ]));
+            $lineItem->save();
+        }
+    }
+
     protected function deductInventoryStock(array $chargeItems, int $staffId): void
     {
         foreach ($chargeItems as $chargeItem) {
-            try {
-                $service = $chargeItem['service'];
-                $quantity = (int) $chargeItem['quantity'];
+            $service = $chargeItem['service'] ?? [];
+            $quantity = (int) round((float) ($chargeItem['quantity'] ?? 0));
 
-                if ($quantity <= 0) {
-                    continue;
-                }
-
-                // Only process items that have a service code (inventory items will match)
-                $inventoryItem = InventoryItem::query()
-                    ->where('item_code', $service['code'])
-                    ->where('status', 'active')
-                    ->lockForUpdate() // Prevent race conditions
-                    ->first();
-
-                if (!$inventoryItem) {
-                    // It's a service (no inventory record) — skip silently
-                    continue;
-                }
-
-                // Double-check stock availability (race condition safety)
-                if ($inventoryItem->package_quantity < $quantity) {
-                    Log::error('Race condition detected: Insufficient stock during deduction', [
-                        'item_code' => $service['code'],
-                        'available' => $inventoryItem->package_quantity,
-                        'requested' => $quantity,
-                        'staff_id' => $staffId,
-                    ]);
-
-                    throw new \Exception(
-                        "Insufficient stock for item '{$service['name']}' (Code: {$service['code']}). "
-                        . "Available: {$inventoryItem->package_quantity}, Requested: {$quantity}. "
-                        . "This may be due to concurrent transactions. Please try again."
-                    );
-                }
-
-                // Calculate new quantity
-                $previousQuantity = $inventoryItem->package_quantity;
-                $unitsToDeduct = $quantity;
-                $newPackageQuantity = max(0, $previousQuantity - $unitsToDeduct);
-
-                $inventoryItem->package_quantity = $newPackageQuantity;
-                $inventoryItem->updated_by_staff_id = $staffId;
-
-                // Append deduction to metadata audit trail
-                $metadata = is_array($inventoryItem->metadata) 
-                    ? $inventoryItem->metadata 
-                    : (json_decode($inventoryItem->metadata ?? '{}', true) ?? []);
-
-                if (!isset($metadata['stock_deductions'])) {
-                    $metadata['stock_deductions'] = [];
-                }
-
-                $metadata['stock_deductions'][] = [
-                    'deducted_at' => now()->toIso8601String(),
-                    'deducted_by_staff_id' => $staffId,
-                    'units_deducted' => $unitsToDeduct,
-                    'previous_quantity' => $previousQuantity,
-                    'new_quantity' => $newPackageQuantity,
-                    'service_code' => $service['code'],
-                    'service_name' => $service['name'] ?? 'Unknown',
-                    'reason' => 'billing_finalization',
-                ];
-
-                // Track last deduction for quick reference
-                $metadata['last_stock_deduction'] = [
-                    'deducted_at' => now()->toIso8601String(),
-                    'deducted_by_staff_id' => $staffId,
-                    'units_deducted' => $unitsToDeduct,
-                    'new_quantity' => $newPackageQuantity,
-                ];
-
-                $inventoryItem->metadata = $metadata;
-                $inventoryItem->save();
-
-                Log::info('Inventory stock deducted successfully', [
-                    'item_code' => $service['code'],
-                    'item_name' => $service['name'] ?? 'Unknown',
-                    'units_deducted' => $unitsToDeduct,
-                    'previous_quantity' => $previousQuantity,
-                    'new_quantity' => $newPackageQuantity,
-                    'status' => $inventoryItem->status,
-                    'staff_id' => $staffId,
-                ]);
-
-            } catch (\Exception $e) {
-                Log::error('Failed to deduct inventory stock', [
-                    'item_code' => $service['code'] ?? 'unknown',
-                    'item_name' => $service['name'] ?? 'unknown',
-                    'error_message' => $e->getMessage(),
-                    'staff_id' => $staffId,
-                ]);
-
-                throw $e; // Re-throw to trigger transaction rollback
+            if ($quantity <= 0) {
+                continue;
             }
+
+            $inventoryItem = InventoryItem::query()
+                ->where('item_code', $service['code'] ?? null)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+
+            if (!$inventoryItem) {
+                continue;
+            }
+
+            if ((int) $inventoryItem->package_quantity < $quantity) {
+                throw new RuntimeException(
+                    "Insufficient stock for item '{$service['name']}' (Code: {$service['code']})."
+                );
+            }
+
+            $previousQuantity = (int) $inventoryItem->package_quantity;
+            $newPackageQuantity = max(0, $previousQuantity - $quantity);
+
+            $metadata = is_array($inventoryItem->metadata)
+                ? $inventoryItem->metadata
+                : (json_decode($inventoryItem->metadata ?? '{}', true) ?? []);
+
+            if (!isset($metadata['stock_deductions']) || !is_array($metadata['stock_deductions'])) {
+                $metadata['stock_deductions'] = [];
+            }
+
+            $metadata['stock_deductions'][] = [
+                'deducted_at' => now()->toIso8601String(),
+                'deducted_by_staff_id' => $staffId,
+                'units_deducted' => $quantity,
+                'previous_quantity' => $previousQuantity,
+                'new_quantity' => $newPackageQuantity,
+                'service_code' => $service['code'] ?? null,
+                'service_name' => $service['name'] ?? 'Unknown',
+                'reason' => 'billing_finalization',
+            ];
+
+            $metadata['last_stock_deduction'] = [
+                'deducted_at' => now()->toIso8601String(),
+                'deducted_by_staff_id' => $staffId,
+                'units_deducted' => $quantity,
+                'new_quantity' => $newPackageQuantity,
+            ];
+
+            $inventoryItem->package_quantity = $newPackageQuantity;
+            $inventoryItem->updated_by_staff_id = $staffId;
+            $inventoryItem->metadata = $metadata;
+            $inventoryItem->save();
         }
     }
 
-    /**
-     * Update visit with billing information
-     * 
-     * FIXED: Use paymentSplit for accurate payment calculations
-     *
-     * @param Visit $visit
-     * @param array $data
-     * @param BillingCycle $billingCycle
-     * @param int $staffId
-     * @param array $paymentSplit
-     * @return void
-     */
-   protected function updateVisitBillingStatus(
-    Visit $visit,
-    array $data,
-    BillingCycle $billingCycle,
-    int $staffId,
-    array $paymentSplit,
-    bool $wasExistingCycleUpdated = false
-): void {
-    $grandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
-    $totalPaid = round((float) ($billingCycle->total_paid_amount ?? 0), 2);
-    $balance = round((float) ($billingCycle->balance_amount ?? max(0, $grandTotal - $totalPaid)), 2);
-    $isFullyPaid = abs($balance) < 0.01;
+    protected function updateVisitBillingStatus(
+        Visit $visit,
+        array $data,
+        BillingCycle $billingCycle,
+        int $staffId,
+        array $paymentSplit,
+        bool $wasExistingCycleUpdated = false
+    ): void {
+        $grandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
+        $totalPaid = round((float) ($billingCycle->total_paid_amount ?? 0), 2);
+        $balance = round((float) ($billingCycle->balance_amount ?? max(0, $grandTotal - $totalPaid)), 2);
+        $isFullyPaid = abs($balance) < 0.01;
 
-    $metadata = is_array($visit->metadata)
-        ? $visit->metadata
-        : (json_decode($visit->metadata ?? '{}', true) ?? []);
+        $metadata = is_array($visit->metadata)
+            ? $visit->metadata
+            : (json_decode($visit->metadata ?? '{}', true) ?? []);
 
-    if (!isset($metadata['billing'])) {
-        $metadata['billing'] = [];
-    }
-
-    if ($isFullyPaid) {
-        $visit->payment_status = 'paid_in_full';
-
-        // Only finalize the visit when billing is settled.
-        // This preserves your business rule: no completion while balance exists.
-        $visit->current_phase = 'discharged';
-        $visit->status = 'completed';
-        $visit->clinical_care_ended_at = $visit->clinical_care_ended_at ?? now();
-        $visit->discharged_at = $visit->discharged_at ?? now();
-    } else {
-        $visit->payment_status = $totalPaid > 0 ? 'partially_paid' : 'pending';
-
-        if (!in_array($visit->current_phase, ['expired', 'transferred'], true)) {
-            $visit->current_phase = 'billing';
+        if (!isset($metadata['billing']) || !is_array($metadata['billing'])) {
+            $metadata['billing'] = [];
         }
 
-        if (!in_array($visit->status, ['cancelled', 'no_show'], true)) {
-            $visit->status = 'active';
+        if ($isFullyPaid) {
+            $visit->payment_status = 'paid_in_full';
+            $visit->current_phase = 'discharged';
+            $visit->status = 'completed';
+            $visit->clinical_care_ended_at = $visit->clinical_care_ended_at ?? now();
+            $visit->discharged_at = $visit->discharged_at ?? now();
+        } else {
+            $visit->payment_status = $totalPaid > 0 ? 'partially_paid' : 'pending';
+
+            if (!in_array($visit->current_phase, ['expired', 'transferred'], true)) {
+                $visit->current_phase = 'billing';
+            }
+
+            if (!in_array($visit->status, ['cancelled', 'no_show'], true)) {
+                $visit->status = 'active';
+            }
+
+            unset($metadata['visit_completion']);
         }
 
-        unset($metadata['visit_completion']);
-    }
+        $visit->estimated_total_charges = $grandTotal;
+        $visit->patient_estimated_responsibility = $balance;
+        $visit->updated_by_staff_id = $staffId;
 
-    $visit->estimated_total_charges = $grandTotal;
-    $visit->patient_estimated_responsibility = $balance;
-    $visit->updated_by_staff_id = $staffId;
+        $metadata['billing'][] = [
+            'billing_cycle_id' => $billingCycle->id,
+            'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+            'event_type' => $wasExistingCycleUpdated ? 'billing_cycle_updated' : 'billing_cycle_created',
+            'saved_at' => now()->toIso8601String(),
+            'saved_by_staff_id' => $staffId,
+            'receipt_number' => "REC-{$billingCycle->id}",
+            'grand_total' => $grandTotal,
+            'total_paid' => $totalPaid,
+            'balance' => $balance,
+            'is_fully_paid' => $isFullyPaid,
+            'payment_methods' => $data['payment_methods'] ?? [],
+            'payment_split' => [
+                'insurance' => $billingCycle->insurance_payment_received ?? 0,
+                'patient' => $billingCycle->patient_payment_received ?? 0,
+            ],
+            'discount' => [
+                'type' => $data['discount']['type'] ?? null,
+                'value' => $data['discount']['value'] ?? 0,
+                'reason' => $data['discount']['reason'] ?? null,
+            ],
+        ];
 
-    $metadata['billing'][] = [
-        'billing_cycle_id' => $billingCycle->id,
-        'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
-        'event_type' => $wasExistingCycleUpdated ? 'billing_cycle_updated' : 'billing_cycle_created',
-        'saved_at' => now()->toIso8601String(),
-        'saved_by_staff_id' => $staffId,
-        'receipt_number' => "REC-{$billingCycle->id}",
-        'grand_total' => $grandTotal,
-        'total_paid' => $totalPaid,
-        'balance' => $balance,
-        'is_fully_paid' => $isFullyPaid,
-        'payment_methods' => $data['payment_methods'] ?? [],
-        'payment_split' => [
-            'insurance' => $billingCycle->insurance_payment_received ?? 0,
-            'patient' => $billingCycle->patient_payment_received ?? 0,
-        ],
-        'discount' => [
-            'type' => $data['discount']['type'] ?? null,
-            'value' => $data['discount']['value'] ?? 0,
-            'reason' => $data['discount']['reason'] ?? null,
-        ],
-    ];
-
-    $metadata['latest_billing'] = [
-        'billing_cycle_id' => $billingCycle->id,
-        'receipt_number' => "REC-{$billingCycle->id}",
-        'saved_at' => now()->toIso8601String(),
-        'grand_total' => $grandTotal,
-        'total_paid' => $totalPaid,
-        'balance' => $balance,
-        'payment_status' => $visit->payment_status,
-        'billing_status' => $billingCycle->billing_status,
-    ];
-
-    if ($isFullyPaid) {
-        $metadata['visit_completion'] = [
-            'completed_at' => now()->toIso8601String(),
-            'completed_by_staff_id' => $staffId,
-            'completion_reason' => 'billing_fully_paid',
-            'final_balance' => $balance,
+        $metadata['latest_billing'] = [
             'billing_cycle_id' => $billingCycle->id,
             'receipt_number' => "REC-{$billingCycle->id}",
+            'saved_at' => now()->toIso8601String(),
+            'grand_total' => $grandTotal,
+            'total_paid' => $totalPaid,
+            'balance' => $balance,
+            'payment_status' => $visit->payment_status,
+            'billing_status' => $billingCycle->billing_status,
         ];
+
+        if ($isFullyPaid) {
+            $metadata['visit_completion'] = [
+                'completed_at' => now()->toIso8601String(),
+                'completed_by_staff_id' => $staffId,
+                'completion_reason' => 'billing_fully_paid',
+                'final_balance' => $balance,
+                'billing_cycle_id' => $billingCycle->id,
+                'receipt_number' => "REC-{$billingCycle->id}",
+            ];
+        }
+
+        $visit->metadata = $metadata;
+        $visit->save();
     }
 
-    $visit->metadata = $metadata;
-    $visit->save();
-
-    Log::info('Visit billing status updated', [
-        'visit_id' => $visit->id,
-        'payment_status' => $visit->payment_status,
-        'current_phase' => $visit->current_phase,
-        'visit_status' => $visit->status,
-        'grand_total' => $grandTotal,
-        'total_paid' => $totalPaid,
-        'balance' => $balance,
-        'is_fully_paid' => $isFullyPaid,
-        'billing_cycle_id' => $billingCycle->id,
-        'was_existing_cycle_updated' => $wasExistingCycleUpdated,
-    ]);
-}
-
-
-
-    /**
-     * Calculate pro-rated discount for a line item
-     *
-     * @param float $lineTotal Line item total
-     * @param float $subtotal Overall subtotal
-     * @param float $totalDiscount Total discount amount
-     * @return float Pro-rated discount for this line item
-     */
-    protected function calculateLineItemDiscount(float $lineTotal, float $subtotal, float $totalDiscount): float
+    protected function syncCycleLineItemStatuses(int $billingCycleId, bool $isFullyPaid): void
     {
-        if ($subtotal <= 0) {
-            return 0;
-        }
-
-        return ($lineTotal / $subtotal) * $totalDiscount;
+        InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycleId)
+            ->whereNotIn('line_item_status', ['adjusted', 'written_off', 'denied'])
+            ->update([
+                'line_item_status' => $isFullyPaid ? 'paid' : 'pending',
+                'updated_at' => now(),
+            ]);
     }
 
+    public function processPersistedLineItemAdjustment(
+        InvoiceLineItem $lineItem,
+        string $action,
+        float $quantity,
+        ?string $reason,
+        int $staffId
+    ): array {
+        return DB::transaction(function () use ($lineItem, $action, $quantity, $reason, $staffId) {
+            $lineItem = InvoiceLineItem::query()
+                ->lockForUpdate()
+                ->findOrFail($lineItem->id);
 
-  protected function syncCycleLineItemStatuses(int $billingCycleId, bool $isFullyPaid): void
-{
-    InvoiceLineItem::query()
-        ->where('billing_cycle_id', $billingCycleId)
-        ->whereNotIn('line_item_status', ['adjusted', 'written_off', 'denied'])
-        ->update([
-            'line_item_status' => $isFullyPaid ? 'paid' : 'pending',
-            'updated_at' => now(),
+            $billingCycle = BillingCycle::query()
+                ->lockForUpdate()
+                ->findOrFail($lineItem->billing_cycle_id);
+
+            $visit = Visit::query()
+                ->lockForUpdate()
+                ->findOrFail($billingCycle->visit_id);
+
+            if (in_array($billingCycle->billing_status, [
+                'paid_in_full',
+                'pending_submission',
+                'submitted_to_insurance',
+                'payment_plan',
+                'collections',
+                'disputed',
+                'written_off',
+                'charity_care',
+                'partially_refunded',
+                'fully_refunded',
+            ], true)) {
+                throw new RuntimeException(
+                    "Billing cycle is in locked status '{$billingCycle->billing_status}' and cannot be adjusted."
+                );
+            }
+
+            $oldQuantity = (float) $lineItem->quantity;
+            $unitPrice = (float) $lineItem->unit_price_at_time;
+
+            if ($action === 'decrease' && $quantity > $oldQuantity) {
+                throw new RuntimeException('Cannot decrease by more than the currently billed quantity.');
+            }
+
+            $newQuantity = $oldQuantity;
+
+            switch ($action) {
+                case 'increase':
+                    $newQuantity = $oldQuantity + $quantity;
+                    break;
+                case 'decrease':
+                    $newQuantity = max(0, $oldQuantity - $quantity);
+                    break;
+                case 'remove':
+                    $newQuantity = 0;
+                    break;
+            }
+
+            $deltaQuantity = round($newQuantity - $oldQuantity, 2);
+
+            if ($deltaQuantity > 0) {
+                $this->adjustInventoryForPersistedLineItem(
+                    (string) $lineItem->service_code,
+                    $deltaQuantity,
+                    $staffId,
+                    'deduct'
+                );
+            } elseif ($deltaQuantity < 0) {
+                $this->adjustInventoryForPersistedLineItem(
+                    (string) $lineItem->service_code,
+                    abs($deltaQuantity),
+                    $staffId,
+                    'restore'
+                );
+            }
+
+            $newLineTotal = round($newQuantity * $unitPrice, 2);
+
+            $metadata = $this->decodeJsonArray($lineItem->metadata ?? null);
+            $adjustmentHistory = $metadata['adjustment_history'] ?? [];
+
+            $adjustmentHistory[] = [
+                'adjusted_at' => now()->toIso8601String(),
+                'adjusted_by_staff_id' => $staffId,
+                'action' => $action,
+                'reason' => $reason,
+                'old_quantity' => $oldQuantity,
+                'new_quantity' => $newQuantity,
+                'delta_quantity' => $deltaQuantity,
+                'unit_price' => $unitPrice,
+            ];
+
+            $metadata['adjustment_history'] = $adjustmentHistory;
+            $metadata['last_adjusted_at'] = now()->toIso8601String();
+            $metadata['last_adjusted_by_staff_id'] = $staffId;
+            $metadata['last_adjustment_action'] = $action;
+            $metadata['last_adjustment_reason'] = $reason;
+            $metadata['originated_by_staff_id'] = $metadata['originated_by_staff_id'] ?? $lineItem->created_by_staff_id;
+
+            $lineItem->quantity = $newQuantity;
+            $lineItem->line_total_amount = $newLineTotal;
+            $lineItem->discount_amount = 0.00;
+            $lineItem->applied_discount_percentage = 0.00;
+            $lineItem->net_amount = $newLineTotal;
+            $lineItem->adjustment_reason = $reason;
+            $lineItem->adjustment_amount = round(max(0, ($oldQuantity * $unitPrice) - $newLineTotal), 2);
+            $lineItem->line_item_status = $newQuantity <= 0 ? 'adjusted' : 'pending';
+            $lineItem->staff_performed_id = $staffId;
+            $lineItem->service_performed_at = now();
+            $lineItem->audit_trail_hash = hash('sha256', json_encode([
+                'line_item_id' => $lineItem->id,
+                'action' => $action,
+                'old_quantity' => $oldQuantity,
+                'new_quantity' => $newQuantity,
+                'unit_price' => $unitPrice,
+                'reason' => $reason,
+                'timestamp' => now()->toIso8601String(),
+            ]));
+            $lineItem->metadata = json_encode($metadata);
+            $lineItem->save();
+
+            $discountRule = $this->extractDiscountRuleFromCycle($billingCycle);
+
+            $this->reallocateCycleLineItemDiscounts(
+                $billingCycle->fresh(),
+                $discountRule,
+                $staffId
+            );
+
+            $billingCycle = $this->recalculateBillingCycleTotalsFromLineItems($billingCycle->fresh(), $staffId);
+
+            $this->syncCycleLineItemStatuses(
+                $billingCycle->id,
+                $billingCycle->billing_status === 'paid_in_full'
+            );
+
+            $this->updateVisitBillingStatus(
+                $visit,
+                [
+                    'payment_methods' => [],
+                    'discount' => $discountRule,
+                ],
+                $billingCycle,
+                $staffId,
+                [
+                    'insurance_payment' => (float) ($billingCycle->insurance_payment_received ?? 0),
+                    'patient_payment' => (float) ($billingCycle->patient_payment_received ?? 0),
+                ],
+                true
+            );
+
+            return [
+                'billing_cycle' => $billingCycle->fresh(),
+                'line_item' => $lineItem->fresh(),
+            ];
+        });
+    }
+
+    protected function recalculateBillingCycleTotalsFromLineItems(BillingCycle $billingCycle, int $staffId): BillingCycle
+    {
+        $lineItems = InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycle->id)
+            ->get()
+            ->filter(function ($item) {
+                $quantity = (float) ($item->quantity ?? 0);
+                $status = strtolower((string) ($item->line_item_status ?? ''));
+
+                return $quantity > 0 && !in_array($status, [
+                    'removed',
+                    'voided',
+                    'cancelled',
+                    'deleted',
+                    'adjusted',
+                ], true);
+            })
+            ->values();
+
+        $subtotal = round((float) $lineItems->sum(function ($item) {
+            return (float) ($item->line_total_amount ?? 0);
+        }), 2);
+
+        $discountTotal = round((float) $lineItems->sum(function ($item) {
+            return (float) ($item->discount_amount ?? 0);
+        }), 2);
+
+        $taxableAmount = round(max(0, $subtotal - $discountTotal), 2);
+
+        $existingTaxes = $this->decodeJsonArray($billingCycle->tax_details ?? null);
+
+        $recalculatedTaxes = collect($existingTaxes)->map(function ($tax) use ($taxableAmount) {
+            $rate = round((float) ($tax['rate'] ?? 0), 2);
+
+            return [
+                'name' => (string) ($tax['name'] ?? 'Tax'),
+                'rate' => $rate,
+                'amount' => round($taxableAmount * ($rate / 100), 2),
+            ];
+        })->values()->toArray();
+
+        $taxTotal = round((float) collect($recalculatedTaxes)->sum('amount'), 2);
+        $grandTotal = round($taxableAmount + $taxTotal, 2);
+
+        $insurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
+        $patientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
+        $totalPaid = round((float) ($billingCycle->total_paid_amount ?? ($insurancePaid + $patientPaid)), 2);
+
+        $balance = round(max(0, $grandTotal - $totalPaid), 2);
+        $isFullyPaid = abs($balance) < 0.01;
+
+        $billingStatus = $isFullyPaid
+            ? 'paid_in_full'
+            : ($totalPaid > 0 ? 'partially_paid' : 'pending');
+
+        $metadata = $this->decodeJsonArray($billingCycle->metadata ?? null);
+
+        $billingCycle->fill([
+            'subtotal_amount' => $subtotal,
+            'total_amount_charged' => $subtotal,
+            'total_adjustments' => $discountTotal,
+            'discount_applied' => $discountTotal,
+            'taxable_amount' => $taxableAmount,
+            'tax_details' => json_encode($recalculatedTaxes),
+            'total_tax_amount' => $taxTotal,
+            'net_amount' => $grandTotal,
+            'grand_total_amount' => $grandTotal,
+            'total_paid_amount' => $totalPaid,
+            'balance_amount' => $balance,
+            'patient_responsibility_amount' => round(max(0, $grandTotal - $insurancePaid), 2),
+            'billing_status' => $billingStatus,
+            'payment_due_date' => !$isFullyPaid
+                ? ($billingCycle->payment_due_date ?? now()->addDays(30))
+                : null,
+            'updated_by_staff_id' => $staffId,
+            'metadata' => json_encode(array_merge($metadata, [
+                'validated_total_paid' => $totalPaid,
+                'balance_amount' => $balance,
+                'resolved_billing_status' => $billingStatus,
+                'resolved_payment_status' => $billingStatus,
+                'is_fully_paid' => $isFullyPaid,
+                'last_recalculated_at' => now()->toIso8601String(),
+                'last_recalculated_by_staff_id' => $staffId,
+            ])),
         ]);
-}
 
-/**
- * Adjust a persisted line item in an auditable and inventory-safe way.
- *
- * remove => quantity becomes zero and line item is marked adjusted.
- * We do NOT hard-delete persisted billing items in healthcare billing.
- */
-public function processPersistedLineItemAdjustment(
-    InvoiceLineItem $lineItem,
-    string $action,
-    float $quantity,
-    ?string $reason,
-    int $staffId
-): array {
-    return DB::transaction(function () use ($lineItem, $action, $quantity, $reason, $staffId) {
-        $lineItem = InvoiceLineItem::query()
+        $billingCycle->save();
+
+        return $billingCycle->fresh();
+    }
+
+    protected function adjustInventoryForPersistedLineItem(
+        string $serviceCode,
+        float $deltaQuantity,
+        int $staffId,
+        string $direction
+    ): void {
+        $units = (int) round($deltaQuantity);
+
+        if ($units <= 0) {
+            return;
+        }
+
+        $inventoryItem = InventoryItem::query()
+            ->where('item_code', $serviceCode)
+            ->where('status', 'active')
             ->lockForUpdate()
-            ->findOrFail($lineItem->id);
+            ->first();
 
-        $billingCycle = BillingCycle::query()
-            ->lockForUpdate()
-            ->findOrFail($lineItem->billing_cycle_id);
-
-        $visit = Visit::query()
-            ->lockForUpdate()
-            ->findOrFail($billingCycle->visit_id);
-
-        if (in_array($billingCycle->billing_status, [
-            'paid_in_full',
-            'pending_submission',
-            'submitted_to_insurance',
-            'payment_plan',
-            'collections',
-            'disputed',
-            'written_off',
-            'charity_care',
-            'partially_refunded',
-            'fully_refunded',
-        ], true)) {
-            throw new RuntimeException(
-                "Billing cycle is in locked status '{$billingCycle->billing_status}' and cannot be adjusted."
-            );
+        if (!$inventoryItem) {
+            return;
         }
 
-        $oldQuantity = (float) $lineItem->quantity;
-        $unitPrice = (float) $lineItem->unit_price_at_time;
-        $oldDiscountAmount = (float) $lineItem->discount_amount;
-        $discountPerUnit = $oldQuantity > 0 ? round($oldDiscountAmount / $oldQuantity, 6) : 0.0;
+        $previousQuantity = (int) $inventoryItem->package_quantity;
 
-        if ($action === 'decrease' && $quantity > $oldQuantity) {
-            throw new RuntimeException('Cannot decrease by more than the currently billed quantity.');
+        if ($direction === 'deduct') {
+            if ($previousQuantity < $units) {
+                throw new RuntimeException(
+                    "Insufficient stock for item code '{$serviceCode}'. Available: {$previousQuantity}, Requested: {$units}."
+                );
+            }
+
+            $newQuantity = $previousQuantity - $units;
+        } else {
+            $newQuantity = $previousQuantity + $units;
         }
 
-        $newQuantity = $oldQuantity;
+        $metadata = is_array($inventoryItem->metadata)
+            ? $inventoryItem->metadata
+            : (json_decode($inventoryItem->metadata ?? '{}', true) ?? []);
 
-        switch ($action) {
-            case 'increase':
-                $newQuantity = $oldQuantity + $quantity;
-                break;
-
-            case 'decrease':
-                $newQuantity = max(0, $oldQuantity - $quantity);
-                break;
-
-            case 'remove':
-                $newQuantity = 0;
-                break;
-        }
-        Log::info("Action",["Action"=>$action]);
-
-        $deltaQuantity = round($newQuantity - $oldQuantity, 2);
-
-        // Inventory impact:
-        // + increase => deduct stock
-        // + decrease/remove => restore stock
-        if ($deltaQuantity > 0) {
-            $this->adjustInventoryForPersistedLineItem(
-                (string) $lineItem->service_code,
-                $deltaQuantity,
-                $staffId,
-                'deduct'
-            );
-        } elseif ($deltaQuantity < 0) {
-            $this->adjustInventoryForPersistedLineItem(
-                (string) $lineItem->service_code,
-                abs($deltaQuantity),
-                $staffId,
-                'restore'
-            );
+        if (!isset($metadata['stock_adjustments']) || !is_array($metadata['stock_adjustments'])) {
+            $metadata['stock_adjustments'] = [];
         }
 
-        $newLineTotal = round($newQuantity * $unitPrice, 2);
-        $newDiscountAmount = round($discountPerUnit * $newQuantity, 2);
-        $newNetAmount = round(max(0, $newLineTotal - $newDiscountAmount), 2);
-
-        $metadata = $this->decodeJsonArray($lineItem->metadata ?? null);
-        $adjustmentHistory = $metadata['adjustment_history'] ?? [];
-
-        $adjustmentHistory[] = [
+        $metadata['stock_adjustments'][] = [
             'adjusted_at' => now()->toIso8601String(),
             'adjusted_by_staff_id' => $staffId,
-            'action' => $action,
-            'reason' => $reason,
-            'old_quantity' => $oldQuantity,
+            'service_code' => $serviceCode,
+            'direction' => $direction,
+            'units' => $units,
+            'previous_quantity' => $previousQuantity,
             'new_quantity' => $newQuantity,
-            'delta_quantity' => $deltaQuantity,
-            'unit_price' => $unitPrice,
+            'reason' => 'billing_line_item_adjustment',
         ];
 
-        $metadata['adjustment_history'] = $adjustmentHistory;
-        $metadata['last_adjusted_at'] = now()->toIso8601String();
-        $metadata['last_adjusted_by_staff_id'] = $staffId;
-        $metadata['last_adjustment_action'] = $action;
-        $metadata['last_adjustment_reason'] = $reason;
-        $metadata['originated_by_staff_id'] = $metadata['originated_by_staff_id'] ?? $lineItem->created_by_staff_id;
+        $inventoryItem->package_quantity = $newQuantity;
+        $inventoryItem->updated_by_staff_id = $staffId;
+        $inventoryItem->metadata = $metadata;
+        $inventoryItem->save();
+    }
 
-        $lineItem->quantity = $newQuantity;
-        $lineItem->line_total_amount = $newLineTotal;
-        $lineItem->discount_amount = $newDiscountAmount;
-        $lineItem->net_amount = $newNetAmount;
-        $lineItem->adjustment_reason = $reason;
-        $lineItem->adjustment_amount = round(max(0, ($oldQuantity * $unitPrice) - $newLineTotal), 2);
-        $lineItem->line_item_status = $newQuantity <= 0 ? 'adjusted' : 'pending';
-        $lineItem->staff_performed_id = $staffId;
-        $lineItem->service_performed_at = now();
-        $lineItem->audit_trail_hash = hash('sha256', json_encode([
-            'line_item_id' => $lineItem->id,
-            'action' => $action,
-            'old_quantity' => $oldQuantity,
-            'new_quantity' => $newQuantity,
-            'unit_price' => $unitPrice,
-            'reason' => $reason,
-            'timestamp' => now()->toIso8601String(),
-        ]));
-        $lineItem->metadata = json_encode($metadata);
-        $lineItem->save();
-
-        // Recalculate the cycle from actual line items after adjustment
-        $billingCycle = $this->recalculateBillingCycleTotalsFromLineItems($billingCycle, $staffId);
-
-        $this->syncCycleLineItemStatuses(
-            $billingCycle->id,
-            $billingCycle->billing_status === 'paid_in_full'
-        );
-
-        // Update visit status based on the refreshed cycle totals
-        $this->updateVisitBillingStatus(
-            $visit,
-            [
-                'payment_methods' => [],
-                'discount' => [],
-            ],
-            $billingCycle,
-            $staffId,
-            [
-                'insurance_payment' => (float) ($billingCycle->insurance_payment_received ?? 0),
-                'patient_payment' => (float) ($billingCycle->patient_payment_received ?? 0),
-            ],
-            true
-        );
+    protected function extractDiscountRuleFromCycle(BillingCycle $billingCycle): array
+    {
+        $metadata = $this->decodeJsonArray($billingCycle->metadata ?? null);
+        $rule = is_array($metadata['discount_rule'] ?? null)
+            ? $metadata['discount_rule']
+            : [];
 
         return [
-            'billing_cycle' => $billingCycle->fresh(),
-            'line_item' => $lineItem->fresh(),
+            'type' => in_array(($rule['type'] ?? null), ['percentage', 'fixed'], true)
+                ? $rule['type']
+                : 'fixed',
+            'value' => round((float) ($rule['value'] ?? $billingCycle->discount_applied ?? 0), 2),
+            'reason' => $rule['reason'] ?? $billingCycle->discount_reason,
         ];
-    });
-}
-
-
-protected function decodeJsonArray($value): array
-{
-    if (is_array($value)) {
-        return $value;
     }
 
-    if (is_string($value) && trim($value) !== '') {
-        $decoded = json_decode($value, true);
-        return is_array($decoded) ? $decoded : [];
-    }
-
-    return [];
-}
-
-protected function mergeTaxDetails(array $existingTaxes, array $incomingTaxes): array
-{
-    $merged = [];
-
-    foreach (array_merge($existingTaxes, $incomingTaxes) as $tax) {
-        $name = (string) ($tax['name'] ?? 'Tax');
-        $rate = round((float) ($tax['rate'] ?? 0), 2);
-        $amount = round((float) ($tax['amount'] ?? 0), 2);
-
-        $key = strtolower($name) . '|' . number_format($rate, 2, '.', '');
-
-        if (!isset($merged[$key])) {
-            $merged[$key] = [
-                'name' => $name,
-                'rate' => $rate,
-                'amount' => $amount,
-            ];
-            continue;
+    protected function decodeJsonArray($value): array
+    {
+        if (is_array($value)) {
+            return $value;
         }
 
-        $merged[$key]['amount'] = round($merged[$key]['amount'] + $amount, 2);
-    }
-
-    return array_values($merged);
-}
-
-protected function mergeAdditionalNotes(?string $existing, ?string $incoming): ?string
-{
-    $existing = trim((string) $existing);
-    $incoming = trim((string) $incoming);
-
-    if ($existing === '' && $incoming === '') {
-        return null;
-    }
-
-    if ($existing === '') {
-        return $incoming;
-    }
-
-    if ($incoming === '') {
-        return $existing;
-    }
-
-    return $existing . PHP_EOL . $incoming;
-}
-
-/**
- * Recalculate billing cycle totals from current persisted line items.
- *
- * This is safer than manually applying deltas because it always rebuilds
- * the cycle from the authoritative stored line items.
- */
-protected function recalculateBillingCycleTotalsFromLineItems(BillingCycle $billingCycle, int $staffId): BillingCycle
-{
-    $lineItems = InvoiceLineItem::query()
-        ->where('billing_cycle_id', $billingCycle->id)
-        ->get();
-
-    $subtotal = round((float) $lineItems->sum(function ($item) {
-        return (float) ($item->line_total_amount ?? 0);
-    }), 2);
-
-    $discountTotal = round((float) $lineItems->sum(function ($item) {
-        return (float) ($item->discount_amount ?? 0);
-    }), 2);
-
-    $taxableAmount = round(max(0, $subtotal - $discountTotal), 2);
-
-    $existingTaxes = $this->decodeJsonArray($billingCycle->tax_details ?? null);
-
-    $recalculatedTaxes = collect($existingTaxes)->map(function ($tax) use ($taxableAmount) {
-        $rate = round((float) ($tax['rate'] ?? 0), 2);
-
-        return [
-            'name' => (string) ($tax['name'] ?? 'Tax'),
-            'rate' => $rate,
-            'amount' => round($taxableAmount * ($rate / 100), 2),
-        ];
-    })->values()->toArray();
-
-    $taxTotal = round((float) collect($recalculatedTaxes)->sum('amount'), 2);
-    $grandTotal = round($taxableAmount + $taxTotal, 2);
-
-    $insurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
-    $patientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
-    $totalPaid = round((float) ($billingCycle->total_paid_amount ?? ($insurancePaid + $patientPaid)), 2);
-
-    $balance = round(max(0, $grandTotal - $totalPaid), 2);
-    $isFullyPaid = abs($balance) < 0.01;
-
-    $billingStatus = $isFullyPaid
-        ? 'paid_in_full'
-        : ($totalPaid > 0 ? 'partially_paid' : 'pending');
-
-    $metadata = $this->decodeJsonArray($billingCycle->metadata ?? null);
-
-    $billingCycle->fill([
-        'subtotal_amount' => $subtotal,
-        'total_amount_charged' => $subtotal,
-        'total_adjustments' => $discountTotal,
-        'discount_applied' => $discountTotal,
-        'taxable_amount' => $taxableAmount,
-        'tax_details' => json_encode($recalculatedTaxes),
-        'total_tax_amount' => $taxTotal,
-        'net_amount' => $grandTotal,
-        'grand_total_amount' => $grandTotal,
-        'total_paid_amount' => $totalPaid,
-        'balance_amount' => $balance,
-        'patient_responsibility_amount' => round(max(0, $grandTotal - $insurancePaid), 2),
-        'billing_status' => $billingStatus,
-        'payment_due_date' => !$isFullyPaid
-            ? ($billingCycle->payment_due_date ?? now()->addDays(30))
-            : null,
-        'updated_by_staff_id' => $staffId,
-        'metadata' => json_encode(array_merge($metadata, [
-            'validated_total_paid' => $totalPaid,
-            'balance_amount' => $balance,
-            'resolved_billing_status' => $billingStatus,
-            'resolved_payment_status' => $billingStatus,
-            'is_fully_paid' => $isFullyPaid,
-            'last_recalculated_at' => now()->toIso8601String(),
-            'last_recalculated_by_staff_id' => $staffId,
-        ])),
-    ]);
-
-    $billingCycle->save();
-
-    return $billingCycle->fresh();
-}
-
-/**
- * Apply inventory effect for persisted line-item adjustment.
- *
- * direction:
- * - deduct  => used for increase
- * - restore => used for decrease/remove
- */
-protected function adjustInventoryForPersistedLineItem(
-    string $serviceCode,
-    float $deltaQuantity,
-    int $staffId,
-    string $direction
-): void {
-    $units = (int) round($deltaQuantity);
-
-    if ($units <= 0) {
-        return;
-    }
-
-    $inventoryItem = InventoryItem::query()
-        ->where('item_code', $serviceCode)
-        ->where('status', 'active')
-        ->lockForUpdate()
-        ->first();
-
-    // If no inventory item exists, it is probably a service-catalog item.
-    if (!$inventoryItem) {
-        return;
-    }
-
-    $previousQuantity = (int) $inventoryItem->package_quantity;
-
-    if ($direction === 'deduct') {
-        if ($previousQuantity < $units) {
-            throw new RuntimeException(
-                "Insufficient stock for item code '{$serviceCode}'. Available: {$previousQuantity}, Requested: {$units}."
-            );
+        if (is_string($value) && trim($value) !== '') {
+            $decoded = json_decode($value, true);
+            return is_array($decoded) ? $decoded : [];
         }
 
-        $newQuantity = $previousQuantity - $units;
-    } else {
-        $newQuantity = $previousQuantity + $units;
+        return [];
     }
 
-    $metadata = is_array($inventoryItem->metadata)
-        ? $inventoryItem->metadata
-        : (json_decode($inventoryItem->metadata ?? '{}', true) ?? []);
+    protected function mergeAdditionalNotes(?string $existing, ?string $incoming): ?string
+    {
+        $existing = trim((string) $existing);
+        $incoming = trim((string) $incoming);
 
-    $metadata['stock_adjustments'][] = [
-        'adjusted_at' => now()->toIso8601String(),
-        'adjusted_by_staff_id' => $staffId,
-        'service_code' => $serviceCode,
-        'direction' => $direction,
-        'units' => $units,
-        'previous_quantity' => $previousQuantity,
-        'new_quantity' => $newQuantity,
-        'reason' => 'billing_line_item_adjustment',
-    ];
+        if ($existing === '' && $incoming === '') {
+            return null;
+        }
 
-    $inventoryItem->package_quantity = $newQuantity;
-    $inventoryItem->updated_by_staff_id = $staffId;
-    $inventoryItem->metadata = $metadata;
-    $inventoryItem->save();
+        if ($existing === '') {
+            return $incoming;
+        }
+
+        if ($incoming === '') {
+            return $existing;
+        }
+
+        return $existing . PHP_EOL . $incoming;
+    }
 }
-
-
-}
-

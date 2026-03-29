@@ -92,7 +92,7 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
     public function saveBilling(Request $request): JsonResponse
     {           // Log full incoming request for debugging
 
-        Log::info("Request Data", ["request" => $request->all()]);
+        Log::info("Request Data for billing", ["request" => $request->all()]);
         Log::info('Billing finalization request received', [
             'method' => $request->method(),
             'url' => $request->fullUrl(),

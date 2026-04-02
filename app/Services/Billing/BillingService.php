@@ -29,7 +29,7 @@ class BillingService
         $this->processor = $processor;
     }
 
-    public function saveBilling(array $data, int $facilityId, int $staffId): array
+        public function saveBilling(array $data, int $facilityId, int $staffId): array
     {
         try {
             $visitVerification = $this->verifyVisit(
@@ -46,8 +46,55 @@ class BillingService
 
             $data['charge_items'] = $this->normalizeChargeItems($data['charge_items'] ?? []);
             $data['payment_methods'] = $this->normalizePaymentMethods($data['payment_methods'] ?? []);
-            $data['discount'] = $this->normalizeDiscount($data['discount'] ?? []);
             $data['taxes'] = $this->normalizeTaxDefinitions($data['taxes'] ?? []);
+
+            $billingEligibility = $this->canBeBilled($visit);
+            if (!$billingEligibility['success']) {
+                return $billingEligibility;
+            }
+
+            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
+            if (!$existingBillingCheck['success']) {
+                return $existingBillingCheck;
+            }
+
+            /** @var BillingCycle|null $existingEditableBillingCycle */
+            $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Resolve effective discount
+            |--------------------------------------------------------------------------
+            | Rules:
+            | - If discount is explicitly provided in request, use it and override existing.
+            | - If discount is omitted and an editable cycle already exists, preserve stored discount.
+            | - If discount is omitted and no editable cycle exists, default to no discount.
+            */
+            $discountWasProvided = array_key_exists('discount', $data);
+
+            $data['discount'] = $this->resolveEffectiveDiscount(
+                $discountWasProvided ? $data['discount'] : null,
+                $existingEditableBillingCycle,
+                $discountWasProvided
+            );
+
+            $authoritativeBillingData = $this->buildAuthoritativeBillingDataForSave(
+                $data['charge_items'],
+                $existingEditableBillingCycle,
+                $data['discount'],
+                $data['taxes']
+            );
+
+            if ($this->billingDataMismatch($data['billing_data'] ?? [], $authoritativeBillingData)) {
+                Log::warning('Frontend billing_data mismatch detected; backend authoritative totals applied.', [
+                    'visit_id' => $data['visit_id'] ?? null,
+                    'provided_billing_data' => $data['billing_data'] ?? [],
+                    'computed_billing_data' => $authoritativeBillingData,
+                ]);
+            }
+
+            $data['billing_data'] = array_merge($data['billing_data'] ?? [], $authoritativeBillingData);
+            $data['taxes'] = $authoritativeBillingData['taxes'];
 
             $data['submission_fingerprint'] = $this->buildBillingSubmissionFingerprint($data, $facilityId);
 
@@ -65,37 +112,6 @@ class BillingService
 
                 return $this->buildReplaySuccessResponse($replayedCycle);
             }
-
-            $billingEligibility = $this->canBeBilled($visit);
-            if (!$billingEligibility['success']) {
-                return $billingEligibility;
-            }
-
-            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
-            if (!$existingBillingCheck['success']) {
-                return $existingBillingCheck;
-            }
-
-            /** @var BillingCycle|null $existingEditableBillingCycle */
-            $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
-
-            $authoritativeBillingData = $this->buildAuthoritativeBillingDataForSave(
-                $data['charge_items'],
-                $existingEditableBillingCycle,
-                $data['discount'] ?? [],
-                $data['taxes'] ?? []
-            );
-
-            if ($this->billingDataMismatch($data['billing_data'] ?? [], $authoritativeBillingData)) {
-                Log::warning('Frontend billing_data mismatch detected; backend authoritative totals applied.', [
-                    'visit_id' => $data['visit_id'] ?? null,
-                    'provided_billing_data' => $data['billing_data'] ?? [],
-                    'computed_billing_data' => $authoritativeBillingData,
-                ]);
-            }
-
-            $data['billing_data'] = array_merge($data['billing_data'] ?? [], $authoritativeBillingData);
-            $data['taxes'] = $authoritativeBillingData['taxes'];
 
             $inventoryValidation = $this->validation->validateInventoryAvailability(
                 $data['charge_items'],
@@ -166,6 +182,8 @@ class BillingService
                 'balance' => $balance,
                 'is_fully_paid' => $isFullyPaid,
                 'was_existing_cycle_updated' => $wasExistingCycleUpdated,
+                'discount_was_provided' => $discountWasProvided,
+                'effective_discount' => $data['discount'],
             ]);
 
             return [
@@ -212,6 +230,58 @@ class BillingService
             ];
         }
     }
+
+    protected function resolveEffectiveDiscount(
+        $incomingDiscount,
+        ?BillingCycle $existingBillingCycle,
+        bool $discountWasProvided
+    ): array {
+        /*
+        |--------------------------------------------------------------------------
+        | Explicit discount sent by client
+        |--------------------------------------------------------------------------
+        | If frontend sends discount, it must override existing discount.
+        | This includes cases like:
+        | - discount = ['type' => 'fixed', 'value' => 500]
+        | - discount = ['type' => 'fixed', 'value' => 0]
+        | - discount = null   => treated as clearing discount
+        */
+        if ($discountWasProvided) {
+            return is_array($incomingDiscount)
+                ? $this->normalizeDiscount($incomingDiscount)
+                : $this->normalizeDiscount([]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Discount omitted during update
+        |--------------------------------------------------------------------------
+        | Preserve existing stored discount on editable billing cycle.
+        */
+        if ($existingBillingCycle) {
+            $metadata = $this->decodeJsonishToArray($existingBillingCycle->metadata ?? null);
+
+            $storedRule = is_array($metadata['discount_rule'] ?? null)
+                ? $metadata['discount_rule']
+                : [];
+
+            return [
+                'type' => in_array(($storedRule['type'] ?? null), ['percentage', 'fixed'], true)
+                    ? $storedRule['type']
+                    : 'fixed',
+                'value' => round((float) ($storedRule['value'] ?? $existingBillingCycle->discount_applied ?? 0), 2),
+                'reason' => $storedRule['reason'] ?? $existingBillingCycle->discount_reason,
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | New billing with no discount supplied
+        |--------------------------------------------------------------------------
+        */
+        return $this->normalizeDiscount([]);
+    }
+
 
     protected function buildReplaySuccessResponse(BillingCycle $billingCycle): array
     {

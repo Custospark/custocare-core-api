@@ -144,26 +144,30 @@ protected function respond(array $result, int $successStatus = 200): JsonRespons
             'visit_id' => 'required|integer|exists:visits,id',
             'patient_id' => 'required|integer|exists:patients,id',
 
-            'charge_items' => 'required|array|min:1',
-            'charge_items.*.service_key' => 'required|string',
-            'charge_items.*.service' => 'required|array',
-            'charge_items.*.service.id' => 'required|integer',
-            'charge_items.*.service.code' => 'required|string',
-            'charge_items.*.service.name' => 'required|string',
-            'charge_items.*.service.unitPrice' => 'required|numeric|min:0',
-            'charge_items.*.service.category' => 'required|string',
-            'charge_items.*.quantity' => 'required|numeric|min:0.01',
-            'charge_items.*.totalAmount' => 'required|numeric|min:0',
+            'charge_items' => 'nullable|array|min:0',
+            'charge_items.*.service_key' => 'required_with:charge_items|string',
+            'charge_items.*.service' => 'required_with:charge_items|array',
 
-            'discount' => 'required|array',
-            'discount.type' => 'required|in:percentage,fixed',
-            'discount.value' => 'required|numeric|min:0',
+            'charge_items.*.service.id' => 'required_with:charge_items|integer',
+            'charge_items.*.service.code' => 'required_with:charge_items|string',
+            'charge_items.*.service.name' => 'required_with:charge_items|string',
+            'charge_items.*.service.unitPrice' => 'required_with:charge_items|numeric|min:0',
+            'charge_items.*.service.category' => 'required_with:charge_items|string',
+
+            'charge_items.*.quantity' => 'required_with:charge_items|numeric|min:0.01',
+            'charge_items.*.totalAmount' => 'required_with:charge_items|numeric|min:0',
+
+            'discount' => 'nullable|array',
+
+            'discount.type' => 'required_with:discount|in:percentage,fixed',
+            'discount.value' => 'required_with:discount|numeric|min:0',
             'discount.reason' => 'nullable|string|max:255',
 
-            'taxes' => 'required|array',
-            'taxes.*.name' => 'required|string',
-            'taxes.*.rate' => 'required|numeric|min:0|max:100',
-            'taxes.*.amount' => 'required|numeric|min:0',
+           'taxes' => 'nullable|array|min:0',
+
+            'taxes.*.name' => 'required_with:taxes.*|string',
+            'taxes.*.rate' => 'required_with:taxes.*|numeric|min:0|max:100',
+            'taxes.*.amount' => 'required_with:taxes.*|numeric|min:0',
 
             'payment_methods' => 'nullable|array',
             'payment_methods.*.type' => 'required_with:payment_methods.*.amount|in:cash,card,insurance,mobile,mobile_money,bank_transfer,cheque,mixed,other',

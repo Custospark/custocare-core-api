@@ -7,48 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-/**
- * App\Models\InvoiceLineItem
- *
- * @property int $id
- * @property string $line_item_uuid
- * @property int $billing_cycle_id
- * @property int $visit_id
- * @property int $service_version_id
- * @property array $service_version_snapshot
- * @property string $service_code
- * @property string $service_description
- * @property float $quantity
- * @property string $unit_of_measure
- * @property float $unit_price_at_time
- * @property float $line_total_amount
- * @property float $applied_discount_percentage
- * @property float $discount_amount
- * @property float $adjustment_amount
- * @property string|null $adjustment_reason
- * @property float $net_amount
- * @property int|null $department_id
- * @property int|null $staff_performed_id
- * @property \Illuminate\Support\Carbon $service_performed_at
- * @property int|null $service_duration_minutes
- * @property array|null $diagnosis_codes
- * @property string|null $medical_necessity_notes
- * @property array|null $modifier_codes
- * @property string|null $revenue_code
- * @property string|null $procedure_code
- * @property array|null $insurance_specific_codes
- * @property string|null $preauthorization_number
- * @property bool $requires_review
- * @property bool $coding_reviewed
- * @property int|null $reviewed_by_staff_id
- * @property \Illuminate\Support\Carbon|null $reviewed_at
- * @property string $line_item_status
- * @property string $audit_trail_hash
- * @property int|null $created_by_staff_id
- * @property array|null $metadata
- * @property \Illuminate\Support\Carbon $created_at
- * @property \Illuminate\Support\Carbon $updated_at
- */
+ 
 class InvoiceLineItem extends Model
 {
     use HasFactory, SoftDeletes;
@@ -169,14 +128,7 @@ class InvoiceLineItem extends Model
             $model->audit_trail_hash = $model->generateAuditTrailHash();
         });
     }
-/**
- * Add to the net amount
- */
-public function addToNetAmount(float $amount): self
-{
-    $this->net_amount = round((float) $this->net_amount + $amount, 2);
-    return $this;
-}
+
     /**
      * Generate SHA-256 audit trail hash for tamper detection
      */
@@ -279,27 +231,6 @@ public function addToNetAmount(float $amount): self
         return $query->where('billing_cycle_id', $billingCycleId);
     }
 
-    /**
-     * Calculate net amount if not set
-     */
-    protected function netAmount(): Attribute
-    {
-        return Attribute::make(
-            get: function ($value) {
-                if ($value !== null) {
-                    return $value;
-                }
-
-                // Calculate net amount: line total - discount - adjustments
-                $lineTotal = $this->line_total_amount ?? ($this->quantity * $this->unit_price_at_time);
-                $discount = $this->discount_amount ?? 0;
-                $adjustment = $this->adjustment_amount ?? 0;
-
-                return max(0, $lineTotal - $discount - $adjustment);
-            },
-            set: fn ($value) => round($value, 2)
-        );
-    }
 
     /**
      * Check if line item is billable

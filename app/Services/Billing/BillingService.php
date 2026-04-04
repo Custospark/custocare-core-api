@@ -21,84 +21,110 @@ class BillingService
     protected BillingValidation $validation;
     protected BillingProcessor $processor;
 
-    public function __construct(
-        BillingValidation $validation,
-        BillingProcessor $processor
-    ) {
+    public function __construct(BillingValidation $validation, BillingProcessor $processor)
+    {
         $this->validation = $validation;
         $this->processor = $processor;
     }
 
-        public function saveBilling(array $data, int $facilityId, int $staffId): array
+    /**
+     * Save a billing submission.
+     *
+     * Design principles in this rewrite:
+     * - persisted billing cycle data is authoritative
+     * - discounts are owned by the billing cycle, never by line items
+     * - payments are derived from persisted cycle history + current request
+     * - balances, totals, and statuses are derived by determineBillingState()
+     */
+    public function saveBilling(array $data, int $facilityId, int $staffId): array
     {
-
         try {
             $visitVerification = $this->verifyVisit(
-                $data['visit_id'],
+                (int) $data['visit_id'],
                 $facilityId,
-                $data['patient_id']
+                (int) $data['patient_id']
             );
 
-            if (!$visitVerification['success']) {
+            if (empty($visitVerification['success'])) {
                 return $visitVerification;
             }
 
+            /** @var Visit $visit */
             $visit = $visitVerification['data'];
 
             $data['charge_items'] = $this->normalizeChargeItems($data['charge_items'] ?? []);
             $data['payment_methods'] = $this->normalizePaymentMethods($data['payment_methods'] ?? []);
             $data['taxes'] = $this->normalizeTaxDefinitions($data['taxes'] ?? []);
 
-            $billingEligibility = $this->canBeBilled($visit);
-            if (!$billingEligibility['success']) {
+            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
+            if (empty($existingBillingCheck['success'])) {
+                return $existingBillingCheck;
+            }
+
+            /** @var BillingCycle|null $existingEditableBillingCycle */
+            $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
+
+            $billingEligibility = $this->canBeBilled($visit, $existingEditableBillingCycle);
+            if (empty($billingEligibility['success'])) {
                 return $billingEligibility;
             }
 
-            $existingBillingCheck = $this->checkExistingBilling($visit->id, $facilityId);
-            if (!$existingBillingCheck['success']) {
-                return $existingBillingCheck;
-                }
-                
-                /** @var BillingCycle|null $existingEditableBillingCycle */
-                $existingEditableBillingCycle = $existingBillingCheck['data'] ?? null;
-                // dd($existingEditableBillingCycle);
+            if ($existingEditableBillingCycle === null && empty($data['charge_items'])) {
+                return [
+                    'success' => false,
+                    'message' => 'At least one charge item is required to create a billing cycle.',
+                    'errors' => ['charge_items' => ['No charge items were supplied for billing.']],
+                ];
+            }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Resolve effective discount
-            |--------------------------------------------------------------------------
-            | Rules:
-            | - If discount is explicitly provided in request, use it and override existing.
-            | - If discount is omitted and an editable cycle already exists, preserve stored discount.
-            | - If discount is omitted and no editable cycle exists, default to no discount.
-            */
             $discountWasProvided = array_key_exists('discount', $data);
+            $taxesWereProvided = array_key_exists('taxes', $data) && !empty($data['taxes']);
 
             $data['discount'] = $this->resolveEffectiveDiscount(
-                $discountWasProvided ? $data['discount'] : null,
+                $discountWasProvided ? ($data['discount'] ?? null) : null,
                 $existingEditableBillingCycle,
                 $discountWasProvided
             );
-            $authoritativeBillingData = $this->buildAuthoritativeBillingDataForSave(
+
+            $data['taxes'] = $this->resolveEffectiveTaxes(
+                $taxesWereProvided ? $data['taxes'] : null,
+                $existingEditableBillingCycle,
+                $taxesWereProvided
+            );
+
+            $paymentSplit = $this->calculatePaymentSplit(
+                $data['payment_methods'] ?? [],
+                (float) (($data['billing_data']['totalPaid'] ?? 0))
+            );
+
+            $authoritativeState = $this->buildAuthoritativeBillingDataForSave(
                 $data['charge_items'],
                 $existingEditableBillingCycle,
                 $data['discount'],
-                $data['taxes']
+                $data['taxes'],
+                $data['payment_methods'],
+                (string) ($data['status'] ?? 'ready')
             );
-            // dd($authoritativeBillingData);
-            if ($this->billingDataMismatch($data['billing_data'] ?? [], $authoritativeBillingData)) {
-                Log::warning('Frontend billing_data mismatch detected; backend authoritative totals applied.', [
+
+            if ($this->billingDataMismatch($data['billing_data'] ?? [], $authoritativeState)) {
+                Log::warning('Client billing_data mismatch detected. Backend state will be used.', [
                     'visit_id' => $data['visit_id'] ?? null,
-                    'provided_billing_data' => $data['billing_data'] ?? [],
-                    'computed_billing_data' => $authoritativeBillingData,
+                    'provided' => $data['billing_data'] ?? [],
+                    'computed' => $this->buildBillingDataFromState($authoritativeState),
                 ]);
             }
 
-            $data['billing_data'] = array_merge($data['billing_data'] ?? [], $authoritativeBillingData);
-            $data['taxes'] = $authoritativeBillingData['taxes'];
+            $data['billing_data'] = $this->buildBillingDataFromState($authoritativeState);
+            $data['payment_status'] = $authoritativeState['payment_status'];
+            $data['resolved_billing_status'] = $authoritativeState['billing_status'];
+            $data['resolved_ui_status'] = $authoritativeState['ui_status'];
+            $data['resolved_total_paid'] = $authoritativeState['total_paid'];
+            $data['resolved_balance'] = $authoritativeState['balance'];
+            $data['resolved_is_fully_paid'] = $authoritativeState['is_fully_paid'];
+            $data['resolved_patient_payment'] = $authoritativeState['patient_payment'];
+            $data['resolved_insurance_payment'] = $authoritativeState['insurance_payment'];
 
             $data['submission_fingerprint'] = $this->buildBillingSubmissionFingerprint($data, $facilityId);
-
             $replayedCycle = $this->findReplaySubmission(
                 (int) $data['visit_id'],
                 $facilityId,
@@ -106,7 +132,7 @@ class BillingService
             );
 
             if ($replayedCycle) {
-                Log::info('Idempotent replay detected for billing save', [
+                Log::info('Idempotent billing replay detected.', [
                     'visit_id' => $data['visit_id'],
                     'billing_cycle_id' => $replayedCycle->id,
                 ]);
@@ -119,33 +145,9 @@ class BillingService
                 $staffId
             );
 
-            if (!$inventoryValidation['success']) {
+            if (empty($inventoryValidation['success'])) {
                 return $inventoryValidation;
             }
-
-            $paymentSplit = $this->calculatePaymentSplit(
-                $data['payment_methods'] ?? [],
-                (float) ($data['billing_data']['totalPaid'] ?? 0)
-            );
-
-            $paymentState = $this->determineBillingState(
-                (float) ($data['billing_data']['grandTotal'] ?? 0),
-                (float) ($paymentSplit['total_paid'] ?? 0),
-                (string) ($data['status'] ?? 'ready'),
-                $existingEditableBillingCycle 
-            );
-            // dd($paymentState);
-            $data['payment_status'] = $paymentState['payment_status'];
-            $data['resolved_billing_status'] = $paymentState['billing_status'];
-            $data['resolved_ui_status'] = $paymentState['ui_status'];
-            $data['resolved_total_paid'] = $paymentState['total_paid'];
-            $data['resolved_balance'] = $paymentState['balance'];
-            $data['resolved_is_fully_paid'] = $paymentState['is_fully_paid'];
-
-            $data['billing_data']['totalPaid'] = $paymentState['total_paid'];
-            $data['billing_data']['balance'] = $paymentState['balance'];
-
-            $discountAmount = (float) ($data['billing_data']['discountAmount'] ?? 0);
 
             $largestPaymentMethod = collect($data['payment_methods'] ?? [])
                 ->sortByDesc('amount')
@@ -153,137 +155,134 @@ class BillingService
 
             $isPrimaryCash = ($largestPaymentMethod['type'] ?? null) === 'cash';
             $isInsuranceInvolved = $this->isInsuranceInvolved($data['payment_methods'] ?? []);
-            // dd($data);
+
             $result = $this->processor->processBillingTransaction(
                 $data,
                 $facilityId,
                 $staffId,
-                $discountAmount,
+                (float) ($authoritativeState['discount_amount'] ?? 0),
                 $paymentSplit,
                 $isPrimaryCash,
                 $isInsuranceInvolved,
                 $visit,
                 $existingEditableBillingCycle
             );
-            // dd($result);
-            $billingCycle = $result['billing_cycle']->fresh();
 
-            $grandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
-            $validatedTotalPaid = round((float) ($billingCycle->total_paid_amount ?? 0), 2);
-            $balance = round((float) ($billingCycle->balance_amount ?? max(0, $grandTotal - $validatedTotalPaid)), 2);
-            $isFullyPaid = abs($balance) < 0.01;
+            /** @var BillingCycle $billingCycle */
+            $billingCycle = $result['billing_cycle']->fresh(['lineItems']);
+            $finalState = $this->buildCycleStateSnapshot($billingCycle);
+            $wasExistingCycleUpdated = $existingEditableBillingCycle !== null;
 
-            $wasExistingCycleUpdated = !empty($existingEditableBillingCycle);
-
-            Log::info('Billing finalized successfully', [
-                'billing_cycle_id' => $billingCycle->id ?? null,
-                'visit_id' => $data['visit_id'] ?? null,
+            Log::info('Billing finalized successfully.', [
+                'billing_cycle_id' => $billingCycle->id,
+                'visit_id' => $visit->id,
+                'facility_id' => $facilityId,
                 'staff_id' => $staffId,
-                'grand_total' => $grandTotal,
-                'validated_total_paid' => $validatedTotalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => $isFullyPaid,
+                'grand_total' => $finalState['grand_total'],
+                'total_paid' => $finalState['total_paid'],
+                'balance' => $finalState['balance'],
+                'billing_status' => $finalState['billing_status'],
                 'was_existing_cycle_updated' => $wasExistingCycleUpdated,
-                'discount_was_provided' => $discountWasProvided,
-                'effective_discount' => $data['discount'],
             ]);
 
             return [
                 'success' => true,
-                'message' => $isFullyPaid
+                'message' => !empty($finalState['is_fully_paid'])
                     ? 'Payment successfully settled. Visit has been completed.'
                     : ($wasExistingCycleUpdated
-                        ? 'Existing billing cycle updated successfully. New values were added to the current bill.'
+                        ? 'Existing billing cycle updated successfully.'
                         : 'Billing saved successfully.'),
                 'data' => [
-                    'billing_cycle_id' => $billingCycle->id ?? null,
-                    'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid ?? null,
-                    'receipt_number' => 'REC-' . ($billingCycle->id ?? '0000'),
-                    'billing_status' => $billingCycle->billing_status ?? null,
-                    'net_amount' => $billingCycle->net_amount ?? 0,
-                    'total_paid' => $billingCycle->total_paid_amount ?? $validatedTotalPaid,
-                    'balance' => $billingCycle->balance_amount ?? $balance,
-                    'created_at' => isset($billingCycle->created_at)
-                        ? $billingCycle->created_at->toISOString()
-                        : now()->toISOString(),
-                    'line_items_count' => count($result['line_items'] ?? []),
+                    'billing_cycle_id' => $billingCycle->id,
+                    'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+                    'receipt_number' => 'REC-' . $billingCycle->id,
+                    'billing_status' => $billingCycle->billing_status,
+                    'net_amount' => round((float) ($billingCycle->net_amount ?? 0), 2),
+                    'total_paid' => round((float) ($billingCycle->total_paid_amount ?? 0), 2),
+                    'balance' => round((float) ($billingCycle->balance_amount ?? 0), 2),
+                    'created_at' => optional($billingCycle->created_at)->toISOString() ?? now()->toISOString(),
+                    'line_items_count' => $billingCycle->lineItems->count(),
                     'was_existing_cycle_updated' => $wasExistingCycleUpdated,
                     'idempotent_replay' => false,
                 ],
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to finalize billing', [
-                'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
+            Log::error('Billing save failed unexpectedly.', [
                 'visit_id' => $data['visit_id'] ?? null,
                 'patient_id' => $data['patient_id'] ?? null,
                 'facility_id' => $facilityId,
                 'staff_id' => $staffId,
+                'error_message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while submitting billing. Please try again or contact support if the issue persists.',
+                'message' => 'An unexpected error occurred while submitting billing. Please try again.',
                 'errors' => ['system' => ['Billing transaction failed. All changes have been rolled back.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }
 
+    /**
+     * Resolve the effective cycle-level discount rule.
+     */
     protected function resolveEffectiveDiscount(
         $incomingDiscount,
         ?BillingCycle $existingBillingCycle,
         bool $discountWasProvided
     ): array {
-        /*
-        |--------------------------------------------------------------------------
-        | Explicit discount sent by client
-        |--------------------------------------------------------------------------
-        | If frontend sends discount, it must override existing discount.
-        | This includes cases like:
-        | - discount = ['type' => 'fixed', 'value' => 500]
-        | - discount = ['type' => 'fixed', 'value' => 0]
-        | - discount = null   => treated as clearing discount
-        */
         if ($discountWasProvided) {
             return is_array($incomingDiscount)
                 ? $this->normalizeDiscount($incomingDiscount)
                 : $this->normalizeDiscount([]);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Discount omitted during update
-        |--------------------------------------------------------------------------
-        | Preserve existing stored discount on editable billing cycle.
-        */
         if ($existingBillingCycle) {
             $metadata = $this->decodeJsonishToArray($existingBillingCycle->metadata ?? null);
-
             $storedRule = is_array($metadata['discount_rule'] ?? null)
                 ? $metadata['discount_rule']
                 : [];
 
-            return [
-                'type' => in_array(($storedRule['type'] ?? null), ['percentage', 'fixed'], true)
-                    ? $storedRule['type']
-                    : 'fixed',
-                'value' => round((float) ($storedRule['value'] ?? $existingBillingCycle->discount_applied ?? 0), 2),
+            return $this->normalizeDiscount([
+                'type' => $storedRule['type'] ?? 'fixed',
+                'value' => $storedRule['value'] ?? $existingBillingCycle->discount_applied ?? 0,
                 'reason' => $storedRule['reason'] ?? $existingBillingCycle->discount_reason,
-            ];
+            ]);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | New billing with no discount supplied
-        |--------------------------------------------------------------------------
-        */
         return $this->normalizeDiscount([]);
     }
 
+    /**
+     * Resolve the effective tax definitions for the cycle.
+     */
+    protected function resolveEffectiveTaxes(
+        ?array $incomingTaxes,
+        ?BillingCycle $existingBillingCycle,
+        bool $taxesWereProvided
+    ): array {
+        if ($taxesWereProvided) {
+            return $this->normalizeTaxDefinitions($incomingTaxes ?? []);
+        }
+
+        if ($existingBillingCycle) {
+            $metadata = $this->decodeJsonishToArray($existingBillingCycle->metadata ?? null);
+            $storedTaxDefinitions = $metadata['tax_definitions'] ?? null;
+
+            if (is_array($storedTaxDefinitions) && !empty($storedTaxDefinitions)) {
+                return $this->normalizeTaxDefinitions($storedTaxDefinitions);
+            }
+
+            return $this->normalizeTaxDefinitions(
+                $this->decodeJsonishToArray($existingBillingCycle->tax_details ?? null)
+            );
+        }
+
+        return [];
+    }
 
     protected function buildReplaySuccessResponse(BillingCycle $billingCycle): array
     {
@@ -293,16 +292,14 @@ class BillingService
             'success' => true,
             'message' => 'Duplicate billing submission ignored. Existing billing record returned.',
             'data' => [
-                'billing_cycle_id' => $billingCycle->id ?? null,
-                'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid ?? null,
-                'receipt_number' => 'REC-' . ($billingCycle->id ?? '0000'),
-                'billing_status' => $billingCycle->billing_status ?? null,
-                'net_amount' => $billingCycle->net_amount ?? 0,
-                'total_paid' => $billingCycle->total_paid_amount ?? 0,
-                'balance' => $billingCycle->balance_amount ?? 0,
-                'created_at' => isset($billingCycle->created_at)
-                    ? $billingCycle->created_at->toISOString()
-                    : now()->toISOString(),
+                'billing_cycle_id' => $billingCycle->id,
+                'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+                'receipt_number' => 'REC-' . $billingCycle->id,
+                'billing_status' => $billingCycle->billing_status,
+                'net_amount' => round((float) ($billingCycle->net_amount ?? 0), 2),
+                'total_paid' => round((float) ($billingCycle->total_paid_amount ?? 0), 2),
+                'balance' => round((float) ($billingCycle->balance_amount ?? 0), 2),
+                'created_at' => optional($billingCycle->created_at)->toISOString() ?? now()->toISOString(),
                 'line_items_count' => $billingCycle->lineItems()->count(),
                 'was_existing_cycle_updated' => true,
                 'idempotent_replay' => true,
@@ -331,8 +328,7 @@ class BillingService
                 ->where('visit_id', $visitId)
                 ->where('facility_id', $facilityId)
                 ->with(['lineItems'])
-                ->orderByRaw("CASE WHEN billing_status IN ('paid_in_full', 'partially_paid') THEN 0 ELSE 1 END")
-                ->orderByDesc('created_at')
+                ->latest('id')
                 ->first();
 
             if (!$billingCycle) {
@@ -350,22 +346,20 @@ class BillingService
                         ],
                         'patient' => [
                             'id' => $visit->patient_id,
-                            'name' => $visit->patient->user->display_name ??
-                                "{$visit->patient->user->first_name} {$visit->patient->user->last_name}",
+                            'name' => $visit->patient?->user?->display_name
+                                ?: trim((string) ($visit->patient?->user?->first_name ?? '') . ' ' . (string) ($visit->patient?->user?->last_name ?? '')),
                         ],
                     ],
                 ];
             }
 
-            $billingData = $this->transformBillingData($billingCycle, $visit, $currentStaffId);
-
             return [
                 'success' => true,
                 'message' => 'Billing data retrieved successfully.',
-                'data' => $billingData,
+                'data' => $this->transformBillingData($billingCycle, $visit, $currentStaffId),
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to retrieve billing data', [
+            Log::error('Billing retrieval by visit failed.', [
                 'visit_id' => $visitId,
                 'facility_id' => $facilityId,
                 'error_message' => $e->getMessage(),
@@ -373,335 +367,90 @@ class BillingService
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support.',
+                'message' => 'An unexpected error occurred while retrieving billing data.',
                 'errors' => ['system' => ['Failed to retrieve billing information.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }
 
+    /**
+     * Transform persisted billing into the frontend billing shape.
+     *
+     * Retrieval reuses the same state engine so that read-side numbers stay in
+     * lockstep with save-side numbers.
+     */
     public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?int $currentStaffId = null): array
-{
-    $decodeJsonish = function ($value): array {
-        if (is_array($value)) {
-            return $value;
-        }
+    {
+        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
+        $lineItems = $billingCycle->relationLoaded('lineItems')
+            ? $billingCycle->lineItems
+            : $billingCycle->lineItems()->get();
 
-        if (is_string($value) && trim($value) !== '') {
-            $decoded = json_decode($value, true);
-            return is_array($decoded) ? $decoded : [];
-        }
+        $activeLineItems = $this->getActiveBillingCycleLineItems($billingCycle->setRelation('lineItems', $lineItems));
+        $state = $this->buildCycleStateSnapshot($billingCycle->setRelation('lineItems', $lineItems));
+        $billingData = $this->buildBillingDataFromState($state);
 
-        return [];
-    };
+        $paymentMethods = is_array($metadata['payment_methods'] ?? null)
+            ? $metadata['payment_methods']
+            : [];
+        $additionalNotes = isset($metadata['additional_notes'])
+            ? (string) $metadata['additional_notes']
+            : '';
 
-    $toIso = function ($date): ?string {
-        if (!$date) {
-            return null;
-        }
+        $discount = [
+            'type' => $state['discount_rule']['type'] ?? 'fixed',
+            'value' => ($state['discount_rule']['type'] ?? 'fixed') === 'percentage'
+                ? round((float) ($state['discount_rule']['value'] ?? 0), 2)
+                : round((float) ($state['discount_amount'] ?? 0), 2),
+            'reason' => $state['discount_rule']['reason'] ?? $billingCycle->discount_reason,
+        ];
 
-        if (is_object($date)) {
-            if (method_exists($date, 'toIso8601String')) {
-                return $date->toIso8601String();
-            }
-            if (method_exists($date, 'format')) {
-                return $date->format('c');
-            }
-        }
-
-        if (is_string($date) && trim($date) !== '') {
-            $ts = strtotime($date);
-            return $ts ? date(DATE_ATOM, $ts) : null;
-        }
-
-        return null;
-    };
-
-    $toEpochMs = function ($date): int {
-        if (!$date) {
-            return 0;
-        }
-
-        if (is_object($date) && method_exists($date, 'getTimestamp')) {
-            return (int) $date->getTimestamp() * 1000;
-        }
-
-        if (is_string($date) && trim($date) !== '') {
-            $ts = strtotime($date);
-            return $ts ? ((int) $ts * 1000) : 0;
-        }
-
-        return 0;
-    };
-
-    $resolveStaffDisplayName = function (?int $staffId): ?string {
-        if (!$staffId) {
-            return null;
-        }
-
-        $staff = Staff::query()->find($staffId);
-        if (!$staff) {
-            return null;
-        }
-
-        $user = User::query()->find($staff->user_id);
-        if (!$user) {
-            return null;
-        }
-
-        return trim(($user->last_name ?? '') . ' ' . ($user->first_name ?? '')) ?: $user->display_name;
-    };
-
-    $isActiveLineItem = function ($lineItem): bool {
-        $quantity = (float) ($lineItem->quantity ?? 0);
-        if ($quantity <= 0) {
-            return false;
-        }
-
-        $status = strtolower((string) ($lineItem->line_item_status ?? ''));
-        return !in_array($status, [
-            'removed',
-            'voided',
-            'cancelled',
-            'deleted',
-            'adjusted',
-        ], true);
-    };
-
-    $transformLineItem = function ($lineItem) use (
-        $decodeJsonish,
-        $currentStaffId,
-        $resolveStaffDisplayName,
-        $billingCycle
-    ) {
-        $serviceSnapshot = $decodeJsonish($lineItem->service_version_snapshot ?? null);
-        $lineMetadata = $decodeJsonish($lineItem->metadata ?? null);
-
-        $serviceCode = (string) ($lineItem->service_code ?? '');
-        $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : "key::unknown"));
-
-        $uuid = $lineItem->line_item_uuid ?? null;
-        $chargeId = $uuid ? "backend-charge::{$uuid}" : "backend-charge::{$lineItem->id}";
-
-        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
-            ?? $lineItem->created_by_staff_id
-            ?? $billingCycle->created_by_staff_id;
-
-        $enteredByStaffName = $resolveStaffDisplayName($enteredByStaffId);
-        $permissions = $this->buildLineItemEditPolicy(
-            $enteredByStaffId ? (int) $enteredByStaffId : null,
-            $currentStaffId
-        );
-
-        $quantity = round((float) ($lineItem->quantity ?? 0), 2);
-        $lineTotal = round((float) ($lineItem->line_total_amount ?? 0), 2);
+        $patientUser = $visit->patient?->user;
+        $patientName = $patientUser?->display_name
+            ?: trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
 
         return [
-            'id' => $chargeId,
-            'source' => 'backend',
-            'persisted' => true,
-            'line_item_id' => $lineItem->id,
-            'line_item_uuid' => $lineItem->line_item_uuid,
+            'has_billing' => true,
+            'visit_id' => $visit->id,
+            'visit_uuid' => $visit->visit_uuid,
+            'patient_id' => $visit->patient_id,
+            'patient_number' => Patient::query()->where('id', $visit->patient_id)->value('patient_uuid'),
+            'patient_name' => $patientName ?: 'Unknown',
             'billing_cycle_id' => $billingCycle->id,
-            'service_key' => $serviceKey,
-            'serviceKey' => $serviceKey,
-            'service' => [
-                'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
-                'code' => $serviceCode,
-                'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
-                'unitPrice' => round((float) ($lineItem->unit_price_at_time ?? 0), 2),
-                'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
-            ],
-            'quantity' => $quantity,
-            'totalAmount' => $lineTotal,
-            'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
-            'entered_by_staff_id' => $enteredByStaffId,
-            'entered_by_staff_name' => $enteredByStaffName,
-            'permissions' => $permissions,
-            'audit' => [
-                'originated_by_staff_id' => $enteredByStaffId,
-                'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
-                'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
-                'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
-                'adjustment_history' => $lineMetadata['adjustment_history'] ?? [],
+            'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
+            'receipt_number' => "REC-{$billingCycle->id}",
+            'billing_status' => (string) ($state['billing_status'] ?? $billingCycle->billing_status),
+            'attending_staff_id' => $billingCycle->created_by_staff_id,
+            'attending_staff_name' => $this->resolveStaffDisplayName($billingCycle->created_by_staff_id),
+            'attending_staff_role' => $this->resolveFacilityRoleCode($billingCycle->created_by_staff_id, $visit->facility_id),
+            'attending_staff_display' => $this->resolveAttendingStaffDisplay($billingCycle->created_by_staff_id, $visit->facility_id),
+            'charge_items' => $activeLineItems->map(function (InvoiceLineItem $lineItem) use ($billingCycle, $currentStaffId) {
+                return $this->transformLineItem($lineItem, $billingCycle, $currentStaffId);
+            })->values()->toArray(),
+            'discount' => $discount,
+            'taxes' => $billingData['taxes'],
+            'payment_methods' => $paymentMethods,
+            'additional_notes' => $additionalNotes,
+            'payment_status' => (string) ($state['payment_status'] ?? 'pending'),
+            'status' => (string) ($state['ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status)),
+            'billing_data' => $billingData,
+            'billed_at' => optional($billingCycle->billed_at)->toIso8601String(),
+            'created_at' => optional($billingCycle->created_at)->toIso8601String(),
+            'updated_at' => optional($billingCycle->updated_at)->toIso8601String(),
+            'last_updated' => optional($billingCycle->updated_at)->getTimestamp() ? optional($billingCycle->updated_at)->getTimestamp() * 1000 : 0,
+            'is_dirty' => false,
+            'is_processing' => false,
+            '_debug' => [
+                'discount_scope' => 'billing_cycle',
+                'stored_billing_status' => $billingCycle->billing_status,
+                'computed_billing_status' => $state['billing_status'] ?? null,
+                'total_line_items' => $lineItems->count(),
+                'active_line_items' => $activeLineItems->count(),
+                'filtered_out_count' => $lineItems->count() - $activeLineItems->count(),
             ],
         ];
-    };
-
-    $metadata = $decodeJsonish($billingCycle->metadata ?? null);
-    $paymentMethods = is_array($metadata['payment_methods'] ?? null) ? $metadata['payment_methods'] : [];
-    $additionalNotes = (string) ($metadata['additional_notes'] ?? '');
-
-    $storedTaxes = $decodeJsonish($billingCycle->tax_details ?? null);
-    $storedDiscountRule = is_array($metadata['discount_rule'] ?? null)
-        ? $metadata['discount_rule']
-        : [];
-
-    $lineItems = $billingCycle->lineItems ?? collect();
-    $activeLineItems = $lineItems->filter($isActiveLineItem)->values();
-    $chargeItems = $activeLineItems->map($transformLineItem)->values()->toArray();
-
-    /*
-    |--------------------------------------------------------------------------
-    | Cycle-level totals are authoritative
-    |--------------------------------------------------------------------------
-    | Subtotal can be safely derived from active line items.
-    | Discount MUST come from billing_cycle / metadata discount_rule, not line items.
-    */
-    $derivedSubtotal = round((float) $activeLineItems->sum(function ($lineItem) {
-        return (float) ($lineItem->line_total_amount ?? 0);
-    }), 2);
-
-    $subtotal = round((float) ($billingCycle->subtotal_amount ?? $derivedSubtotal), 2);
-
-    if (abs($subtotal - $derivedSubtotal) > 0.01) {
-        $subtotal = $derivedSubtotal;
     }
-
-    $discountType = in_array(($storedDiscountRule['type'] ?? null), ['percentage', 'fixed'], true)
-        ? $storedDiscountRule['type']
-        : 'fixed';
-
-    $discountRuleValue = round((float) ($storedDiscountRule['value'] ?? 0), 2);
-
-    $discountAmount = $discountType === 'percentage'
-        ? round($subtotal * ($discountRuleValue / 100), 2)
-        : round((float) ($billingCycle->discount_applied ?? $discountRuleValue), 2);
-
-    $discountAmount = round(min($subtotal, max(0, $discountAmount)), 2);
-
-    $taxableAmount = round(max(0, $subtotal - $discountAmount), 2);
-
-    $taxes = collect($storedTaxes)->map(function ($tax) use ($taxableAmount) {
-        $rate = round((float) ($tax['rate'] ?? 0), 2);
-
-        return [
-            'name' => (string) ($tax['name'] ?? 'Tax'),
-            'rate' => $rate,
-            'amount' => round($taxableAmount * ($rate / 100), 2),
-        ];
-    })->values()->toArray();
-
-    $taxTotal = round((float) collect($taxes)->sum('amount'), 2);
-    $grandTotal = round($taxableAmount + $taxTotal, 2);
-
-    $insurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
-    $patientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
-    $totalPaid = round((float) ($billingCycle->total_paid_amount ?? ($insurancePaid + $patientPaid)), 2);
-
-    $balance = round(max(0, $grandTotal - $totalPaid), 2);
-    $isPaid = abs($balance) < 0.01;
-
-    $discount = [
-        'type' => $discountType,
-        'value' => $discountType === 'percentage'
-            ? $discountRuleValue
-            : $discountAmount,
-        'reason' => $storedDiscountRule['reason'] ?? $billingCycle->discount_reason,
-    ];
-
-    $billingData = [
-        'subtotal'       => $subtotal,
-        'discountAmount' => $discountAmount,
-        'taxableAmount'  => $taxableAmount,
-        'taxes'          => $taxes,
-        'taxTotal'       => $taxTotal,
-        'grandTotal'     => $grandTotal,
-        'totalPaid'      => $totalPaid,
-        'balance'        => $balance,
-        'isPaid'         => $isPaid,
-    ];
-
-    $uiStatus = $this->mapBillingStatusToUI((string) $billingCycle->billing_status);
-
-    $patientUser = $visit->patient->user ?? null;
-    $patientName = null;
-
-    if ($patientUser) {
-        $patientName = $patientUser->display_name
-            ?? trim((string) ($patientUser->first_name ?? '') . ' ' . (string) ($patientUser->last_name ?? ''));
-    }
-
-    $attendingStaffName = null;
-    $attendingStaffRole = null;
-    $attendingStaffDisplay = null;
-
-    if ($billingCycle->created_by_staff_id) {
-        $staff = Staff::query()->find($billingCycle->created_by_staff_id);
-
-        if ($staff) {
-            $user = User::query()->find($staff->user_id);
-
-            if ($user) {
-                $attendingStaffName = $user->display_name
-                    ?? trim((string) ($user->first_name ?? '') . ' ' . (string) ($user->last_name ?? ''));
-            }
-
-            $facilityStaffRole = \App\Models\FacilityStaffRole::query()
-                ->where('staff_id', $staff->id)
-                ->where('facility_id', $visit->facility_id)
-                ->first();
-
-            if ($facilityStaffRole) {
-                $attendingStaffRole = $facilityStaffRole->role_code;
-                $formattedRole = ucwords(strtolower(str_replace(['_', '-'], ' ', (string) $attendingStaffRole)));
-                $attendingStaffDisplay = $attendingStaffName
-                    ? "{$attendingStaffName} ({$formattedRole})"
-                    : $formattedRole;
-            } else {
-                $attendingStaffDisplay = $attendingStaffName;
-            }
-        }
-    }
-
-    return [
-        'has_billing' => true,
-
-        'visit_id' => $visit->id,
-        'visit_uuid' => $visit->visit_uuid,
-        'patient_id' => $visit->patient_id,
-        'patient_number' => Patient::query()->where('id', $visit->patient_id)->value('patient_uuid'),
-        'patient_name' => $patientName ?: 'Unknown',
-
-        'billing_cycle_id' => $billingCycle->id,
-        'billing_status' => $billingCycle->billing_status,
-        'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
-        'receipt_number' => "REC-{$billingCycle->id}",
-
-        'attending_staff_id' => $billingCycle->created_by_staff_id,
-        'attending_staff_name' => $attendingStaffName,
-        'attending_staff_role' => $attendingStaffRole,
-        'attending_staff_display' => $attendingStaffDisplay,
-
-        'charge_items' => $chargeItems,
-        'discount' => $discount,
-        'taxes' => $taxes,
-        'payment_methods' => $paymentMethods,
-        'additional_notes' => $additionalNotes,
-        'payment_status' => in_array($billingCycle->billing_status, ['pending', 'partially_paid', 'paid_in_full'], true)
-            ? $billingCycle->billing_status
-            : Visit::query()->where('id', $visit->id)->value('payment_status'),
-        'status' => $uiStatus,
-
-        'billing_data' => $billingData,
-
-        'billed_at' => $toIso($billingCycle->billed_at ?? null),
-        'created_at' => $toIso($billingCycle->created_at ?? null),
-        'updated_at' => $toIso($billingCycle->updated_at ?? null),
-
-        'last_updated' => $toEpochMs($billingCycle->updated_at ?? null),
-        'is_dirty' => false,
-        'is_processing' => false,
-
-        '_debug' => [
-            'total_line_items' => $lineItems->count(),
-            'active_line_items' => $activeLineItems->count(),
-            'filtered_out_count' => $lineItems->count() - $activeLineItems->count(),
-            'discount_scope' => 'billing_cycle',
-        ],
-    ];
-}
-
 
     public function getBillingByFacility(
         int $facilityId,
@@ -715,18 +464,14 @@ class BillingService
                 ->where('facility_id', $facilityId)
                 ->withTrashed()
                 ->with([
-                    'visit' => fn($q) => $q->withTrashed(),
+                    'visit' => fn ($q) => $q->withTrashed(),
                     'visit.patient.user',
-                    'lineItems' => fn($q) => $q->withTrashed(),
+                    'lineItems' => fn ($q) => $q->withTrashed(),
                 ])
-                ->orderByDesc('created_at');
+                ->latest('id');
 
             if (!empty($filters['status'])) {
-                if (is_array($filters['status'])) {
-                    $query->whereIn('billing_status', $filters['status']);
-                } else {
-                    $query->where('billing_status', $filters['status']);
-                }
+                $query->where('billing_status', $filters['status']);
             }
 
             if (!empty($filters['date_from'])) {
@@ -742,22 +487,22 @@ class BillingService
             }
 
             if (!empty($filters['min_amount'])) {
-                $query->where('net_amount', '>=', (float) $filters['min_amount']);
+                $query->where('grand_total_amount', '>=', (float) $filters['min_amount']);
             }
 
             if (!empty($filters['max_amount'])) {
-                $query->where('net_amount', '<=', (float) $filters['max_amount']);
+                $query->where('grand_total_amount', '<=', (float) $filters['max_amount']);
             }
 
-            if (!empty($search)) {
+            if ($search !== '') {
                 $query->where(function ($q) use ($search) {
-                    $q->where('billing_cycle_uuid', 'LIKE', "%{$search}%")
-                        ->orWhere('id', 'LIKE', "%{$search}%")
-                        ->orWhere('visit_id', 'LIKE', "%{$search}%")
+                    $q->where('billing_cycle_uuid', 'like', "%{$search}%")
+                        ->orWhere('id', 'like', "%{$search}%")
+                        ->orWhere('visit_id', 'like', "%{$search}%")
                         ->orWhereHas('visit.patient.user', function ($userQuery) use ($search) {
-                            $userQuery->where('first_name', 'LIKE', "%{$search}%")
-                                ->orWhere('last_name', 'LIKE', "%{$search}%")
-                                ->orWhere('display_name', 'LIKE', "%{$search}%");
+                            $userQuery->where('first_name', 'like', "%{$search}%")
+                                ->orWhere('last_name', 'like', "%{$search}%")
+                                ->orWhere('display_name', 'like', "%{$search}%");
                         });
                 });
             }
@@ -765,44 +510,45 @@ class BillingService
             $total = $query->count();
             $billingCycles = $query->forPage($page, $perPage)->get();
 
-            $transformedData = $billingCycles->map(function ($billingCycle) {
-                $visit = $billingCycle->visit;
+            $items = $billingCycles
+                ->map(function (BillingCycle $billingCycle) {
+                    if (!$billingCycle->visit) {
+                        Log::warning('Billing cycle missing visit during facility listing.', [
+                            'billing_cycle_id' => $billingCycle->id,
+                        ]);
 
-                if (!$visit) {
-                    Log::warning('Billing cycle missing associated visit', [
-                        'billing_cycle_id' => $billingCycle->id,
-                    ]);
-                    return null;
-                }
+                        return null;
+                    }
 
-                return $this->transformBillingData($billingCycle, $visit);
-            })->filter()->values()->toArray();
+                    return $this->transformBillingData($billingCycle, $billingCycle->visit);
+                })
+                ->filter()
+                ->values()
+                ->toArray();
 
-            $totalPages = (int) ceil($total / $perPage);
-            $from = ($page - 1) * $perPage + 1;
-            $to = min($page * $perPage, $total);
+            $totalPages = $total > 0 ? (int) ceil($total / $perPage) : 0;
 
             return [
                 'success' => true,
                 'message' => 'Billing data retrieved successfully.',
                 'data' => [
-                    'items' => $transformedData,
+                    'items' => $items,
                     'pagination' => [
-                        'current_page' => (int) $page,
-                        'per_page' => (int) $perPage,
+                        'current_page' => $page,
+                        'per_page' => $perPage,
                         'total_items' => $total,
                         'total_pages' => $totalPages,
-                        'from' => $total > 0 ? $from : null,
-                        'to' => $total > 0 ? $to : null,
+                        'from' => $total > 0 ? (($page - 1) * $perPage) + 1 : null,
+                        'to' => $total > 0 ? min($page * $perPage, $total) : null,
                         'has_previous' => $page > 1,
                         'has_next' => $page < $totalPages,
                     ],
-                    'filters_applied' => array_filter($filters),
-                    'search_term' => $search ?: null,
+                    'filters_applied' => array_filter($filters, fn ($value) => $value !== null && $value !== ''),
+                    'search_term' => $search !== '' ? $search : null,
                 ],
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to retrieve facility billing data', [
+            Log::error('Facility billing retrieval failed.', [
                 'facility_id' => $facilityId,
                 'filters' => $filters,
                 'search' => $search,
@@ -811,7 +557,7 @@ class BillingService
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support.',
+                'message' => 'An unexpected error occurred while retrieving billing data.',
                 'errors' => ['system' => ['Failed to retrieve billing information.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
@@ -838,9 +584,8 @@ class BillingService
             $billingCycle = BillingCycle::query()
                 ->where('visit_id', $visitId)
                 ->where('facility_id', $facilityId)
-                ->with(['lineItems' => fn($q) => $q->withTrashed()])
-                ->orderByRaw("CASE WHEN billing_status IN ('pending', 'partially_paid') THEN 0 ELSE 1 END")
-                ->orderByDesc('created_at')
+                ->with(['lineItems' => fn ($q) => $q->withTrashed()])
+                ->latest('id')
                 ->first();
 
             if (!$billingCycle) {
@@ -867,13 +612,11 @@ class BillingService
                 ];
             }
 
-            $transformedCycle = $this->transformBillingData($billingCycle, $visit, $currentStaffId);
-
             return [
                 'success' => true,
                 'message' => 'Billing data retrieved successfully.',
                 'data' => [
-                    'items' => [$transformedCycle],
+                    'items' => [$this->transformBillingData($billingCycle, $visit, $currentStaffId)],
                     'pagination' => [
                         'current_page' => 1,
                         'per_page' => 1,
@@ -889,7 +632,7 @@ class BillingService
                 ],
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to retrieve billing data (facility format)', [
+            Log::error('Billing retrieval by visit/facility shape failed.', [
                 'visit_id' => $visitId,
                 'facility_id' => $facilityId,
                 'error_message' => $e->getMessage(),
@@ -897,7 +640,7 @@ class BillingService
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while retrieving billing data. Please try again or contact support.',
+                'message' => 'An unexpected error occurred while retrieving billing data.',
                 'errors' => ['system' => ['Failed to retrieve billing information.']],
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
@@ -917,21 +660,18 @@ class BillingService
                 $query->whereDate('created_at', '<=', $filters['date_to']);
             }
 
-            $statusTotals = $query->selectRaw('
-                billing_status,
-                COUNT(*) as count,
-                SUM(net_amount) as total_amount,
-                SUM(patient_payment_received) as total_patient_paid,
-                SUM(insurance_payment_received) as total_insurance_paid
-            ')->groupBy('billing_status')->get();
+            $statusTotals = (clone $query)
+                ->selectRaw('billing_status, COUNT(*) as count, SUM(grand_total_amount) as total_amount, SUM(patient_payment_received) as total_patient_paid, SUM(insurance_payment_received) as total_insurance_paid, SUM(discount_applied) as total_discount')
+                ->groupBy('billing_status')
+                ->get();
 
             $statistics = [
-                'total_billing_cycles' => $query->count(),
-                'total_revenue' => $query->sum('net_amount'),
-                'total_patient_payments' => $query->sum('patient_payment_received'),
-                'total_insurance_payments' => $query->sum('insurance_payment_received'),
-                'total_discounts_applied' => $query->sum('discount_applied'),
-                'average_cycle_amount' => $query->avg('net_amount') ?? 0,
+                'total_billing_cycles' => (clone $query)->count(),
+                'total_revenue' => round((float) (clone $query)->sum('grand_total_amount'), 2),
+                'total_patient_payments' => round((float) (clone $query)->sum('patient_payment_received'), 2),
+                'total_insurance_payments' => round((float) (clone $query)->sum('insurance_payment_received'), 2),
+                'total_discounts_applied' => round((float) (clone $query)->sum('discount_applied'), 2),
+                'average_cycle_amount' => round((float) ((clone $query)->avg('grand_total_amount') ?? 0), 2),
                 'by_status' => [],
             ];
 
@@ -941,18 +681,19 @@ class BillingService
                 if (!isset($statistics['by_status'][$uiStatus])) {
                     $statistics['by_status'][$uiStatus] = [
                         'count' => 0,
-                        'total_amount' => 0,
+                        'total_amount' => 0.00,
                         'breakdown' => [],
                     ];
                 }
 
-                $statistics['by_status'][$uiStatus]['count'] += $statusTotal->count;
-                $statistics['by_status'][$uiStatus]['total_amount'] += $statusTotal->total_amount;
+                $statistics['by_status'][$uiStatus]['count'] += (int) $statusTotal->count;
+                $statistics['by_status'][$uiStatus]['total_amount'] += round((float) $statusTotal->total_amount, 2);
                 $statistics['by_status'][$uiStatus]['breakdown'][$statusTotal->billing_status] = [
-                    'count' => $statusTotal->count,
-                    'total_amount' => $statusTotal->total_amount,
-                    'patient_paid' => $statusTotal->total_patient_paid,
-                    'insurance_paid' => $statusTotal->total_insurance_paid,
+                    'count' => (int) $statusTotal->count,
+                    'total_amount' => round((float) $statusTotal->total_amount, 2),
+                    'patient_paid' => round((float) $statusTotal->total_patient_paid, 2),
+                    'insurance_paid' => round((float) $statusTotal->total_insurance_paid, 2),
+                    'discount_applied' => round((float) $statusTotal->total_discount, 2),
                 ];
             }
 
@@ -962,7 +703,7 @@ class BillingService
                 'data' => $statistics,
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to retrieve billing statistics', [
+            Log::error('Billing statistics retrieval failed.', [
                 'facility_id' => $facilityId,
                 'filters' => $filters,
                 'error_message' => $e->getMessage(),
@@ -972,6 +713,50 @@ class BillingService
                 'success' => false,
                 'message' => 'Failed to retrieve billing statistics.',
                 'errors' => ['system' => [$e->getMessage()]],
+            ];
+        }
+    }
+
+    public function getBillingByPatient(int $patientId, int $facilityId, ?int $currentStaffId = null): array
+    {
+        try {
+            $billingCycles = BillingCycle::query()
+                ->where('facility_id', $facilityId)
+                ->where('patient_id', $patientId)
+                ->with(['visit.patient.user', 'lineItems'])
+                ->latest('id')
+                ->get();
+
+            if ($billingCycles->isEmpty()) {
+                return [
+                    'success' => true,
+                    'message' => 'No billing records found for this patient.',
+                    'data' => [],
+                ];
+            }
+
+            $items = $billingCycles
+                ->filter(fn (BillingCycle $cycle) => $cycle->visit !== null)
+                ->map(fn (BillingCycle $cycle) => $this->transformBillingData($cycle, $cycle->visit, $currentStaffId))
+                ->values()
+                ->toArray();
+
+            return [
+                'success' => true,
+                'message' => 'Patient billing data retrieved successfully.',
+                'data' => $items,
+            ];
+        } catch (Throwable $e) {
+            Log::error('Patient billing retrieval failed.', [
+                'patient_id' => $patientId,
+                'facility_id' => $facilityId,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to retrieve patient billing data.',
+                'errors' => ['system' => ['Failed to retrieve patient billing information.']],
             ];
         }
     }
@@ -995,7 +780,7 @@ class BillingService
             }
 
             $action = (string) ($data['action'] ?? '');
-            $quantity = (float) ($data['quantity'] ?? 1);
+            $quantity = round((float) ($data['quantity'] ?? 1), 2);
             $reason = trim((string) ($data['reason'] ?? ''));
 
             if (!in_array($action, ['increase', 'decrease', 'remove'], true)) {
@@ -1015,8 +800,7 @@ class BillingService
             }
 
             $lineMetadata = $this->decodeJsonishToArray($lineItem->metadata ?? null);
-            $enteredByStaffId = $lineMetadata['originated_by_staff_id']
-                ?? $lineItem->created_by_staff_id;
+            $enteredByStaffId = $lineMetadata['originated_by_staff_id'] ?? $lineItem->created_by_staff_id;
 
             if ($this->shouldRequireCrossStaffReason($enteredByStaffId, $staffId) && $reason === '') {
                 return [
@@ -1034,10 +818,10 @@ class BillingService
                             'name' => $lineItem->service_description,
                         ],
                         'quantity' => $quantity,
-                    ]
+                    ],
                 ], $staffId);
 
-                if (!$inventoryValidation['success']) {
+                if (empty($inventoryValidation['success'])) {
                     return $inventoryValidation;
                 }
             }
@@ -1054,17 +838,17 @@ class BillingService
                 'success' => true,
                 'message' => 'Billing line item adjusted successfully.',
                 'data' => [
-                    'billing_cycle_id' => $result['billing_cycle']->id ?? null,
-                    'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid ?? null,
-                    'line_item_id' => $result['line_item']->id ?? null,
-                    'line_item_uuid' => $result['line_item']->line_item_uuid ?? null,
-                    'billing_status' => $result['billing_cycle']->billing_status ?? null,
-                    'total_paid' => $result['billing_cycle']->total_paid_amount ?? 0,
-                    'balance' => $result['billing_cycle']->balance_amount ?? 0,
+                    'billing_cycle_id' => $result['billing_cycle']->id,
+                    'billing_cycle_uuid' => $result['billing_cycle']->billing_cycle_uuid,
+                    'line_item_id' => $result['line_item']->id,
+                    'line_item_uuid' => $result['line_item']->line_item_uuid,
+                    'billing_status' => $result['billing_cycle']->billing_status,
+                    'total_paid' => round((float) ($result['billing_cycle']->total_paid_amount ?? 0), 2),
+                    'balance' => round((float) ($result['billing_cycle']->balance_amount ?? 0), 2),
                 ],
             ];
         } catch (Throwable $e) {
-            Log::error('Failed to adjust billing line item', [
+            Log::error('Billing line item adjustment failed.', [
                 'line_item_id' => $lineItemId,
                 'facility_id' => $facilityId,
                 'staff_id' => $staffId,
@@ -1102,17 +886,127 @@ class BillingService
         ];
     }
 
-    public function decodeJsonishToArray($value): array
+    /**
+     * Build a read-side cycle state snapshot from stored data + active line items.
+     */
+    protected function buildCycleStateSnapshot(BillingCycle $billingCycle): array
     {
-        if (is_array($value)) {
-            return $value;
+        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
+        $discountRule = is_array($metadata['discount_rule'] ?? null)
+            ? $metadata['discount_rule']
+            : [
+                'type' => 'fixed',
+                'value' => $billingCycle->discount_applied ?? 0,
+                'reason' => $billingCycle->discount_reason,
+            ];
+
+        $taxDefinitions = is_array($metadata['tax_definitions'] ?? null) && !empty($metadata['tax_definitions'])
+            ? $metadata['tax_definitions']
+            : $this->decodeJsonishToArray($billingCycle->tax_details ?? null);
+
+        $requestedUiStatus = (string) ($metadata['frontend_ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status));
+        $subtotal = $this->getActiveBillingCycleSubtotal($billingCycle);
+
+        return $this->determineBillingState(
+            $subtotal,
+            $discountRule,
+            $taxDefinitions,
+            [
+                'patient_payment' => 0,
+                'insurance_payment' => 0,
+                'total_paid' => 0,
+            ],
+            $requestedUiStatus,
+            $billingCycle
+        );
+    }
+
+    protected function transformLineItem(InvoiceLineItem $lineItem, BillingCycle $billingCycle, ?int $currentStaffId = null): array
+    {
+        $serviceSnapshot = $this->decodeJsonishToArray($lineItem->service_version_snapshot ?? null);
+        $lineMetadata = $this->decodeJsonishToArray($lineItem->metadata ?? null);
+
+        $serviceCode = (string) ($lineItem->service_code ?? '');
+        $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : 'key::unknown'));
+        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
+            ?? $lineItem->created_by_staff_id
+            ?? $billingCycle->created_by_staff_id;
+
+        return [
+            'id' => $lineItem->line_item_uuid ? 'backend-charge::' . $lineItem->line_item_uuid : 'backend-charge::' . $lineItem->id,
+            'source' => 'backend',
+            'persisted' => true,
+            'line_item_id' => $lineItem->id,
+            'line_item_uuid' => $lineItem->line_item_uuid,
+            'billing_cycle_id' => $billingCycle->id,
+            'service_key' => $serviceKey,
+            'serviceKey' => $serviceKey,
+            'service' => [
+                'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
+                'code' => $serviceCode,
+                'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
+                'unitPrice' => round((float) ($lineItem->unit_price_at_time ?? 0), 2),
+                'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
+            ],
+            'quantity' => round((float) ($lineItem->quantity ?? 0), 2),
+            'totalAmount' => round((float) ($lineItem->line_total_amount ?? 0), 2),
+            'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
+            'entered_by_staff_id' => $enteredByStaffId,
+            'entered_by_staff_name' => $this->resolveStaffDisplayName($enteredByStaffId),
+            'permissions' => $this->buildLineItemEditPolicy($enteredByStaffId ? (int) $enteredByStaffId : null, $currentStaffId),
+            'audit' => [
+                'originated_by_staff_id' => $enteredByStaffId,
+                'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
+                'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
+                'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
+                'adjustment_history' => $lineMetadata['adjustment_history'] ?? [],
+                'discount_scope' => 'billing_cycle',
+            ],
+        ];
+    }
+
+    protected function resolveStaffDisplayName(?int $staffId): ?string
+    {
+        if (!$staffId) {
+            return null;
         }
 
-        if (is_string($value) && trim($value) !== '') {
-            $decoded = json_decode($value, true);
-            return is_array($decoded) ? $decoded : [];
+        $staff = Staff::query()->find($staffId);
+        if (!$staff) {
+            return null;
         }
 
-        return [];
+        $user = User::query()->find($staff->user_id);
+        if (!$user) {
+            return null;
+        }
+
+        return trim((string) ($user->display_name ?: (($user->first_name ?? '') . ' ' . ($user->last_name ?? ''))));
+    }
+
+    protected function resolveFacilityRoleCode(?int $staffId, int $facilityId): ?string
+    {
+        if (!$staffId) {
+            return null;
+        }
+
+        return \App\Models\FacilityStaffRole::query()
+            ->where('staff_id', $staffId)
+            ->where('facility_id', $facilityId)
+            ->value('role_code');
+    }
+
+    protected function resolveAttendingStaffDisplay(?int $staffId, int $facilityId): ?string
+    {
+        $name = $this->resolveStaffDisplayName($staffId);
+        $role = $this->resolveFacilityRoleCode($staffId, $facilityId);
+
+        if (!$role) {
+            return $name;
+        }
+
+        $formattedRole = ucwords(strtolower(str_replace(['_', '-'], ' ', $role)));
+
+        return $name ? "{$name} ({$formattedRole})" : $formattedRole;
     }
 }

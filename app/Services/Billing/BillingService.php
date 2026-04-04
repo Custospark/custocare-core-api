@@ -203,7 +203,7 @@ class BillingService
                     'created_at' => optional($billingCycle->created_at)->toISOString() ?? now()->toISOString(),
                     'line_items_count' => $billingCycle->lineItems->count(),
                     'was_existing_cycle_updated' => $wasExistingCycleUpdated,
-                    'idempotent_replay' => false,
+                    'idempotent_replay' => false,~~
                 ],
             ];
         } catch (Throwable $e) {

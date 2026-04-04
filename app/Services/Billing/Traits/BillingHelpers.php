@@ -128,7 +128,7 @@ trait BillingHelpers
                 'is_fully_paid' => true,
                 'billing_status' => 'paid_in_full',
                 'payment_status' => 'paid_in_full',
-                'ui_status' => 'settled',
+                'ui_status' => 'ready',
             ];
         }
 

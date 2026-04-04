@@ -267,6 +267,7 @@ class BillingController extends Controller
      */
     public function getByVisit(Request $request, int $visitId): JsonResponse
     {
+        Log::info("Billing fetch request received");
         $facilityId = $this->resolveFacilityId($request);
 
         if ($facilityId <= 0) {

@@ -40,47 +40,80 @@ trait BillingHelpers
         ];
     }
 
-    public function determineBillingState(
-        float $grandTotal,
-        float $totalPaid,
-        string $requestedUiStatus = 'ready'
-    ): array {
-        $grandTotal = round(max(0, $grandTotal), 2);
-        $totalPaid = round(max(0, $totalPaid), 2);
-        $balance = round(max(0, $grandTotal - $totalPaid), 2);
-        $isFullyPaid = abs($balance) < 0.01;
+protected function determineBillingState(
+    float $grandTotal,
+    float $incomingTotalPaid,
+    string $requestedUiStatus = 'ready',
+    ?BillingCycle $existingBillingCycle = null
+): array {
+    // Debug incoming request
+    // dd([
+    //     'debug' => 'determineBillingState called',
+    //     'incoming_params' => [
+    //         'grandTotal' => $grandTotal,
+    //         'incomingTotalPaid' => $incomingTotalPaid,
+    //         'requestedUiStatus' => $requestedUiStatus,
+    //         'has_existing_billing_cycle' => $existingBillingCycle !== null,
+    //     ],
+    //     'existing_billing_cycle_data' => $existingBillingCycle ? [
+    //         'id' => $existingBillingCycle->id,
+    //         'total_paid_amount' => $existingBillingCycle->total_paid_amount,
+    //         'balance_amount' => $existingBillingCycle->balance_amount,
+    //         'billing_status' => $existingBillingCycle->billing_status,
+    //         'grand_total_amount' => $existingBillingCycle->grand_total_amount ?? $existingBillingCycle->net_amount,
+    //     ] : null,
+    // ]);
 
-        if ($isFullyPaid) {
-            return [
-                'billing_status' => 'paid_in_full',
-                'payment_status' => 'paid_in_full',
-                'ui_status' => 'settled',
-                'total_paid' => $totalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => true,
-            ];
-        }
+    $grandTotal = round(max(0, $grandTotal), 2);
+    
+    // Calculate total paid including existing payments
+    $existingTotalPaid = 0.00;
+    if ($existingBillingCycle) {
+        $existingTotalPaid = round(max(0, (float) ($existingBillingCycle->total_paid_amount ?? 0)), 2);
+    }
+    
+    // Total paid = existing payments + new payment from request
+    $totalPaid = round($existingTotalPaid + max(0, $incomingTotalPaid), 2);
+    $balance = round(max(0, $grandTotal - $totalPaid), 2);
+    $isFullyPaid = abs($balance) < 0.01;
 
-        if ($totalPaid > 0) {
-            return [
-                'billing_status' => 'partially_paid',
-                'payment_status' => 'partially_paid',
-                'ui_status' => 'ready',
-                'total_paid' => $totalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => false,
-            ];
-        }
-
+    if ($isFullyPaid) {
         return [
-            'billing_status' => 'pending',
-            'payment_status' => 'pending',
-            'ui_status' => $requestedUiStatus === 'draft' ? 'draft' : 'ready',
-            'total_paid' => 0.00,
+            'billing_status' => 'paid_in_full',
+            'payment_status' => 'paid_in_full',
+            'ui_status' => 'settled',
+            'total_paid' => $totalPaid,
             'balance' => $balance,
-            'is_fully_paid' => false,
+            'is_fully_paid' => true,
+            'existing_paid' => $existingTotalPaid,
+            'new_paid' => $incomingTotalPaid,
         ];
     }
+
+    if ($totalPaid > 0) {
+        return [
+            'billing_status' => 'partially_paid',
+            'payment_status' => 'partially_paid',
+            'ui_status' => 'ready',
+            'total_paid' => $totalPaid,
+            'balance' => $balance,
+            'is_fully_paid' => false,
+            'existing_paid' => $existingTotalPaid,
+            'new_paid' => $incomingTotalPaid,
+        ];
+    }
+
+    return [
+        'billing_status' => 'pending',
+        'payment_status' => 'pending',
+        'ui_status' => $requestedUiStatus === 'draft' ? 'draft' : 'ready',
+        'total_paid' => 0.00,
+        'balance' => $balance,
+        'is_fully_paid' => false,
+        'existing_paid' => 0.00,
+        'new_paid' => 0.00,
+    ];
+}
 
     public function checkExistingBilling(int $visitId, int $facilityId): array
     {
@@ -365,50 +398,70 @@ trait BillingHelpers
             }), 2);
     }
 
-    public function buildAuthoritativeBillingDataForSave(
-        array $incomingChargeItems,
-        ?BillingCycle $existingBillingCycle,
-        array $discount = [],
-        array $taxes = []
-    ): array {
-        $incomingSubtotal = round((float) collect($incomingChargeItems)->sum(function ($item) {
-            return (float) ($item['totalAmount'] ?? 0);
-        }), 2);
+   protected function buildAuthoritativeBillingDataForSave(
+    array $incomingChargeItems,
+    ?BillingCycle $existingBillingCycle,
+    array $discount = [],
+    array $taxes = []
+): array {
+    // Calculate incoming subtotal from new charge items
+    $incomingSubtotal = round((float) collect($incomingChargeItems)->sum(function ($item) {
+        return (float) ($item['totalAmount'] ?? 0);
+    }), 2);
 
-        $persistedSubtotal = $this->getActiveBillingCycleSubtotal($existingBillingCycle);
-        $combinedSubtotal = round($persistedSubtotal + $incomingSubtotal, 2);
+    // Get existing subtotal from persisted line items
+    $persistedSubtotal = $this->getActiveBillingCycleSubtotal($existingBillingCycle);
+    
+    // Combined subtotal (existing + new)
+    $combinedSubtotal = round($persistedSubtotal + $incomingSubtotal, 2);
 
-        $discount = $this->normalizeDiscount($discount);
-        $normalizedTaxes = $this->normalizeTaxDefinitions($taxes);
+    // Normalize discount and taxes from current request
+    $discount = $this->normalizeDiscount($discount);
+    $normalizedTaxes = $this->normalizeTaxDefinitions($taxes);
 
-        $discountAmount = $this->calculateDiscountAmount(
-            $discount['type'],
-            (float) $discount['value'],
-            $combinedSubtotal
-        );
+    // Calculate discount amount based on CURRENT discount rules
+    $discountAmount = $this->calculateDiscountAmount(
+        $discount['type'],
+        (float) $discount['value'],
+        $combinedSubtotal
+    );
 
-        $taxableAmount = round(max(0, $combinedSubtotal - $discountAmount), 2);
+    // Calculate taxable amount after discount
+    $taxableAmount = round(max(0, $combinedSubtotal - $discountAmount), 2);
 
-        $computedTaxes = collect($normalizedTaxes)->map(function ($tax) use ($taxableAmount) {
-            return [
-                'name' => $tax['name'],
-                'rate' => $tax['rate'],
-                'amount' => round($taxableAmount * ($tax['rate'] / 100), 2),
-            ];
-        })->values()->all();
-
-        $taxTotal = round((float) collect($computedTaxes)->sum('amount'), 2);
-        $grandTotal = round($taxableAmount + $taxTotal, 2);
-
+    // Calculate taxes based on taxable amount
+    $computedTaxes = collect($normalizedTaxes)->map(function ($tax) use ($taxableAmount) {
         return [
-            'subtotal' => $combinedSubtotal,
-            'discountAmount' => $discountAmount,
-            'taxableAmount' => $taxableAmount,
-            'taxes' => $computedTaxes,
-            'taxTotal' => $taxTotal,
-            'grandTotal' => $grandTotal,
+            'name' => $tax['name'],
+            'rate' => $tax['rate'],
+            'amount' => round($taxableAmount * ($tax['rate'] / 100), 2),
         ];
-    }
+    })->values()->all();
+
+    $taxTotal = round((float) collect($computedTaxes)->sum('amount'), 2);
+    $grandTotal = round($taxableAmount + $taxTotal, 2);
+
+    Log::info('Authoritative billing data computed', [
+        'persisted_subtotal' => $persistedSubtotal,
+        'incoming_subtotal' => $incomingSubtotal,
+        'combined_subtotal' => $combinedSubtotal,
+        'discount_type' => $discount['type'],
+        'discount_value' => $discount['value'],
+        'discount_amount' => $discountAmount,
+        'taxable_amount' => $taxableAmount,
+        'tax_total' => $taxTotal,
+        'grand_total' => $grandTotal,
+    ]);
+
+    return [
+        'subtotal' => $combinedSubtotal,
+        'discountAmount' => $discountAmount,
+        'taxableAmount' => $taxableAmount,
+        'taxes' => $computedTaxes,
+        'taxTotal' => $taxTotal,
+        'grandTotal' => $grandTotal,
+    ];
+}
 
     public function billingDataMismatch(array $provided, array $computed): bool
     {

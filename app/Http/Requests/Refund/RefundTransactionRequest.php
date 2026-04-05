@@ -12,8 +12,6 @@ class RefundTransactionRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // You can add authorization logic here
-        // For example: return $this->user()->can('process-refund');
         return true;
     }
 
@@ -41,16 +39,10 @@ class RefundTransactionRequest extends FormRequest
 
             // Line items - omit entirely for full refund
             'line_items' => 'nullable|array|min:1',
-            'service_code' => 'nullable|string',
-            'line_items.*.line_item_id' => [
-                'required_with:line_items',
-                'integer',            ],
-            'line_items.*.refund_amount' => [
-                'nullable',
-                'numeric',
-                'min:0',
-                // Custom validation might be added later to ensure not exceeding original amount
-            ],
+            'line_items.*.line_item_id' => 'required_with:line_items|integer',
+            'line_items.*.service_code' => 'required_with:line_items|string|max:50',  // ADD THIS
+            'line_items.*.refund_amount' => 'nullable|numeric|min:0',
+            'line_items.*.quantity' => 'nullable|numeric|min:0',  // ADD THIS
 
             // Refund methods
             'refund_methods' => 'required|array|min:1',
@@ -80,9 +72,12 @@ class RefundTransactionRequest extends FormRequest
             
             'line_items.min' => 'At least one line item must be selected for partial refund.',
             'line_items.*.line_item_id.required_with' => 'Line item ID is required for each refund item.',
-            'line_items.*.line_item_id.exists' => 'Selected line item does not exist.',
+            'line_items.*.service_code.required_with' => 'Service code is required for each refund item.',  // ADD THIS
+            'line_items.*.service_code.string' => 'Service code must be a string.',
             'line_items.*.refund_amount.numeric' => 'Refund amount must be a number.',
             'line_items.*.refund_amount.min' => 'Refund amount cannot be negative.',
+            'line_items.*.quantity.numeric' => 'Quantity must be a number.',
+            'line_items.*.quantity.min' => 'Quantity cannot be negative.',
             
             'refund_methods.required' => 'At least one refund method is required.',
             'refund_methods.min' => 'At least one refund method must be provided.',
@@ -119,7 +114,9 @@ class RefundTransactionRequest extends FormRequest
             'reason_notes' => 'reason notes',
             'line_items' => 'line items',
             'line_items.*.line_item_id' => 'line item ID',
+            'line_items.*.service_code' => 'service code',  // ADD THIS
             'line_items.*.refund_amount' => 'refund amount',
+            'line_items.*.quantity' => 'quantity',  // ADD THIS
             'refund_methods' => 'refund methods',
             'refund_methods.*.type' => 'refund method type',
             'refund_methods.*.amount' => 'refund method amount',
@@ -134,6 +131,5 @@ class RefundTransactionRequest extends FormRequest
     protected function passedValidation(): void
     {
         // You can manipulate the validated data here if needed
-        // For example, calculate total refund amount or format data
     }
 }

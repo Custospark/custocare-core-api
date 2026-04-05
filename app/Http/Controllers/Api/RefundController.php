@@ -71,6 +71,7 @@ class RefundController extends Controller
      */
     public function refundTransaction(RefundTransactionRequest $request, int $billingCycleId): JsonResponse
     {
+        Log::info($request);
         try {
             [$facilityId, $staffId, $headerError] = $this->extractHeaders($request);
 

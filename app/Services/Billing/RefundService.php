@@ -454,282 +454,336 @@ class RefundService
      * - derive what the billing cycle should become
      * - refundable cash = original total paid - recalculated new grand total
      */
-   private function executeRefundAdjustment(
-    BillingCycle $billingCycle,
-    array $plans,
-    array $refundData,
-    int $staffId,
-    string $refundType
-): array {
-    $originalSnapshot = $this->createBillingSnapshot($billingCycle->fresh(['lineItems']));
+    private function executeRefundAdjustment(
+        BillingCycle $billingCycle,
+        array $plans,
+        array $refundData,
+        int $staffId,
+        string $refundType
+    ): array {
+        $originalSnapshot = $this->createBillingSnapshot($billingCycle->fresh(['lineItems']));
 
-    $originalSubtotal = $this->getActiveBillingCycleSubtotal($billingCycle);
-    $originalGrandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
-    $originalPatientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
-    $originalInsurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
-    $originalTotalPaid = round($originalPatientPaid + $originalInsurancePaid, 2);
+        $originalSubtotal = $this->getActiveBillingCycleSubtotal($billingCycle);
+        $originalGrandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
+        $originalPatientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
+        $originalInsurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
+        $originalTotalPaid = round($originalPatientPaid + $originalInsurancePaid, 2);
 
-    $refundSubtotal = round((float) collect($plans)->sum('refund_subtotal'), 2);
+        $refundSubtotal = round((float) collect($plans)->sum('refund_subtotal'), 2);
 
-    if ($refundSubtotal <= 0) {
-        return [
-            'success' => false,
-            'message' => 'Refund amount must be greater than zero.',
-            'errors' => [
-                'refund_amount' => ['The requested refund did not reduce any billable amount.'],
-            ],
-        ];
-    }
-
-    $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
-    $requestedUiStatus = (string) ($metadata['frontend_ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status));
-    $discountRule = $this->extractDiscountRuleFromCycle($billingCycle);
-    $taxDefinitions = $this->extractTaxDefinitionsFromCycle($billingCycle);
-
-    $newSubtotal = round(max(0, $originalSubtotal - $refundSubtotal), 2);
-
-    $projectedStateBeforeCashRefund = $this->determineBillingState(
-        $newSubtotal,
-        $discountRule,
-        $taxDefinitions,
-        [
-            'patient_payment' => 0,
-            'insurance_payment' => 0,
-            'total_paid' => 0,
-        ],
-        $requestedUiStatus,
-        $billingCycle
-    );
-
-    $projectedGrandTotal = round((float) ($projectedStateBeforeCashRefund['grand_total'] ?? 0), 2);
-    $cashRefundAmount = round(max(0, $originalTotalPaid - $projectedGrandTotal), 2);
-
-    if ($cashRefundAmount <= 0) {
-        return [
-            'success' => false,
-            'message' => 'This adjustment does not produce a refundable overpayment.',
-            'errors' => [
-                'refund_amount' => [
-                    'The requested line item adjustment lowers charges, but does not create a cash refund.',
+        if ($refundSubtotal <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Refund amount must be greater than zero.',
+                'errors' => [
+                    'refund_amount' => ['The requested refund did not reduce any billable amount.'],
                 ],
+            ];
+        }
+
+        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
+        $requestedUiStatus = (string) ($metadata['frontend_ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status));
+        $discountRule = $this->extractDiscountRuleFromCycle($billingCycle);
+        $taxDefinitions = $this->extractTaxDefinitionsFromCycle($billingCycle);
+
+        $newSubtotal = round(max(0, $originalSubtotal - $refundSubtotal), 2);
+
+        $projectedStateBeforeCashRefund = $this->determineBillingState(
+            $newSubtotal,
+            $discountRule,
+            $taxDefinitions,
+            [
+                'patient_payment' => 0,
+                'insurance_payment' => 0,
+                'total_paid' => 0,
             ],
-        ];
-    }
-
-    $refundMethods = $this->normalizeRefundMethods($refundData['refund_methods'] ?? []);
-    $refundMethodsTotal = round((float) collect($refundMethods)->sum('amount'), 2);
-
-    if ($refundMethodsTotal <= 0) {
-        return [
-            'success' => false,
-            'message' => 'At least one valid refund method is required.',
-            'errors' => [
-                'refund_methods' => ['No valid refund methods were provided.'],
-            ],
-        ];
-    }
-
-    if (abs($refundMethodsTotal - $cashRefundAmount) > 0.01) {
-        return [
-            'success' => false,
-            'message' => 'Refund method totals do not match the refundable amount.',
-            'errors' => [
-                'refund_methods' => [
-                    "Refund methods total {$refundMethodsTotal} but refundable amount is {$cashRefundAmount}.",
-                ],
-            ],
-        ];
-    }
-
-    [$patientRefundAmount, $insuranceRefundAmount] = $this->splitRefundAcrossPayers(
-        $cashRefundAmount,
-        $originalPatientPaid,
-        $originalInsurancePaid
-    );
-
-    foreach ($plans as $plan) {
-        $lineItem = InvoiceLineItem::query()
-            ->lockForUpdate()
-            ->findOrFail($plan['line_item_id']);
-
-        $this->applyRefundPlanToLineItem(
-            $lineItem,
-            $plan,
-            $refundData['reason'],
-            $staffId
-        );
-    }
-
-    $patientPaymentAfterRefund = round(max(0, $originalPatientPaid - $patientRefundAmount), 2);
-    $insurancePaymentAfterRefund = round(max(0, $originalInsurancePaid - $insuranceRefundAmount), 2);
-    $totalPaidAfterRefund = round($patientPaymentAfterRefund + $insurancePaymentAfterRefund, 2);
-
-    $paymentProjectionCycle = $this->buildPaymentProjectionCycle(
-        $billingCycle,
-        $patientPaymentAfterRefund,
-        $insurancePaymentAfterRefund
-    );
-
-    $projectedStateAfterCashRefund = $this->determineBillingState(
-        $newSubtotal,
-        $discountRule,
-        $taxDefinitions,
-        [
-            'patient_payment' => 0,
-            'insurance_payment' => 0,
-            'total_paid' => 0,
-        ],
-        $requestedUiStatus,
-        $paymentProjectionCycle
-    );
-
-    $finalGrandTotal = round((float) ($projectedStateAfterCashRefund['grand_total'] ?? 0), 2);
-    $finalTaxTotal = round((float) ($projectedStateAfterCashRefund['tax_total'] ?? 0), 2);
-    $finalDiscountAmount = round((float) ($projectedStateAfterCashRefund['discount_amount'] ?? 0), 2);
-    $finalTaxableAmount = round((float) ($projectedStateAfterCashRefund['taxable_amount'] ?? 0), 2);
-    $finalBalance = round(max(0, $finalGrandTotal - $totalPaidAfterRefund), 2);
-
-    $adjustment = $this->createFinancialAdjustment([
-        'facility_id' => $billingCycle->facility_id,
-        'billing_cycle_id' => $billingCycle->id,
-        'visit_id' => $billingCycle->visit_id,
-        'patient_id' => $billingCycle->patient_id,
-        'adjustment_type' => $refundType,
-        'adjustment_reason' => $refundData['reason'],
-        'reason_notes' => $refundData['reason_notes'] ?? null,
-        'original_amount' => $originalGrandTotal,
-        'adjustment_amount' => $cashRefundAmount,
-        'remaining_amount' => $finalGrandTotal,
-        'patient_refund_amount' => $patientRefundAmount,
-        'insurance_refund_amount' => $insuranceRefundAmount,
-        'refund_methods' => $refundMethods,
-        'restore_inventory' => $refundData['restore_inventory'] ?? false,
-        'requested_by_staff_id' => $staffId,
-        'original_billing_snapshot' => $originalSnapshot,
-        'affected_line_items' => $this->buildAffectedLineItemDocumentation($plans),
-        'tax_details' => json_encode([
-            'original_tax_total' => round((float) ($billingCycle->total_tax_amount ?? 0), 2),
-            'final_tax_total' => $finalTaxTotal,
-            'tax_delta' => round((float) ($billingCycle->total_tax_amount ?? 0) - $finalTaxTotal, 2),
-        ]),
-    ]);
-
-    $existingRefunds = is_array($metadata['refunds'] ?? null) ? $metadata['refunds'] : [];
-
-    $billingCycle->subtotal_amount = $newSubtotal;
-    $billingCycle->total_amount_charged = $newSubtotal;
-    $billingCycle->total_adjustments = $finalDiscountAmount;
-    $billingCycle->discount_applied = $finalDiscountAmount;
-    $billingCycle->discount_reason = $discountRule['reason'] ?? $billingCycle->discount_reason;
-    $billingCycle->taxable_amount = $finalTaxableAmount;
-    $billingCycle->tax_details = json_encode($projectedStateAfterCashRefund['taxes'] ?? []);
-    $billingCycle->total_tax_amount = $finalTaxTotal;
-    $billingCycle->net_amount = $finalGrandTotal;
-    $billingCycle->grand_total_amount = $finalGrandTotal;
-    $billingCycle->patient_payment_received = $patientPaymentAfterRefund;
-    $billingCycle->insurance_payment_received = $insurancePaymentAfterRefund;
-    $billingCycle->total_paid_amount = $totalPaidAfterRefund;
-    $billingCycle->balance_amount = $finalBalance;
-    $billingCycle->insurance_covered_amount = $insurancePaymentAfterRefund;
-    $billingCycle->patient_responsibility_amount = round(max(0, $finalGrandTotal - $insurancePaymentAfterRefund), 2);
-    $billingCycle->updated_by_staff_id = $staffId;
-    $billingCycle->billing_status = $this->resolveRefundedBillingStatus($finalGrandTotal, $refundType);
-    $billingCycle->payment_due_date = $finalBalance <= 0.01
-        ? null
-        : ($billingCycle->payment_due_date ?? now()->addDays(30));
-
-    $billingCycle->metadata = $this->mergeMetadata($billingCycle->metadata, [
-        'refunds' => array_values(array_merge($existingRefunds, [[
-            'adjustment_id' => $adjustment->id,
-            'reference_number' => $adjustment->reference_number,
-            'refund_type' => $refundType,
-            'refund_amount' => $cashRefundAmount,
-            'refund_subtotal_adjustment' => $refundSubtotal,
-            'original_grand_total' => $originalGrandTotal,
-            'final_grand_total' => $finalGrandTotal,
-            'patient_refund' => $patientRefundAmount,
-            'insurance_refund' => $insuranceRefundAmount,
-            'affected_line_items' => $this->buildAffectedLineItemDocumentation($plans),
-            'refunded_at' => now()->toIso8601String(),
-            'refunded_by_staff_id' => $staffId,
-        ]])),
-        'last_refund' => [
-            'adjustment_id' => $adjustment->id,
-            'reference_number' => $adjustment->reference_number,
-            'refund_type' => $refundType,
-            'refund_amount' => $cashRefundAmount,
-            'processed_at' => now()->toIso8601String(),
-            'processed_by_staff_id' => $staffId,
-        ],
-        'resolved_billing_status' => $billingCycle->billing_status,
-        'resolved_payment_status' => $this->resolveVisitPaymentStatusFromCycleState(
-            $finalGrandTotal,
-            $totalPaidAfterRefund,
-            $finalBalance
-        ),
-        'last_recalculated_at' => now()->toIso8601String(),
-        'last_recalculated_by_staff_id' => $staffId,
-    ]);
-
-    $billingCycle->save();
-    $billingCycle = $billingCycle->fresh(['lineItems', 'visit']);
-
-    $this->syncRefundedCycleLineItemStatuses($billingCycle, $staffId);
-
-    $inventoryRestored = false;
-    $restoredInventoryDetails = [];
-
-    if (($refundData['restore_inventory'] ?? false) === true) {
-        $restoredInventoryDetails = $this->restoreInventoryForRefundedLineItems(
-            $plans,
-            $staffId,
-            $adjustment->reference_number
+            $requestedUiStatus,
+            $billingCycle
         );
 
-        $inventoryRestored = !empty($restoredInventoryDetails);
-        $adjustment->inventory_restored = $restoredInventoryDetails;
-        $adjustment->save();
-    }
+        $projectedGrandTotal = round((float) ($projectedStateBeforeCashRefund['grand_total'] ?? 0), 2);
+        $cashRefundAmount = round(max(0, $originalTotalPaid - $projectedGrandTotal), 2);
 
-    if ($billingCycle->visit) {
-        $this->updateVisitAfterRefund(
-            $billingCycle->visit,
+        if ($cashRefundAmount <= 0) {
+            return [
+                'success' => false,
+                'message' => 'This adjustment does not produce a refundable overpayment.',
+                'errors' => [
+                    'refund_amount' => [
+                        'The requested line item adjustment lowers charges, but does not create a cash refund.',
+                    ],
+                ],
+            ];
+        }
+
+        $refundMethods = $this->normalizeRefundMethods($refundData['refund_methods'] ?? []);
+        $refundMethodsTotal = round((float) collect($refundMethods)->sum('amount'), 2);
+
+        if ($refundMethodsTotal <= 0) {
+            return [
+                'success' => false,
+                'message' => 'At least one valid refund method is required.',
+                'errors' => [
+                    'refund_methods' => ['No valid refund methods were provided.'],
+                ],
+            ];
+        }
+
+        if (abs($refundMethodsTotal - $cashRefundAmount) > 0.01) {
+            return [
+                'success' => false,
+                'message' => 'Refund method totals do not match the refundable amount.',
+                'errors' => [
+                    'refund_methods' => [
+                        "Refund methods total {$refundMethodsTotal} but refundable amount is {$cashRefundAmount}.",
+                    ],
+                ],
+            ];
+        }
+
+        [$patientRefundAmount, $insuranceRefundAmount] = $this->splitRefundAcrossPayers(
+            $cashRefundAmount,
+            $originalPatientPaid,
+            $originalInsurancePaid
+        );
+
+        foreach ($plans as $plan) {
+            $lineItem = InvoiceLineItem::query()
+                ->lockForUpdate()
+                ->findOrFail($plan['line_item_id']);
+
+            $this->applyRefundPlanToLineItem(
+                $lineItem,
+                $plan,
+                $refundData['reason'],
+                $staffId
+            );
+        }
+
+        $patientPaymentAfterRefund = round(max(0, $originalPatientPaid - $patientRefundAmount), 2);
+        $insurancePaymentAfterRefund = round(max(0, $originalInsurancePaid - $insuranceRefundAmount), 2);
+        $totalPaidAfterRefund = round($patientPaymentAfterRefund + $insurancePaymentAfterRefund, 2);
+
+        $paymentProjectionCycle = $this->buildPaymentProjectionCycle(
             $billingCycle,
-            $adjustment,
-            $staffId
+            $patientPaymentAfterRefund,
+            $insurancePaymentAfterRefund
         );
-    }
 
-    $this->completeAdjustment($adjustment, $staffId);
+        $projectedStateAfterCashRefund = $this->determineBillingState(
+            $newSubtotal,
+            $discountRule,
+            $taxDefinitions,
+            [
+                'patient_payment' => 0,
+                'insurance_payment' => 0,
+                'total_paid' => 0,
+            ],
+            $requestedUiStatus,
+            $paymentProjectionCycle
+        );
 
-    Log::info('Refund processed successfully', [
-        'billing_cycle_id' => $billingCycle->id,
-        'adjustment_id' => $adjustment->id,
-        'reference_number' => $adjustment->reference_number,
-        'refund_type' => $refundType,
-        'refund_amount' => $cashRefundAmount,
-        'staff_id' => $staffId,
-    ]);
+        $finalGrandTotal = round((float) ($projectedStateAfterCashRefund['grand_total'] ?? 0), 2);
+        $finalTaxTotal = round((float) ($projectedStateAfterCashRefund['tax_total'] ?? 0), 2);
+        $finalDiscountAmount = round((float) ($projectedStateAfterCashRefund['discount_amount'] ?? 0), 2);
+        $finalTaxableAmount = round((float) ($projectedStateAfterCashRefund['taxable_amount'] ?? 0), 2);
+        $finalBalance = round(max(0, $finalGrandTotal - $totalPaidAfterRefund), 2);
 
-    return [
-        'success' => true,
-        'message' => $refundType === 'full_refund'
-            ? 'Full refund processed successfully.'
-            : 'Partial refund processed successfully.',
-        'data' => [
-            'refund_type' => $refundType,
+        $adjustment = $this->createFinancialAdjustment([
+            'facility_id' => $billingCycle->facility_id,
+            'billing_cycle_id' => $billingCycle->id,
+            'visit_id' => $billingCycle->visit_id,
+            'patient_id' => $billingCycle->patient_id,
+            'adjustment_type' => $refundType,
+            'adjustment_reason' => $refundData['reason'],
+            'reason_notes' => $refundData['reason_notes'] ?? null,
+            'original_amount' => $originalGrandTotal,
+            'adjustment_amount' => $cashRefundAmount,
+            'remaining_amount' => $finalGrandTotal,
+            'patient_refund_amount' => $patientRefundAmount,
+            'insurance_refund_amount' => $insuranceRefundAmount,
+            'refund_methods' => $refundMethods,
+            'restore_inventory' => $refundData['restore_inventory'] ?? false,
+            'requested_by_staff_id' => $staffId,
+            'original_billing_snapshot' => $originalSnapshot,
+            'affected_line_items' => $this->buildAffectedLineItemDocumentation($plans),
+            'tax_details' => json_encode([
+                'original_tax_total' => round((float) ($billingCycle->total_tax_amount ?? 0), 2),
+                'final_tax_total' => $finalTaxTotal,
+                'tax_delta' => round((float) ($billingCycle->total_tax_amount ?? 0) - $finalTaxTotal, 2),
+            ]),
+        ]);
+
+        $existingRefunds = is_array($metadata['refunds'] ?? null) ? $metadata['refunds'] : [];
+
+        $billingCycle->subtotal_amount = $newSubtotal;
+        $billingCycle->total_amount_charged = $newSubtotal;
+        $billingCycle->total_adjustments = $finalDiscountAmount;
+        $billingCycle->discount_applied = $finalDiscountAmount;
+        $billingCycle->discount_reason = $discountRule['reason'] ?? $billingCycle->discount_reason;
+        $billingCycle->taxable_amount = $finalTaxableAmount;
+        $billingCycle->tax_details = json_encode($projectedStateAfterCashRefund['taxes'] ?? []);
+        $billingCycle->total_tax_amount = $finalTaxTotal;
+        $billingCycle->net_amount = $finalGrandTotal;
+        $billingCycle->grand_total_amount = $finalGrandTotal;
+        $billingCycle->patient_payment_received = $patientPaymentAfterRefund;
+        $billingCycle->insurance_payment_received = $insurancePaymentAfterRefund;
+        $billingCycle->total_paid_amount = $totalPaidAfterRefund;
+        $billingCycle->balance_amount = $finalBalance;
+        $billingCycle->insurance_covered_amount = $insurancePaymentAfterRefund;
+        $billingCycle->patient_responsibility_amount = round(max(0, $finalGrandTotal - $insurancePaymentAfterRefund), 2);
+        $billingCycle->updated_by_staff_id = $staffId;
+        
+        // Determine billing status based on adjusted line items
+        $billingCycle->billing_status = $this->resolveRefundedBillingStatus($finalGrandTotal, $refundType, $billingCycle);
+        
+        $billingCycle->payment_due_date = $finalBalance <= 0.01
+            ? null
+            : ($billingCycle->payment_due_date ?? now()->addDays(30));
+
+        $billingCycle->metadata = $this->mergeMetadata($billingCycle->metadata, [
+            'refunds' => array_values(array_merge($existingRefunds, [[
+                'adjustment_id' => $adjustment->id,
+                'reference_number' => $adjustment->reference_number,
+                'refund_type' => $refundType,
+                'refund_amount' => $cashRefundAmount,
+                'refund_subtotal_adjustment' => $refundSubtotal,
+                'original_grand_total' => $originalGrandTotal,
+                'final_grand_total' => $finalGrandTotal,
+                'patient_refund' => $patientRefundAmount,
+                'insurance_refund' => $insuranceRefundAmount,
+                'affected_line_items' => $this->buildAffectedLineItemDocumentation($plans),
+                'refunded_at' => now()->toIso8601String(),
+                'refunded_by_staff_id' => $staffId,
+            ]])),
+            'last_refund' => [
+                'adjustment_id' => $adjustment->id,
+                'reference_number' => $adjustment->reference_number,
+                'refund_type' => $refundType,
+                'refund_amount' => $cashRefundAmount,
+                'processed_at' => now()->toIso8601String(),
+                'processed_by_staff_id' => $staffId,
+            ],
+            'resolved_billing_status' => $billingCycle->billing_status,
+            'resolved_payment_status' => $this->resolveVisitPaymentStatusFromCycleState(
+                $finalGrandTotal,
+                $totalPaidAfterRefund,
+                $finalBalance
+            ),
+            'last_recalculated_at' => now()->toIso8601String(),
+            'last_recalculated_by_staff_id' => $staffId,
+        ]);
+
+        $billingCycle->save();
+        
+        // Update refund status again to ensure line items are considered
+        $this->updateBillingCycleRefundStatus($billingCycle, $staffId);
+        
+        $billingCycle = $billingCycle->fresh(['lineItems', 'visit']);
+
+        $this->syncRefundedCycleLineItemStatuses($billingCycle, $staffId);
+
+        $inventoryRestored = false;
+        $restoredInventoryDetails = [];
+
+        if (($refundData['restore_inventory'] ?? false) === true) {
+            $restoredInventoryDetails = $this->restoreInventoryForRefundedLineItems(
+                $plans,
+                $staffId,
+                $adjustment->reference_number
+            );
+
+            $inventoryRestored = !empty($restoredInventoryDetails);
+            $adjustment->inventory_restored = $restoredInventoryDetails;
+            $adjustment->save();
+        }
+
+        if ($billingCycle->visit) {
+            $this->updateVisitAfterRefund(
+                $billingCycle->visit,
+                $billingCycle,
+                $adjustment,
+                $staffId
+            );
+        }
+
+        $this->completeAdjustment($adjustment, $staffId);
+
+        Log::info('Refund processed successfully', [
+            'billing_cycle_id' => $billingCycle->id,
             'adjustment_id' => $adjustment->id,
             'reference_number' => $adjustment->reference_number,
+            'refund_type' => $refundType,
             'refund_amount' => $cashRefundAmount,
-            'patient_refund' => $patientRefundAmount,
-            'insurance_refund' => $insuranceRefundAmount,
-            'affected_line_items' => count($plans),
-            'remaining_balance' => $finalBalance,
-            'inventory_restored' => $inventoryRestored,
-            'completed_at' => optional($adjustment->completed_at)->toIso8601String() ?? now()->toIso8601String(),
-        ],
-    ];
-}
+            'staff_id' => $staffId,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => $refundType === 'full_refund'
+                ? 'Full refund processed successfully.'
+                : 'Partial refund processed successfully.',
+            'data' => [
+                'refund_type' => $refundType,
+                'adjustment_id' => $adjustment->id,
+                'reference_number' => $adjustment->reference_number,
+                'refund_amount' => $cashRefundAmount,
+                'patient_refund' => $patientRefundAmount,
+                'insurance_refund' => $insuranceRefundAmount,
+                'affected_line_items' => count($plans),
+                'remaining_balance' => $finalBalance,
+                'inventory_restored' => $inventoryRestored,
+                'completed_at' => optional($adjustment->completed_at)->toIso8601String() ?? now()->toIso8601String(),
+            ],
+        ];
+    }
+
+    /**
+     * Update billing cycle refund status based on line items.
+     */
+    private function updateBillingCycleRefundStatus(BillingCycle $billingCycle, int $staffId): void
+    {
+        $hasActiveLineItems = InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycle->id)
+            ->whereNotIn('line_item_status', ['adjusted', 'written_off', 'denied'])
+            ->where('quantity', '>', 0)
+            ->exists();
+        
+        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
+        $lastRefund = $metadata['last_refund'] ?? null;
+        $refundType = $lastRefund['refund_type'] ?? 'partial_refund';
+        
+        $newStatus = $billingCycle->billing_status;
+        
+        if (!$hasActiveLineItems) {
+            $newStatus = 'fully_refunded';
+        } elseif ($refundType === 'full_refund' && $billingCycle->grand_total_amount <= 0.01) {
+            $newStatus = 'fully_refunded';
+        } elseif ($billingCycle->grand_total_amount > 0 && $billingCycle->grand_total_amount < ($billingCycle->total_amount_charged ?? 0)) {
+            $newStatus = 'partially_refunded';
+        }
+        
+        if ($newStatus !== $billingCycle->billing_status) {
+            $billingCycle->billing_status = $newStatus;
+            $billingCycle->updated_by_staff_id = $staffId;
+            
+            $billingCycle->metadata = $this->mergeMetadata($billingCycle->metadata, [
+                'refund_completed_at' => now()->toIso8601String(),
+                'refund_completed_by_staff_id' => $staffId,
+                'final_refund_status' => $newStatus,
+            ]);
+            
+            $billingCycle->save();
+            
+            Log::info('Billing cycle refund status updated', [
+                'billing_cycle_id' => $billingCycle->id,
+                'old_status' => $billingCycle->getOriginal('billing_status'),
+                'new_status' => $newStatus,
+                'staff_id' => $staffId,
+            ]);
+        }
+    }
+
     /**
      * Billing-cycle level refund eligibility.
      */
@@ -1099,14 +1153,30 @@ class RefundService
     }
 
     /**
-     * Determine final billing status.
+     * Determine final billing status based on cycle state and line items.
      */
-    private function resolveRefundedBillingStatus(float $finalGrandTotal, string $refundType): string
+    private function resolveRefundedBillingStatus(float $finalGrandTotal, string $refundType, ?BillingCycle $billingCycle = null): string
     {
+        if ($billingCycle !== null) {
+            $activeLineItems = InvoiceLineItem::query()
+                ->where('billing_cycle_id', $billingCycle->id)
+                ->whereNotIn('line_item_status', ['adjusted', 'written_off', 'denied'])
+                ->where('quantity', '>', 0)
+                ->exists();
+            
+            if (!$activeLineItems) {
+                return 'fully_refunded';
+            }
+            
+            if ($finalGrandTotal <= 0.01) {
+                return 'fully_refunded';
+            }
+        }
+        
         if ($refundType === 'full_refund' || $finalGrandTotal <= 0.01) {
             return 'fully_refunded';
         }
-
+        
         return 'partially_refunded';
     }
 

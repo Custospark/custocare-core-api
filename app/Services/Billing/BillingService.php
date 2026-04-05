@@ -420,7 +420,7 @@ class BillingService
             'billing_cycle_id' => $billingCycle->id,
             'billing_cycle_uuid' => $billingCycle->billing_cycle_uuid,
             'receipt_number' => "REC-{$billingCycle->id}",
-            'billing_status' => (string) ($state['billing_status'] ?? $billingCycle->billing_status),
+            'billing_status' => (string) ($billingCycle->billing_status ?? $state['billing_status']),
             'attending_staff_id' => $billingCycle->created_by_staff_id,
             'attending_staff_name' => $this->resolveStaffDisplayName($billingCycle->created_by_staff_id),
             'attending_staff_role' => $this->resolveFacilityRoleCode($billingCycle->created_by_staff_id, $visit->facility_id),

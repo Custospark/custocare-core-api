@@ -231,13 +231,15 @@ class RefundService
 
                 foreach ($activeLineItems as $lineItem) {
                     try {
-                        $plans[] = $this->buildRefundPlanForLineItem(
-                            $lineItem,
-                            null,
-                            null,
-                            null,
-                            null
-                        );
+                       $plans[] = $this->buildRefundPlanForLineItem(
+                                    $billingCycle,
+                                    $lineItem,
+                                    null,
+                                    null,
+                                    null,
+                                    null
+                                );
+
                     } catch (RuntimeException $e) {
                         return [
                             'success' => false,
@@ -447,13 +449,15 @@ private function processPartialRefund(
                     : ($serviceCatalogMatch ? 'service_catalog' : 'inventory');
 
                 try {
-                    $plan = $this->buildRefundPlanForLineItem(
-                        $lineItem,
-                        $requestedAmount,
-                        $requestedQuantity,
-                        $referenceId,
-                        $matchedReferenceType
-                    );
+                   $plan = $this->buildRefundPlanForLineItem(
+                                $billingCycle,
+                                $lineItem,
+                                $requestedAmount,
+                                $requestedQuantity,
+                                $referenceId,
+                                $matchedReferenceType
+                            );
+
                     
                     Log::info('Refund plan built successfully', [
                         'line_item_id' => $lineItem->id,
@@ -510,6 +514,14 @@ private function processPartialRefund(
      * - derive what the billing cycle should become
      * - refundable cash = original total paid - recalculated new grand total
      */
+   /**
+     * Shared refund executor.
+     *
+     * Financial rule:
+     * - first adjust line items
+     * - derive what the billing cycle should become
+     * - refundable cash = original total paid - recalculated new grand total
+     */
     private function executeRefundAdjustment(
         BillingCycle $billingCycle,
         array $plans,
@@ -526,6 +538,8 @@ private function processPartialRefund(
         $originalTotalPaid = round($originalPatientPaid + $originalInsurancePaid, 2);
 
         $refundSubtotal = round((float) collect($plans)->sum('refund_subtotal'), 2);
+        $refundDiscountTotal = round((float) collect($plans)->sum('refund_discount'), 2);
+        $refundNetTotal = round((float) collect($plans)->sum('refund_net'), 2);
 
         if ($refundSubtotal <= 0) {
             return [
@@ -544,9 +558,15 @@ private function processPartialRefund(
 
         $newSubtotal = round(max(0, $originalSubtotal - $refundSubtotal), 2);
 
+        $remainingDiscountRule = $this->buildRemainingDiscountRuleForRefund(
+            $billingCycle,
+            $discountRule,
+            $refundDiscountTotal
+        );
+
         $projectedStateBeforeCashRefund = $this->determineBillingState(
             $newSubtotal,
-            $discountRule,
+            $remainingDiscountRule,
             $taxDefinitions,
             [
                 'patient_payment' => 0,
@@ -585,17 +605,22 @@ private function processPartialRefund(
             ];
         }
 
-        if (abs($refundMethodsTotal - $cashRefundAmount) > 0.01) {
-            return [
-                'success' => false,
-                'message' => 'Refund method totals do not match the refundable amount.',
-                'errors' => [
-                    'refund_methods' => [
-                        "Refund methods total {$refundMethodsTotal} but refundable amount is {$cashRefundAmount}.",
-                    ],
-                ],
-            ];
-        }
+        // Debug log for reconciliation
+        Log::info('Refund amount reconciliation', [
+            'billing_cycle_id' => $billingCycle->id,
+            'original_subtotal' => $originalSubtotal,
+            'original_discount_applied' => round((float) ($billingCycle->discount_applied ?? 0), 2),
+            'refund_subtotal' => $refundSubtotal,
+            'refund_discount_total' => $refundDiscountTotal,
+            'refund_net_total' => $refundNetTotal,
+            'new_subtotal' => $newSubtotal,
+            'remaining_discount_rule' => $remainingDiscountRule,
+            'projected_grand_total' => $projectedGrandTotal,
+            'original_total_paid' => $originalTotalPaid,
+            'cash_refund_amount' => $cashRefundAmount,
+            'refund_methods_total' => $refundMethodsTotal,
+        ]);
+
 
         [$patientRefundAmount, $insuranceRefundAmount] = $this->splitRefundAcrossPayers(
             $cashRefundAmount,
@@ -628,7 +653,7 @@ private function processPartialRefund(
 
         $projectedStateAfterCashRefund = $this->determineBillingState(
             $newSubtotal,
-            $discountRule,
+            $remainingDiscountRule,
             $taxDefinitions,
             [
                 'patient_payment' => 0,
@@ -676,7 +701,7 @@ private function processPartialRefund(
         $billingCycle->total_amount_charged = $newSubtotal;
         $billingCycle->total_adjustments = $finalDiscountAmount;
         $billingCycle->discount_applied = $finalDiscountAmount;
-        $billingCycle->discount_reason = $discountRule['reason'] ?? $billingCycle->discount_reason;
+        $billingCycle->discount_reason = $remainingDiscountRule['reason'] ?? $billingCycle->discount_reason;
         $billingCycle->taxable_amount = $finalTaxableAmount;
         $billingCycle->tax_details = json_encode($projectedStateAfterCashRefund['taxes'] ?? []);
         $billingCycle->total_tax_amount = $finalTaxTotal;
@@ -704,6 +729,8 @@ private function processPartialRefund(
                 'refund_type' => $refundType,
                 'refund_amount' => $cashRefundAmount,
                 'refund_subtotal_adjustment' => $refundSubtotal,
+                'refund_discount_adjustment' => $refundDiscountTotal,
+                'refund_net_adjustment' => $refundNetTotal,
                 'original_grand_total' => $originalGrandTotal,
                 'final_grand_total' => $finalGrandTotal,
                 'patient_refund' => $patientRefundAmount,
@@ -771,6 +798,9 @@ private function processPartialRefund(
             'reference_number' => $adjustment->reference_number,
             'refund_type' => $refundType,
             'refund_amount' => $cashRefundAmount,
+            'refund_subtotal' => $refundSubtotal,
+            'refund_discount' => $refundDiscountTotal,
+            'refund_net' => $refundNetTotal,
             'staff_id' => $staffId,
         ]);
 
@@ -784,6 +814,9 @@ private function processPartialRefund(
                 'adjustment_id' => $adjustment->id,
                 'reference_number' => $adjustment->reference_number,
                 'refund_amount' => $cashRefundAmount,
+                'refund_subtotal' => $refundSubtotal,
+                'refund_discount' => $refundDiscountTotal,
+                'refund_net' => $refundNetTotal,
                 'patient_refund' => $patientRefundAmount,
                 'insurance_refund' => $insuranceRefundAmount,
                 'affected_line_items' => count($plans),
@@ -792,6 +825,30 @@ private function processPartialRefund(
                 'completed_at' => optional($adjustment->completed_at)->toIso8601String() ?? now()->toIso8601String(),
             ],
         ];
+    }
+
+    /**
+     * Build remaining discount rule for refund processing.
+     * 
+     * This preserves the already applied distributed discount minus the refunded portion,
+     * rather than re-pricing from scratch with the original discount logic.
+     */
+    private function buildRemainingDiscountRuleForRefund(
+        BillingCycle $billingCycle,
+        array $originalDiscountRule,
+        float $refundDiscountTotal
+    ): array {
+        $remainingDiscountAmount = round(
+            max(0, (float) ($billingCycle->discount_applied ?? 0) - $refundDiscountTotal),
+            2
+        );
+
+        return $this->normalizeDiscount([
+            'type' => 'fixed',
+            'value' => $remainingDiscountAmount,
+            'reason' => $originalDiscountRule['reason'] ?? $billingCycle->discount_reason,
+            'note' => 'Adjusted for refund - distributed discount removed from refunded line items',
+        ]);
     }
 
     /**
@@ -955,14 +1012,51 @@ private function processPartialRefund(
     /**
      * Line item refundable if still active.
      */
-    private function isRefundableLineItem(InvoiceLineItem $lineItem): bool
-    {
-        $quantity = round((float) ($lineItem->quantity ?? 0), 2);
-        $status = strtolower((string) ($lineItem->line_item_status ?? ''));
-
-        return $quantity > 0 && !in_array($status, ['adjusted', 'written_off', 'denied'], true);
+  /**
+ * Line item refundable if still has remaining quantity or amount.
+ * 
+ * For partial refunds, we need to allow refunding even if status is 'pending'
+ * or 'paid', as long as there's remaining quantity/amount.
+ */
+private function isRefundableLineItem(InvoiceLineItem $lineItem): bool
+{
+    $quantity = round((float) ($lineItem->quantity ?? 0), 2);
+    $amount = round((float) ($lineItem->line_total_amount ?? 0), 2);
+    $status = strtolower((string) ($lineItem->line_item_status ?? ''));
+    
+    // Cannot refund if no quantity or amount left
+    if ($quantity <= 0 && $amount <= 0.01) {
+        Log::info('Line item not refundable - zero quantity/amount', [
+            'line_item_id' => $lineItem->id,
+            'quantity' => $quantity,
+            'amount' => $amount,
+        ]);
+        return false;
     }
-
+    
+    // Cannot refund if permanently adjusted/written off/denied
+    if (in_array($status, ['adjusted', 'written_off', 'denied'], true)) {
+        Log::info('Line item not refundable - invalid status', [
+            'line_item_id' => $lineItem->id,
+            'status' => $status,
+        ]);
+        return false;
+    }
+    
+    // as long as there's remaining quantity/amount
+    $allowedStatuses = ['pending', 'paid', 'approved', 'billed', 'adjusted'];
+    
+    if (!in_array($status, $allowedStatuses, true)) {
+        Log::info('Line item not refundable - status not in allowed list', [
+            'line_item_id' => $lineItem->id,
+            'status' => $status,
+            'allowed' => $allowedStatuses,
+        ]);
+        return false;
+    }
+    
+    return true;
+}
   
   
 
@@ -978,123 +1072,129 @@ private function processPartialRefund(
  * - The discount portion that should be reversed
  */
 private function buildRefundPlanForLineItem(
+    BillingCycle $billingCycle,
     InvoiceLineItem $lineItem,
     ?float $requestedRefundAmount = null,
     ?float $requestedRefundQuantity = null,
     ?int $matchedReferenceId = null,
     ?string $matchedReferenceType = null
 ): array {
-    // Get the billing cycle to access discount information
-    $billingCycle = $lineItem->billingCycle;
-    
-    // Calculate the effective discount rate applied to this billing cycle
-    $originalSubtotal = (float) ($billingCycle->subtotal_amount ?? 0);
-    $originalDiscount = (float) ($billingCycle->discount_applied ?? 0);
-    $discountRate = $originalSubtotal > 0 ? $originalDiscount / $originalSubtotal : 0;
-    
-    // Get line item values
     $unitPrice = round((float) ($lineItem->unit_price_at_time ?? 0), 2);
     $currentQuantity = round((float) ($lineItem->quantity ?? 0), 2);
     $currentSubtotal = round((float) ($lineItem->line_total_amount ?? 0), 2);
-    
-    // If line item has no quantity, throw clear error
+
     if ($currentQuantity <= 0) {
-        throw new RuntimeException("Line item '{$lineItem->service_description}' has no remaining quantity to refund. Current quantity: {$currentQuantity}");
+        throw new RuntimeException(
+            "Line item '{$lineItem->service_description}' has no remaining quantity to refund."
+        );
     }
-    
-    // If unit price is invalid, throw clear error
+
     if ($unitPrice <= 0) {
-        throw new RuntimeException("Line item '{$lineItem->service_description}' has invalid unit price ({$unitPrice}) and cannot be refunded.");
+        throw new RuntimeException(
+            "Line item '{$lineItem->service_description}' has invalid unit price ({$unitPrice}) and cannot be refunded."
+        );
     }
-    
-    // Calculate what the patient/insurance ACTUALLY paid for this line (net after discount)
-    $lineDiscountAmount = round($currentSubtotal * $discountRate, 2);
+
+    $discountMap = $this->allocateBillingCycleDiscountAcrossLineItems($billingCycle);
+    $lineDiscountAmount = round((float) ($discountMap[$lineItem->id] ?? 0), 2);
     $currentNetAmount = round($currentSubtotal - $lineDiscountAmount, 2);
-    
-    // Calculate refund quantity and net amount based on request
+
+    $refundQuantity = 0.00;
+    $refundSubtotal = 0.00;
+
+    // 1) Full line refund
     if ($requestedRefundAmount === null && $requestedRefundQuantity === null) {
-        // Full refund - use the net amount (what was actually paid)
         $refundQuantity = $currentQuantity;
-        $refundNetAmount = $currentNetAmount;
         $refundSubtotal = $currentSubtotal;
-    } elseif ($requestedRefundAmount !== null && $requestedRefundQuantity === null) {
-        // Refund by amount - this amount should be the NET amount (what patient gets back)
+    }
+
+    // 2) Refund by gross amount only
+    elseif ($requestedRefundAmount !== null && $requestedRefundQuantity === null) {
         $requestedRefundAmount = round($requestedRefundAmount, 2);
-        
+
         if ($requestedRefundAmount <= 0) {
-            throw new RuntimeException("Refund amount must be greater than zero. Received: {$requestedRefundAmount}");
+            throw new RuntimeException("Refund amount must be greater than zero.");
         }
-        
-        // Validate against net amount, not subtotal
-        if ($requestedRefundAmount > $currentNetAmount + 0.01) {
+
+        if ($requestedRefundAmount > $currentSubtotal + 0.01) {
             throw new RuntimeException(
-                "Refund amount {$requestedRefundAmount} exceeds net paid amount {$currentNetAmount} for '{$lineItem->service_description}'."
+                "Refund amount {$requestedRefundAmount} exceeds gross line amount {$currentSubtotal} for '{$lineItem->service_description}'."
             );
         }
-        
-        // Calculate what portion of the subtotal this represents
-        $refundRatio = $currentNetAmount > 0 ? $requestedRefundAmount / $currentNetAmount : 0;
+
+        $refundSubtotal = $requestedRefundAmount;
+        $refundRatio = $currentSubtotal > 0 ? ($refundSubtotal / $currentSubtotal) : 0;
         $refundQuantity = round($currentQuantity * $refundRatio, 2);
-        $refundSubtotal = round($currentSubtotal * $refundRatio, 2);
-        $refundNetAmount = $requestedRefundAmount;
-        
-        // Validate quantity is reasonable
-        if ($refundQuantity > $currentQuantity + 0.01) {
-            throw new RuntimeException("Refund quantity ({$refundQuantity}) exceeds billed quantity ({$currentQuantity}) for '{$lineItem->service_description}'.");
-        }
-    } elseif ($requestedRefundAmount === null && $requestedRefundQuantity !== null) {
-        // Refund by quantity
+    }
+
+    // 3) Refund by quantity only
+    elseif ($requestedRefundAmount === null && $requestedRefundQuantity !== null) {
         $requestedRefundQuantity = round($requestedRefundQuantity, 2);
-        
+
         if ($requestedRefundQuantity <= 0) {
-            throw new RuntimeException("Refund quantity must be greater than zero. Received: {$requestedRefundQuantity}");
+            throw new RuntimeException("Refund quantity must be greater than zero.");
         }
-        
+
         if ($requestedRefundQuantity > $currentQuantity + 0.01) {
-            throw new RuntimeException("Refund quantity ({$requestedRefundQuantity}) exceeds billed quantity ({$currentQuantity}) for '{$lineItem->service_description}'.");
+            throw new RuntimeException(
+                "Refund quantity ({$requestedRefundQuantity}) exceeds billed quantity ({$currentQuantity}) for '{$lineItem->service_description}'."
+            );
         }
-        
+
         $refundQuantity = $requestedRefundQuantity;
         $refundSubtotal = round($refundQuantity * $unitPrice, 2);
-        // Calculate net refund based on discount rate
-        $refundNetAmount = round($refundSubtotal - ($refundSubtotal * $discountRate), 2);
-    } else {
-        // Both amount and quantity provided
+    }
+
+    // 4) Refund by both quantity and gross amount
+    else {
         $requestedRefundAmount = round((float) $requestedRefundAmount, 2);
         $requestedRefundQuantity = round((float) $requestedRefundQuantity, 2);
-        
+
         if ($requestedRefundAmount <= 0 || $requestedRefundQuantity <= 0) {
             throw new RuntimeException('Refund amount and quantity must both be greater than zero.');
         }
-        
+
         if ($requestedRefundQuantity > $currentQuantity + 0.01) {
-            throw new RuntimeException("Refund quantity ({$requestedRefundQuantity}) exceeds billed quantity ({$currentQuantity}) for '{$lineItem->service_description}'.");
-        }
-        
-        $refundQuantity = $requestedRefundQuantity;
-        $refundSubtotal = round($refundQuantity * $unitPrice, 2);
-        $expectedNetAmount = round($refundSubtotal - ($refundSubtotal * $discountRate), 2);
-        
-        if (abs($expectedNetAmount - $requestedRefundAmount) > 0.01) {
             throw new RuntimeException(
-                "Refund amount {$requestedRefundAmount} does not match calculated net amount {$expectedNetAmount} for quantity {$refundQuantity} on '{$lineItem->service_description}'."
+                "Refund quantity ({$requestedRefundQuantity}) exceeds billed quantity ({$currentQuantity}) for '{$lineItem->service_description}'."
             );
         }
-        
-        $refundNetAmount = $requestedRefundAmount;
+
+        $expectedGrossAmount = round($requestedRefundQuantity * $unitPrice, 2);
+
+        if (abs($expectedGrossAmount - $requestedRefundAmount) > 0.01) {
+            throw new RuntimeException(
+                "Refund amount {$requestedRefundAmount} does not match calculated gross amount {$expectedGrossAmount} for quantity {$requestedRefundQuantity} on '{$lineItem->service_description}'."
+            );
+        }
+
+        $refundQuantity = $requestedRefundQuantity;
+        $refundSubtotal = $expectedGrossAmount;
     }
-    
-    // Ensure we don't have negative values
-    $refundQuantity = max(0, $refundQuantity);
-    $refundSubtotal = max(0, $refundSubtotal);
-    $refundNetAmount = max(0, $refundNetAmount);
-    
-    // Calculate remaining values
+
+    $refundRatio = $currentSubtotal > 0 ? ($refundSubtotal / $currentSubtotal) : 0;
+    $refundRatio = min(1, max(0, $refundRatio));
+
+    $refundDiscount = round($lineDiscountAmount * $refundRatio, 2);
+
+    // force exact full-line cleanup
+    if (abs($refundSubtotal - $currentSubtotal) <= 0.01) {
+        $refundDiscount = $lineDiscountAmount;
+        $refundQuantity = $currentQuantity;
+        $refundSubtotal = $currentSubtotal;
+    }
+
+    $refundNetAmount = round($refundSubtotal - $refundDiscount, 2);
+
     $remainingQuantity = round(max(0, $currentQuantity - $refundQuantity), 2);
     $remainingSubtotal = round(max(0, $currentSubtotal - $refundSubtotal), 2);
-    $remainingNetAmount = round(max(0, $currentNetAmount - $refundNetAmount), 2);
-    $refundDiscountPortion = round($refundSubtotal - $refundNetAmount, 2);
-    
+    $remainingDiscount = round(max(0, $lineDiscountAmount - $refundDiscount), 2);
+    $remainingNetAmount = round(max(0, $remainingSubtotal - $remainingDiscount), 2);
+
+    $discountRate = $currentSubtotal > 0
+        ? round($lineDiscountAmount / $currentSubtotal, 6)
+        : 0.00;
+
     return [
         'line_item_id' => (int) $lineItem->id,
         'line_item_uuid' => $lineItem->line_item_uuid,
@@ -1105,28 +1205,26 @@ private function buildRefundPlanForLineItem(
         'inventory_item_id' => $lineItem->inventory_item_id,
         'unit_price' => $unitPrice,
         'discount_rate' => $discountRate,
-        
-        // Original values
+
         'original_quantity' => $currentQuantity,
         'original_subtotal' => $currentSubtotal,
         'original_discount' => $lineDiscountAmount,
         'original_net' => $currentNetAmount,
-        
-        // Refund values (what's being returned)
+
         'refund_quantity' => $refundQuantity,
         'refund_subtotal' => $refundSubtotal,
-        'refund_discount' => $refundDiscountPortion,
+        'refund_discount' => $refundDiscount,
         'refund_net' => $refundNetAmount,
-        
-        // Remaining values
+
         'remaining_quantity' => $remainingQuantity,
         'remaining_subtotal' => $remainingSubtotal,
-        'remaining_discount' => round($remainingSubtotal * $discountRate, 2),
+        'remaining_discount' => $remainingDiscount,
         'remaining_net' => $remainingNetAmount,
-        
-        'is_fully_refunded' => $remainingNetAmount <= 0.01,
+
+        'is_fully_refunded' => $remainingQuantity <= 0.01,
     ];
 }
+
 
 /**
  * Apply line item adjustment using net amounts.
@@ -1176,13 +1274,15 @@ private function applyRefundPlanToLineItem(
     // Update line item with remaining values (using subtotal for consistency)
     $lineItem->quantity = $plan['remaining_quantity'];
     $lineItem->line_total_amount = $plan['remaining_subtotal'];
-    $lineItem->discount_amount = 0.00;
-    $lineItem->applied_discount_percentage = 0.00;
+    $lineItem->discount_amount = $plan['remaining_discount'];
+    $lineItem->applied_discount_percentage = $plan['remaining_subtotal'] > 0
+        ? round(($plan['remaining_discount'] / $plan['remaining_subtotal']) * 100, 4)
+        : 0.00;
+    $lineItem->net_amount = $plan['remaining_net'];
     $lineItem->adjustment_amount = $plan['refund_net'];  // Store net refund amount
     $lineItem->adjustment_tax_amount = null;
     $lineItem->adjustment_total_amount = $plan['refund_net'];
     $lineItem->adjustment_reason = "Refund — {$reason} (Net amount: {$plan['refund_net']})";
-    $lineItem->net_amount = $plan['remaining_net'];  // Remaining net amount after refund
     $lineItem->line_item_status = $plan['remaining_quantity'] <= 0 ? 'adjusted' : 'pending';
     $lineItem->staff_performed_id = $staffId;
     $lineItem->service_performed_at = now();
@@ -1198,6 +1298,72 @@ private function applyRefundPlanToLineItem(
     $lineItem->metadata = json_encode($metadata);
     $lineItem->save();
 }
+
+private function allocateBillingCycleDiscountAcrossLineItems(BillingCycle $billingCycle): array
+{
+    $lineItems = $billingCycle->relationLoaded('lineItems')
+        ? $billingCycle->lineItems
+        : $billingCycle->lineItems()->get();
+
+    $lineItems = $lineItems
+        ->filter(fn (InvoiceLineItem $item) => round((float) ($item->quantity ?? 0), 2) > 0)
+        ->values();
+
+    $discountCents = (int) round((float) ($billingCycle->discount_applied ?? 0) * 100);
+
+    if ($discountCents <= 0 || $lineItems->isEmpty()) {
+        return $lineItems->mapWithKeys(fn (InvoiceLineItem $item) => [$item->id => 0.00])->all();
+    }
+
+    $subtotalCents = (int) round(
+        $lineItems->sum(fn (InvoiceLineItem $item) => (float) ($item->line_total_amount ?? 0)) * 100
+    );
+
+    if ($subtotalCents <= 0) {
+        return $lineItems->mapWithKeys(fn (InvoiceLineItem $item) => [$item->id => 0.00])->all();
+    }
+
+    $rows = [];
+    $assigned = 0;
+
+    foreach ($lineItems as $item) {
+        $lineCents = (int) round((float) ($item->line_total_amount ?? 0) * 100);
+        $rawShare = ($lineCents * $discountCents) / $subtotalCents;
+
+        $base = (int) floor($rawShare);
+        $remainder = $rawShare - $base;
+
+        $rows[] = [
+            'line_item_id' => (int) $item->id,
+            'base_cents' => $base,
+            'remainder' => $remainder,
+        ];
+
+        $assigned += $base;
+    }
+
+    $remaining = $discountCents - $assigned;
+
+    usort($rows, function (array $a, array $b) {
+        if ($a['remainder'] === $b['remainder']) {
+            return $a['line_item_id'] <=> $b['line_item_id'];
+        }
+
+        return $b['remainder'] <=> $a['remainder'];
+    });
+
+    for ($i = 0; $i < $remaining; $i++) {
+        $rows[$i]['base_cents']++;
+    }
+
+    $result = [];
+    foreach ($rows as $row) {
+        $result[$row['line_item_id']] = round($row['base_cents'] / 100, 2);
+    }
+
+    return $result;
+}
+
 
 /**
  * Split refund between patient and insurance based on actual payments.

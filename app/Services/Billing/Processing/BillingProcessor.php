@@ -6,9 +6,11 @@ use App\Models\BillingCycle;
 use App\Models\InventoryItem;
 use App\Models\InvoiceLineItem;
 use App\Models\ServiceCatalog;
+use App\Models\Staff;
 use App\Models\Visit;
 use App\Services\Billing\Traits\BillingHelpers;
 use App\Support\HealthcareIdGenerator;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -124,6 +126,14 @@ class BillingProcessor
         $submissionFingerprint = $data['submission_fingerprint'] ?? null;
 
         if ($existingBillingCycle) {
+            Log::debug('Updating existing billing cycle', [
+                'billing_cycle_id' => $existingBillingCycle->id,
+                'facility_id' => $facilityId,
+                'staff_id' => $staffId,
+                'is_primary_cash' => $isPrimaryCash,
+                'is_insurance_involved' => $isInsuranceInvolved,
+            ]);
+
             $billingCycle = BillingCycle::query()
                 ->lockForUpdate()
                 ->findOrFail($existingBillingCycle->id);
@@ -133,18 +143,27 @@ class BillingProcessor
                 ? $metadata['payment_methods']
                 : [];
 
-            $billingCycle->insurance_payment_received = round(
+            // Calculate new payment amounts
+            $newInsurancePayment = round(
                 (float) ($billingCycle->insurance_payment_received ?? 0) + (float) ($paymentSplit['insurance_payment'] ?? 0),
                 2
             );
-            $billingCycle->patient_payment_received = round(
+            $newPatientPayment = round(
                 (float) ($billingCycle->patient_payment_received ?? 0) + (float) ($paymentSplit['patient_payment'] ?? 0),
                 2
             );
-            $billingCycle->total_paid_amount = round(
-                (float) $billingCycle->insurance_payment_received + (float) $billingCycle->patient_payment_received,
-                2
-            );
+            
+            // Store raw totals before capping
+            $rawInsurancePayment = $newInsurancePayment;
+            $rawPatientPayment = $newPatientPayment;
+            $rawTotalPaid = round($newInsurancePayment + $newPatientPayment, 2);
+            
+            $billingCycle->insurance_payment_received = $newInsurancePayment;
+            $billingCycle->patient_payment_received = $newPatientPayment;
+            
+            // DON'T set total_paid_amount here - let recalculateBillingCycleTotalsFromLineItems handle it
+            // because we don't know grand_total yet
+            
             $billingCycle->updated_by_staff_id = $staffId;
             $billingCycle->discount_reason = $discountRule['reason'];
             $billingCycle->insurance_claim_submitted_at = $isInsuranceInvolved
@@ -169,14 +188,37 @@ class BillingProcessor
                 'last_submission_at' => now()->toIso8601String(),
                 'last_appended_at' => now()->toIso8601String(),
                 'last_appended_by_staff_id' => $staffId,
+                'raw_insurance_payment_before_cap' => $rawInsurancePayment,
+                'raw_patient_payment_before_cap' => $rawPatientPayment,
+                'raw_total_paid_before_cap' => $rawTotalPaid,
             ]));
 
             $billingCycle->save();
 
-            return $billingCycle->fresh();
+            $persistedData = $billingCycle->fresh();
+            Log::debug('Billing cycle updated successfully', [
+                'billing_cycle_id' => $persistedData->id,
+                'billing_cycle_uuid' => $persistedData->billing_cycle_uuid ?? null,
+                'insurance_payment_received' => $persistedData->insurance_payment_received,
+                'patient_payment_received' => $persistedData->patient_payment_received,
+                'billing_status' => $persistedData->billing_status,
+                'metadata' => $persistedData->metadata,
+            ]);
+
+            return $persistedData;
         }
 
-        return BillingCycle::query()->create([
+        Log::debug('Creating new billing cycle', [
+            'facility_id' => $facilityId,
+            'staff_id' => $staffId,
+            'visit_id' => $data['visit_id'] ?? null,
+            'patient_id' => $data['patient_id'] ?? null,
+            'is_primary_cash' => $isPrimaryCash,
+            'is_insurance_involved' => $isInsuranceInvolved,
+            'requested_status' => $requestedUiStatus,
+        ]);
+
+        $newBillingCycle = BillingCycle::query()->create([
             'billing_cycle_uuid' => HealthcareIdGenerator::generate('billing'),
             'facility_id' => $facilityId,
             'visit_id' => $data['visit_id'],
@@ -201,7 +243,7 @@ class BillingProcessor
             'insurance_payment_received_at' => ((float) ($paymentSplit['insurance_payment'] ?? 0)) > 0 ? now() : null,
             'patient_responsibility_amount' => 0.00,
             'patient_payment_received' => round((float) ($paymentSplit['patient_payment'] ?? 0), 2),
-            'total_paid_amount' => round((float) ($paymentSplit['total_paid'] ?? 0), 2),
+            'total_paid_amount' => 0.00, // Will be set correctly in recalculation
             'balance_amount' => 0.00,
             'billing_status' => $requestedUiStatus === 'draft' ? 'draft' : 'pending',
             'billed_at' => now(),
@@ -218,8 +260,20 @@ class BillingProcessor
                 'frontend_ui_status' => $requestedUiStatus,
                 'last_submission_fingerprint' => $submissionFingerprint,
                 'last_submission_at' => now()->toIso8601String(),
+                'raw_total_paid_before_cap' => round((float) ($paymentSplit['total_paid'] ?? 0), 2),
             ]),
         ]);
+
+        Log::debug('New billing cycle created successfully', [
+            'billing_cycle_id' => $newBillingCycle->id,
+            'billing_cycle_uuid' => $newBillingCycle->billing_cycle_uuid,
+            'insurance_payment_received' => $newBillingCycle->insurance_payment_received,
+            'patient_payment_received' => $newBillingCycle->patient_payment_received,
+            'billing_status' => $newBillingCycle->billing_status,
+            'metadata' => $newBillingCycle->metadata,
+        ]);
+
+        return $newBillingCycle;
     }
 
     /**
@@ -475,6 +529,7 @@ class BillingProcessor
         bool $wasExistingCycleUpdated = false
     ): void {
         $visit = Visit::query()->lockForUpdate()->findOrFail($visit->id);
+        $assignedStaffId=Staff::where('user_id',Auth::user()->id)->first()->id;
 
         $grandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
         $totalPaid = round((float) ($billingCycle->total_paid_amount ?? 0), 2);
@@ -507,6 +562,7 @@ class BillingProcessor
         $visit->estimated_total_charges = $grandTotal;
         $visit->patient_estimated_responsibility = $balance;
         $visit->updated_by_staff_id = $staffId;
+        $visit->assigned_staff_id = $assignedStaffId;
 
         $metadata['billing'][] = [
             'billing_cycle_id' => $billingCycle->id,

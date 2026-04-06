@@ -60,128 +60,82 @@ trait BillingHelpers
      *   facts and are combined with incoming payments for the current request.
      * - UI status is derived from the financial state, not the other way around.
      */
-    protected function determineBillingState(
-        float $subtotal,
-        array $discountRule = [],
-        array $taxDefinitions = [],
-        array $incomingPaymentSplit = [],
-        string $requestedUiStatus = 'ready',
-        ?BillingCycle $existingBillingCycle = null
-    ): array {
-        $subtotal = round(max(0, $subtotal), 2);
-        $discountRule = $this->normalizeDiscount($discountRule);
-        $taxDefinitions = $this->normalizeTaxDefinitions($taxDefinitions);
+ protected function determineBillingState(
+    float $subtotal,
+    array $discountRule = [],
+    array $taxDefinitions = [],
+    array $incomingPaymentSplit = [],
+    string $requestedUiStatus = 'ready',
+    ?BillingCycle $existingBillingCycle = null
+): array {
+    $subtotal = round(max(0, $subtotal), 2);
+    $discountRule = $this->normalizeDiscount($discountRule);
+    $taxDefinitions = $this->normalizeTaxDefinitions($taxDefinitions);
 
-        $existingPatientPaid = round(max(0, (float) ($existingBillingCycle->patient_payment_received ?? 0)), 2);
-        $existingInsurancePaid = round(max(0, (float) ($existingBillingCycle->insurance_payment_received ?? 0)), 2);
+    $existingPatientPaid = round(max(0, (float) ($existingBillingCycle->patient_payment_received ?? 0)), 2);
+    $existingInsurancePaid = round(max(0, (float) ($existingBillingCycle->insurance_payment_received ?? 0)), 2);
 
-        $incomingPatientPaid = round(max(0, (float) ($incomingPaymentSplit['patient_payment'] ?? 0)), 2);
-        $incomingInsurancePaid = round(max(0, (float) ($incomingPaymentSplit['insurance_payment'] ?? 0)), 2);
+    $incomingPatientPaid = round(max(0, (float) ($incomingPaymentSplit['patient_payment'] ?? 0)), 2);
+    $incomingInsurancePaid = round(max(0, (float) ($incomingPaymentSplit['insurance_payment'] ?? 0)), 2);
 
-        $discountAmount = $this->calculateDiscountAmount(
-            $discountRule['type'],
-            (float) $discountRule['value'],
-            $subtotal
-        );
+    $discountAmount = $this->calculateDiscountAmount(
+        $discountRule['type'],
+        (float) $discountRule['value'],
+        $subtotal
+    );
 
-        $taxableAmount = round(max(0, $subtotal - $discountAmount), 2);
+    $taxableAmount = round(max(0, $subtotal - $discountAmount), 2);
 
-        $taxes = collect($taxDefinitions)
-            ->map(function (array $tax) use ($taxableAmount) {
-                $rate = round((float) ($tax['rate'] ?? 0), 2);
+    $taxes = collect($taxDefinitions)
+        ->map(function (array $tax) use ($taxableAmount) {
+            $rate = round((float) ($tax['rate'] ?? 0), 2);
 
-                return [
-                    'name' => trim((string) ($tax['name'] ?? 'Tax')),
-                    'rate' => $rate,
-                    'amount' => round($taxableAmount * ($rate / 100), 2),
-                ];
-            })
-            ->values()
-            ->all();
-
-        $taxTotal = round((float) collect($taxes)->sum('amount'), 2);
-        $grandTotal = round($taxableAmount + $taxTotal, 2);
-
-        $patientPayment = round($existingPatientPaid + $incomingPatientPaid, 2);
-        $insurancePayment = round($existingInsurancePaid + $incomingInsurancePaid, 2);
-        $totalPaid = round($patientPayment + $insurancePayment, 2);
-        $balance = round(max(0, $grandTotal - $totalPaid), 2);
-        $isFullyPaid = abs($balance) < 0.01;
-
-        if ($grandTotal <= 0.00) {
             return [
-                'subtotal' => $subtotal,
-                'discount_rule' => $discountRule,
-                'discount_amount' => $discountAmount,
-                'taxable_amount' => $taxableAmount,
-                'taxes' => $taxes,
-                'tax_total' => $taxTotal,
-                'grand_total' => $grandTotal,
-                'existing_patient_payment' => $existingPatientPaid,
-                'existing_insurance_payment' => $existingInsurancePaid,
-                'incoming_patient_payment' => $incomingPatientPaid,
-                'incoming_insurance_payment' => $incomingInsurancePaid,
-                'patient_payment' => $patientPayment,
-                'insurance_payment' => $insurancePayment,
-                'total_paid' => $totalPaid,
-                'balance' => 0.00,
-                'is_fully_paid' => true,
-                'billing_status' => 'paid_in_full',
-                'payment_status' => 'paid_in_full',
-                'ui_status' => 'ready',
+                'name' => trim((string) ($tax['name'] ?? 'Tax')),
+                'rate' => $rate,
+                'amount' => round($taxableAmount * ($rate / 100), 2),
             ];
+        })
+        ->values()
+        ->all();
+
+    $taxTotal = round((float) collect($taxes)->sum('amount'), 2);
+    $grandTotal = round($taxableAmount + $taxTotal, 2);
+
+    // Raw payments before capping (track for auditing)
+    $rawPatientPayment = round($existingPatientPaid + $incomingPatientPaid, 2);
+    $rawInsurancePayment = round($existingInsurancePaid + $incomingInsurancePaid, 2);
+    $rawTotalPaid = round($rawPatientPayment + $rawInsurancePayment, 2);
+
+    // Cap payments at grand total - THIS IS THE KEY FIX
+    $totalPaid = round(min($rawTotalPaid, $grandTotal), 2);
+    
+    // Calculate applied payments proportionally if needed
+    if ($rawTotalPaid > $grandTotal && $grandTotal > 0) {
+        // Overpayment scenario - cap proportionally
+        $ratio = $grandTotal / $rawTotalPaid;
+        $patientPayment = round($rawPatientPayment * $ratio, 2);
+        $insurancePayment = round($rawInsurancePayment * $ratio, 2);
+        
+        // Adjust for rounding errors to ensure total_paid equals grand_total
+        $adjustedTotal = round($patientPayment + $insurancePayment, 2);
+        if ($adjustedTotal != $grandTotal) {
+            $difference = round($grandTotal - $adjustedTotal, 2);
+            // Add difference to patient payment (arbitrary choice, could be insurance)
+            $patientPayment = round($patientPayment + $difference, 2);
         }
+    } else {
+        $patientPayment = $rawPatientPayment;
+        $insurancePayment = $rawInsurancePayment;
+    }
+    
+    $balance = round(max(0, $grandTotal - $totalPaid), 2);
+    $isFullyPaid = abs($balance) < 0.01;
+    $isOverpaid = $rawTotalPaid > $grandTotal && $grandTotal > 0;
+    $overpaymentAmount = $isOverpaid ? round($rawTotalPaid - $grandTotal, 2) : 0;
 
-        if ($isFullyPaid) {
-            return [
-                'subtotal' => $subtotal,
-                'discount_rule' => $discountRule,
-                'discount_amount' => $discountAmount,
-                'taxable_amount' => $taxableAmount,
-                'taxes' => $taxes,
-                'tax_total' => $taxTotal,
-                'grand_total' => $grandTotal,
-                'existing_patient_payment' => $existingPatientPaid,
-                'existing_insurance_payment' => $existingInsurancePaid,
-                'incoming_patient_payment' => $incomingPatientPaid,
-                'incoming_insurance_payment' => $incomingInsurancePaid,
-                'patient_payment' => $patientPayment,
-                'insurance_payment' => $insurancePayment,
-                'total_paid' => $totalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => true,
-                'billing_status' => 'paid_in_full',
-                'payment_status' => 'paid_in_full',
-                'ui_status' => 'settled',
-            ];
-        }
-
-        if ($totalPaid > 0.00) {
-            return [
-                'subtotal' => $subtotal,
-                'discount_rule' => $discountRule,
-                'discount_amount' => $discountAmount,
-                'taxable_amount' => $taxableAmount,
-                'taxes' => $taxes,
-                'tax_total' => $taxTotal,
-                'grand_total' => $grandTotal,
-                'existing_patient_payment' => $existingPatientPaid,
-                'existing_insurance_payment' => $existingInsurancePaid,
-                'incoming_patient_payment' => $incomingPatientPaid,
-                'incoming_insurance_payment' => $incomingInsurancePaid,
-                'patient_payment' => $patientPayment,
-                'insurance_payment' => $insurancePayment,
-                'total_paid' => $totalPaid,
-                'balance' => $balance,
-                'is_fully_paid' => false,
-                'billing_status' => 'partially_paid',
-                'payment_status' => 'partially_paid',
-                'ui_status' => 'ready',
-            ];
-        }
-
-        $billingStatus = $requestedUiStatus === 'draft' ? 'draft' : 'pending';
-
+    // Handle zero grand total case
+    if ($grandTotal <= 0.00) {
         return [
             'subtotal' => $subtotal,
             'discount_rule' => $discountRule,
@@ -194,16 +148,114 @@ trait BillingHelpers
             'existing_insurance_payment' => $existingInsurancePaid,
             'incoming_patient_payment' => $incomingPatientPaid,
             'incoming_insurance_payment' => $incomingInsurancePaid,
+            'raw_patient_payment' => $rawPatientPayment,
+            'raw_insurance_payment' => $rawInsurancePayment,
+            'raw_total_paid' => $rawTotalPaid,
+            'patient_payment' => 0.00,
+            'insurance_payment' => 0.00,
+            'total_paid' => 0.00,
+            'balance' => 0.00,
+            'is_fully_paid' => true,
+            'is_overpaid' => false,
+            'overpayment_amount' => 0,
+            'billing_status' => 'paid_in_full',
+            'payment_status' => 'paid_in_full',
+            'ui_status' => 'ready',
+        ];
+    }
+
+    // Determine statuses
+    if ($isFullyPaid) {
+        $billingStatus = 'paid_in_full';
+        $paymentStatus = 'paid_in_full';
+        $uiStatus = $isOverpaid ? 'overpaid' : 'settled';
+        
+        return [
+            'subtotal' => $subtotal,
+            'discount_rule' => $discountRule,
+            'discount_amount' => $discountAmount,
+            'taxable_amount' => $taxableAmount,
+            'taxes' => $taxes,
+            'tax_total' => $taxTotal,
+            'grand_total' => $grandTotal,
+            'existing_patient_payment' => $existingPatientPaid,
+            'existing_insurance_payment' => $existingInsurancePaid,
+            'incoming_patient_payment' => $incomingPatientPaid,
+            'incoming_insurance_payment' => $incomingInsurancePaid,
+            'raw_patient_payment' => $rawPatientPayment,
+            'raw_insurance_payment' => $rawInsurancePayment,
+            'raw_total_paid' => $rawTotalPaid,
+            'patient_payment' => $patientPayment,
+            'insurance_payment' => $insurancePayment,
+            'total_paid' => $totalPaid,
+            'balance' => $balance,
+            'is_fully_paid' => true,
+            'is_overpaid' => $isOverpaid,
+            'overpayment_amount' => $overpaymentAmount,
+            'billing_status' => $billingStatus,
+            'payment_status' => $paymentStatus,
+            'ui_status' => $uiStatus,
+        ];
+    }
+
+    if ($totalPaid > 0.00) {
+        return [
+            'subtotal' => $subtotal,
+            'discount_rule' => $discountRule,
+            'discount_amount' => $discountAmount,
+            'taxable_amount' => $taxableAmount,
+            'taxes' => $taxes,
+            'tax_total' => $taxTotal,
+            'grand_total' => $grandTotal,
+            'existing_patient_payment' => $existingPatientPaid,
+            'existing_insurance_payment' => $existingInsurancePaid,
+            'incoming_patient_payment' => $incomingPatientPaid,
+            'incoming_insurance_payment' => $incomingInsurancePaid,
+            'raw_patient_payment' => $rawPatientPayment,
+            'raw_insurance_payment' => $rawInsurancePayment,
+            'raw_total_paid' => $rawTotalPaid,
             'patient_payment' => $patientPayment,
             'insurance_payment' => $insurancePayment,
             'total_paid' => $totalPaid,
             'balance' => $balance,
             'is_fully_paid' => false,
-            'billing_status' => $billingStatus,
-            'payment_status' => 'pending',
-            'ui_status' => $requestedUiStatus === 'draft' ? 'draft' : 'ready',
+            'is_overpaid' => false,
+            'overpayment_amount' => 0,
+            'billing_status' => 'partially_paid',
+            'payment_status' => 'partially_paid',
+            'ui_status' => 'ready',
         ];
     }
+
+    $billingStatus = $requestedUiStatus === 'draft' ? 'draft' : 'pending';
+
+    return [
+        'subtotal' => $subtotal,
+        'discount_rule' => $discountRule,
+        'discount_amount' => $discountAmount,
+        'taxable_amount' => $taxableAmount,
+        'taxes' => $taxes,
+        'tax_total' => $taxTotal,
+        'grand_total' => $grandTotal,
+        'existing_patient_payment' => $existingPatientPaid,
+        'existing_insurance_payment' => $existingInsurancePaid,
+        'incoming_patient_payment' => $incomingPatientPaid,
+        'incoming_insurance_payment' => $incomingInsurancePaid,
+        'raw_patient_payment' => $rawPatientPayment,
+        'raw_insurance_payment' => $rawInsurancePayment,
+        'raw_total_paid' => $rawTotalPaid,
+        'patient_payment' => $patientPayment,
+        'insurance_payment' => $insurancePayment,
+        'total_paid' => $totalPaid,
+        'balance' => $balance,
+        'is_fully_paid' => false,
+        'is_overpaid' => false,
+        'overpayment_amount' => 0,
+        'billing_status' => $billingStatus,
+        'payment_status' => 'pending',
+        'ui_status' => $requestedUiStatus === 'draft' ? 'draft' : 'ready',
+    ];
+}
 
     public function checkExistingBilling(int $visitId, int $facilityId): array
     {

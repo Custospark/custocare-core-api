@@ -506,21 +506,13 @@ private function processPartialRefund(
     }
 }
 
-/**
+    /**
      * Shared refund executor.
      *
      * Financial rule:
-     * - first adjust line items
-     * - derive what the billing cycle should become
-     * - refundable cash = original total paid - recalculated new grand total
-     */
-   /**
-     * Shared refund executor.
-     *
-     * Financial rule:
-     * - first adjust line items
-     * - derive what the billing cycle should become
-     * - refundable cash = original total paid - recalculated new grand total
+     * - First adjust line items based on refund plans
+     * - The refund amount is the SUM of net amounts from refunded items
+     * - NOT a calculated difference between totals
      */
     private function executeRefundAdjustment(
         BillingCycle $billingCycle,
@@ -535,63 +527,28 @@ private function processPartialRefund(
         $originalGrandTotal = round((float) ($billingCycle->grand_total_amount ?? $billingCycle->net_amount ?? 0), 2);
         $originalPatientPaid = round((float) ($billingCycle->patient_payment_received ?? 0), 2);
         $originalInsurancePaid = round((float) ($billingCycle->insurance_payment_received ?? 0), 2);
-        $originalTotalPaid = round($originalPatientPaid + $originalInsurancePaid, 2);
-
+        $originalTotalPaid = round((float) ($billingCycle->total_paid_amount ?? 0), 2);
+        
+        // Calculate refund totals from the plans (these are the ACTUAL amounts being refunded)
         $refundSubtotal = round((float) collect($plans)->sum('refund_subtotal'), 2);
         $refundDiscountTotal = round((float) collect($plans)->sum('refund_discount'), 2);
         $refundNetTotal = round((float) collect($plans)->sum('refund_net'), 2);
+        
+        // Cash refund amount is simply the sum of net refunds from each line item
+        // This represents the ACTUAL amount being refunded, not a calculated difference
+        $cashRefundAmount = $refundNetTotal;
 
-        if ($refundSubtotal <= 0) {
+        if ($refundSubtotal <= 0 || $cashRefundAmount <= 0) {
             return [
                 'success' => false,
                 'message' => 'Refund amount must be greater than zero.',
                 'errors' => [
-                    'refund_amount' => ['The requested refund did not reduce any billable amount.'],
+                    'refund_amount' => ['The requested refund did not produce any net refundable amount.'],
                 ],
             ];
         }
 
-        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
-        $requestedUiStatus = (string) ($metadata['frontend_ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status));
-        $discountRule = $this->extractDiscountRuleFromCycle($billingCycle);
-        $taxDefinitions = $this->extractTaxDefinitionsFromCycle($billingCycle);
-
-        $newSubtotal = round(max(0, $originalSubtotal - $refundSubtotal), 2);
-
-        $remainingDiscountRule = $this->buildRemainingDiscountRuleForRefund(
-            $billingCycle,
-            $discountRule,
-            $refundDiscountTotal
-        );
-
-        $projectedStateBeforeCashRefund = $this->determineBillingState(
-            $newSubtotal,
-            $remainingDiscountRule,
-            $taxDefinitions,
-            [
-                'patient_payment' => 0,
-                'insurance_payment' => 0,
-                'total_paid' => 0,
-            ],
-            $requestedUiStatus,
-            $billingCycle
-        );
-
-        $projectedGrandTotal = round((float) ($projectedStateBeforeCashRefund['grand_total'] ?? 0), 2);
-        $cashRefundAmount = round(max(0, $originalTotalPaid - $projectedGrandTotal), 2);
-
-        if ($cashRefundAmount <= 0) {
-            return [
-                'success' => false,
-                'message' => 'This adjustment does not produce a refundable overpayment.',
-                'errors' => [
-                    'refund_amount' => [
-                        'The requested line item adjustment lowers charges, but does not create a cash refund.',
-                    ],
-                ],
-            ];
-        }
-
+        // Validate refund methods
         $refundMethods = $this->normalizeRefundMethods($refundData['refund_methods'] ?? []);
         $refundMethodsTotal = round((float) collect($refundMethods)->sum('amount'), 2);
 
@@ -605,29 +562,15 @@ private function processPartialRefund(
             ];
         }
 
-        // Debug log for reconciliation
-        Log::info('Refund amount reconciliation', [
-            'billing_cycle_id' => $billingCycle->id,
-            'original_subtotal' => $originalSubtotal,
-            'original_discount_applied' => round((float) ($billingCycle->discount_applied ?? 0), 2),
-            'refund_subtotal' => $refundSubtotal,
-            'refund_discount_total' => $refundDiscountTotal,
-            'refund_net_total' => $refundNetTotal,
-            'new_subtotal' => $newSubtotal,
-            'remaining_discount_rule' => $remainingDiscountRule,
-            'projected_grand_total' => $projectedGrandTotal,
-            'original_total_paid' => $originalTotalPaid,
-            'cash_refund_amount' => $cashRefundAmount,
-            'refund_methods_total' => $refundMethodsTotal,
-        ]);
 
-
+        // Split refund between patient and insurance based on their actual payments
         [$patientRefundAmount, $insuranceRefundAmount] = $this->splitRefundAcrossPayers(
             $cashRefundAmount,
             $originalPatientPaid,
             $originalInsurancePaid
         );
 
+        // Apply refund plans to each line item FIRST
         foreach ($plans as $plan) {
             $lineItem = InvoiceLineItem::query()
                 ->lockForUpdate()
@@ -641,6 +584,22 @@ private function processPartialRefund(
             );
         }
 
+        // Calculate new totals after line item adjustments
+        $newSubtotal = round(max(0, $originalSubtotal - $refundSubtotal), 2);
+        
+        // Recalculate discount allocation for remaining items
+        $metadata = $this->decodeJsonishToArray($billingCycle->metadata ?? null);
+        $requestedUiStatus = (string) ($metadata['frontend_ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status));
+        $discountRule = $this->extractDiscountRuleFromCycle($billingCycle);
+        $taxDefinitions = $this->extractTaxDefinitionsFromCycle($billingCycle);
+        
+        $remainingDiscountRule = $this->buildRemainingDiscountRuleForRefund(
+            $billingCycle,
+            $discountRule,
+            $refundDiscountTotal
+        );
+
+        // Calculate new financial state with updated payments
         $patientPaymentAfterRefund = round(max(0, $originalPatientPaid - $patientRefundAmount), 2);
         $insurancePaymentAfterRefund = round(max(0, $originalInsurancePaid - $insuranceRefundAmount), 2);
         $totalPaidAfterRefund = round($patientPaymentAfterRefund + $insurancePaymentAfterRefund, 2);
@@ -651,25 +610,47 @@ private function processPartialRefund(
             $insurancePaymentAfterRefund
         );
 
-        $projectedStateAfterCashRefund = $this->determineBillingState(
+        $projectedStateAfterRefund = $this->determineBillingState(
             $newSubtotal,
             $remainingDiscountRule,
             $taxDefinitions,
             [
-                'patient_payment' => 0,
-                'insurance_payment' => 0,
-                'total_paid' => 0,
+                'patient_payment' => $patientPaymentAfterRefund,
+                'insurance_payment' => $insurancePaymentAfterRefund,
+                'total_paid' => $totalPaidAfterRefund,
             ],
             $requestedUiStatus,
             $paymentProjectionCycle
         );
 
-        $finalGrandTotal = round((float) ($projectedStateAfterCashRefund['grand_total'] ?? 0), 2);
-        $finalTaxTotal = round((float) ($projectedStateAfterCashRefund['tax_total'] ?? 0), 2);
-        $finalDiscountAmount = round((float) ($projectedStateAfterCashRefund['discount_amount'] ?? 0), 2);
-        $finalTaxableAmount = round((float) ($projectedStateAfterCashRefund['taxable_amount'] ?? 0), 2);
+        $finalGrandTotal = round((float) ($projectedStateAfterRefund['grand_total'] ?? 0), 2);
+        $finalTaxTotal = round((float) ($projectedStateAfterRefund['tax_total'] ?? 0), 2);
+        $finalDiscountAmount = round((float) ($projectedStateAfterRefund['discount_amount'] ?? 0), 2);
+        $finalTaxableAmount = round((float) ($projectedStateAfterRefund['taxable_amount'] ?? 0), 2);
         $finalBalance = round(max(0, $finalGrandTotal - $totalPaidAfterRefund), 2);
 
+        // Debug log for reconciliation
+        Log::info('Refund amount reconciliation', [
+            'billing_cycle_id' => $billingCycle->id,
+            'refund_type' => $refundType,
+            'original_subtotal' => $originalSubtotal,
+            'original_grand_total' => $originalGrandTotal,
+            'original_patient_paid' => $originalPatientPaid,
+            'original_insurance_paid' => $originalInsurancePaid,
+            'original_total_paid' => $originalTotalPaid,
+            'refund_subtotal' => $refundSubtotal,
+            'refund_discount' => $refundDiscountTotal,
+            'refund_net' => $refundNetTotal,
+            'cash_refund_amount' => $cashRefundAmount,
+            'patient_refund' => $patientRefundAmount,
+            'insurance_refund' => $insuranceRefundAmount,
+            'new_subtotal' => $newSubtotal,
+            'final_grand_total' => $finalGrandTotal,
+            'final_balance' => $finalBalance,
+            'refund_methods_total' => $refundMethodsTotal,
+        ]);
+
+        // Create financial adjustment record
         $adjustment = $this->createFinancialAdjustment([
             'facility_id' => $billingCycle->facility_id,
             'billing_cycle_id' => $billingCycle->id,
@@ -679,7 +660,7 @@ private function processPartialRefund(
             'adjustment_reason' => $refundData['reason'],
             'reason_notes' => $refundData['reason_notes'] ?? null,
             'original_amount' => $originalGrandTotal,
-            'adjustment_amount' => $cashRefundAmount,
+            'adjustment_amount' => $cashRefundAmount,  // ✅ ACTUAL refund amount (sum of refund_net)
             'remaining_amount' => $finalGrandTotal,
             'patient_refund_amount' => $patientRefundAmount,
             'insurance_refund_amount' => $insuranceRefundAmount,
@@ -695,6 +676,7 @@ private function processPartialRefund(
             ]),
         ]);
 
+        // Update billing cycle with new values
         $existingRefunds = is_array($metadata['refunds'] ?? null) ? $metadata['refunds'] : [];
 
         $billingCycle->subtotal_amount = $newSubtotal;
@@ -703,7 +685,7 @@ private function processPartialRefund(
         $billingCycle->discount_applied = $finalDiscountAmount;
         $billingCycle->discount_reason = $remainingDiscountRule['reason'] ?? $billingCycle->discount_reason;
         $billingCycle->taxable_amount = $finalTaxableAmount;
-        $billingCycle->tax_details = json_encode($projectedStateAfterCashRefund['taxes'] ?? []);
+        $billingCycle->tax_details = json_encode($projectedStateAfterRefund['taxes'] ?? []);
         $billingCycle->total_tax_amount = $finalTaxTotal;
         $billingCycle->net_amount = $finalGrandTotal;
         $billingCycle->grand_total_amount = $finalGrandTotal;
@@ -766,6 +748,7 @@ private function processPartialRefund(
 
         $this->syncRefundedCycleLineItemStatuses($billingCycle, $staffId);
 
+        // Handle inventory restoration if requested
         $inventoryRestored = false;
         $restoredInventoryDetails = [];
 
@@ -781,6 +764,7 @@ private function processPartialRefund(
             $adjustment->save();
         }
 
+        // Update visit record
         if ($billingCycle->visit) {
             $this->updateVisitAfterRefund(
                 $billingCycle->visit,
@@ -790,6 +774,7 @@ private function processPartialRefund(
             );
         }
 
+        // Complete the adjustment
         $this->completeAdjustment($adjustment, $staffId);
 
         Log::info('Refund processed successfully', [

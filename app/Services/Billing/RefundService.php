@@ -13,10 +13,18 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
+use App\Services\Billing\Support\BillingAuditTrailService;
+
 
 class RefundService
 {
     use BillingHelpers;
+
+    public function __construct(
+    protected BillingAuditTrailService $billingAuditTrail
+) {
+}
+
 
     /**
      * Public entry point.
@@ -40,8 +48,8 @@ class RefundService
 
     /**
      * Void entry point.
-     */
-    public function voidTransaction(
+        */
+        public function voidTransaction(
         int $billingCycleId,
         array $voidData,
         int $facilityId,
@@ -59,6 +67,12 @@ class RefundService
                 if (!$billingCycle) {
                     return $this->notFound('Billing cycle not found.', 'billing_cycle');
                 }
+
+                // Take snapshots before any mutations
+                $beforeCycleSnapshot = $this->billingAuditTrail->snapshotBillingCycle($billingCycle);
+                $beforeLineItemSnapshots = $billingCycle->lineItems
+                    ->mapWithKeys(fn (InvoiceLineItem $item) => [$item->id => $this->billingAuditTrail->snapshotLineItem($item)])
+                    ->toArray();
 
                 $eligibility = $this->validateVoidEligibility($billingCycle);
                 if (!$eligibility['success']) {
@@ -85,6 +99,25 @@ class RefundService
                     'original_billing_snapshot' => $snapshot,
                 ]);
 
+                // Log financial adjustment event
+                $this->billingAuditTrail->logFinancialAdjustmentEvent(
+                    $adjustment,
+                    $billingCycle,
+                    'billing_cycle_void_created',
+                    'Billing cycle void created',
+                    $staffId,
+                    $voidData['reason'],
+                    [],
+                    [
+                        'reference_number' => $adjustment->reference_number,
+                        'adjustment_type' => 'void_transaction',
+                    ],
+                    [
+                        'action' => 'Voided',
+                        'description' => 'Void adjustment was created for this billing cycle.',
+                    ]
+                );
+
                 $billingCycle->billing_status = 'written_off';
                 $billingCycle->updated_by_staff_id = $staffId;
                 $billingCycle->metadata = $this->mergeMetadata($billingCycle->metadata, [
@@ -99,10 +132,28 @@ class RefundService
                 $billingCycle->save();
                 $billingCycle->delete();
 
+                // Log line item written off events
                 foreach ($billingCycle->lineItems as $lineItem) {
                     $lineItem->line_item_status = 'written_off';
                     $lineItem->deleted_at = now();
                     $lineItem->save();
+
+                    $this->billingAuditTrail->logLineItemEvent(
+                        $lineItem,
+                        $billingCycle,
+                        'line_item_written_off_by_void',
+                        'Charge item written off by void',
+                        $staffId,
+                        $voidData['reason'],
+                        $beforeLineItemSnapshots[$lineItem->id] ?? [],
+                        $this->billingAuditTrail->snapshotLineItem($lineItem),
+                        [
+                            'action' => 'Voided',
+                            'description' => "Charge item '{$lineItem->service_description}' was written off because the billing cycle was voided.",
+                            'financial_adjustment_id' => $adjustment->id,
+                            'reference_number' => $adjustment->reference_number,
+                        ]
+                    );
                 }
 
                 $inventoryRestored = false;
@@ -142,6 +193,24 @@ class RefundService
                 if ($billingCycle->visit) {
                     $this->updateVisitAfterVoid($billingCycle->visit, $billingCycle, $adjustment, $staffId);
                 }
+
+                // Log cycle-level void event after all updates are complete
+                $this->billingAuditTrail->logBillingCycleEvent(
+                    $billingCycle,
+                    'billing_cycle_voided',
+                    'Billing cycle voided',
+                    $staffId,
+                    $voidData['reason'],
+                    $beforeCycleSnapshot,
+                    $this->billingAuditTrail->snapshotBillingCycle($billingCycle),
+                    [
+                        'action' => 'Voided',
+                        'description' => 'Billing cycle was voided and its line items were written off.',
+                        'financial_adjustment_id' => $adjustment->id,
+                        'reference_number' => $adjustment->reference_number,
+                        'restore_inventory' => (bool) ($voidData['restore_inventory'] ?? true),
+                    ]
+                );
 
                 $this->completeAdjustment($adjustment, $staffId);
 
@@ -283,228 +352,228 @@ class RefundService
      * We resolve it to the actual invoice_line_items row within this billing cycle.
      */
     
-private function processPartialRefund(
-    int $billingCycleId,
-    array $refundData,
-    int $facilityId,
-    int $staffId
-): array {
-    try {
-        return DB::transaction(function () use ($billingCycleId, $refundData, $facilityId, $staffId) {
-            $billingCycle = BillingCycle::query()
-                ->where('id', $billingCycleId)
-                ->where('facility_id', $facilityId)
-                ->with(['lineItems', 'visit'])
-                ->lockForUpdate()
-                ->first();
-
-            if (!$billingCycle) {
-                return $this->notFound('Billing cycle not found.', 'billing_cycle');
-            }
-
-            $eligibility = $this->validateRefundEligibility($billingCycle, 'partial_refund');
-            if (!$eligibility['success']) {
-                return $eligibility;
-            }
-
-            if (empty($refundData['line_items']) || !is_array($refundData['line_items'])) {
-                return [
-                    'success' => false,
-                    'message' => 'Line items are required for a partial refund.',
-                    'errors' => [
-                        'line_items' => ['At least one line item must be provided for a partial refund.'],
-                    ],
-                ];
-            }
-
-            $requestedItems = collect($refundData['line_items'])->values();
-            $plans = [];
-
-            foreach ($requestedItems as $index => $requestedItem) {
-                // Validate required fields
-                if (!isset($requestedItem['line_item_id']) || $requestedItem['line_item_id'] === null) {
-                    return [
-                        'success' => false,
-                        'message' => "Line item ID is required for refund item at index {$index}.",
-                        'errors' => ['line_items' => ["Each refund item must have a line_item_id."]],
-                    ];
-                }
-                
-                if (!isset($requestedItem['service_code']) || $requestedItem['service_code'] === null) {
-                    return [
-                        'success' => false,
-                        'message' => "Service code is required for refund item at index {$index}.",
-                        'errors' => ['line_items' => ["Each refund item must have a service_code."]],
-                    ];
-                }
-
-                $referenceId = (int) $requestedItem['line_item_id'];
-                $serviceCode = (string) $requestedItem['service_code'];
-
-                // Strategy 1: Try to find by service_code AND (service_catalog_id OR inventory_item_id)
-                $lineItem = InvoiceLineItem::query()
-                    ->where('billing_cycle_id', $billingCycle->id)
-                    ->where('service_code', $serviceCode)
-                    ->where(function ($query) use ($referenceId) {
-                        $query->where('service_catalog_id', $referenceId)
-                              ->orWhere('inventory_item_id', $referenceId);
-                    })
+    private function processPartialRefund(
+        int $billingCycleId,
+        array $refundData,
+        int $facilityId,
+        int $staffId
+    ): array {
+        try {
+            return DB::transaction(function () use ($billingCycleId, $refundData, $facilityId, $staffId) {
+                $billingCycle = BillingCycle::query()
+                    ->where('id', $billingCycleId)
+                    ->where('facility_id', $facilityId)
+                    ->with(['lineItems', 'visit'])
                     ->lockForUpdate()
                     ->first();
 
-                // Strategy 2: If not found, try to find by service_code only (for active items)
-                if (!$lineItem) {
-                    Log::info('Strategy 1 failed, trying strategy 2 - match by service_code only', [
-                        'service_code' => $serviceCode,
-                        'billing_cycle_id' => $billingCycle->id
-                    ]);
+                if (!$billingCycle) {
+                    return $this->notFound('Billing cycle not found.', 'billing_cycle');
+                }
+
+                $eligibility = $this->validateRefundEligibility($billingCycle, 'partial_refund');
+                if (!$eligibility['success']) {
+                    return $eligibility;
+                }
+
+                if (empty($refundData['line_items']) || !is_array($refundData['line_items'])) {
+                    return [
+                        'success' => false,
+                        'message' => 'Line items are required for a partial refund.',
+                        'errors' => [
+                            'line_items' => ['At least one line item must be provided for a partial refund.'],
+                        ],
+                    ];
+                }
+
+                $requestedItems = collect($refundData['line_items'])->values();
+                $plans = [];
+
+                foreach ($requestedItems as $index => $requestedItem) {
+                    // Validate required fields
+                    if (!isset($requestedItem['line_item_id']) || $requestedItem['line_item_id'] === null) {
+                        return [
+                            'success' => false,
+                            'message' => "Line item ID is required for refund item at index {$index}.",
+                            'errors' => ['line_items' => ["Each refund item must have a line_item_id."]],
+                        ];
+                    }
                     
+                    if (!isset($requestedItem['service_code']) || $requestedItem['service_code'] === null) {
+                        return [
+                            'success' => false,
+                            'message' => "Service code is required for refund item at index {$index}.",
+                            'errors' => ['line_items' => ["Each refund item must have a service_code."]],
+                        ];
+                    }
+
+                    $referenceId = (int) $requestedItem['line_item_id'];
+                    $serviceCode = (string) $requestedItem['service_code'];
+
+                    // Strategy 1: Try to find by service_code AND (service_catalog_id OR inventory_item_id)
                     $lineItem = InvoiceLineItem::query()
                         ->where('billing_cycle_id', $billingCycle->id)
                         ->where('service_code', $serviceCode)
-                        ->whereIn('line_item_status', ['pending', 'paid']) // Only active/paid items
+                        ->where(function ($query) use ($referenceId) {
+                            $query->where('service_catalog_id', $referenceId)
+                                ->orWhere('inventory_item_id', $referenceId);
+                        })
                         ->lockForUpdate()
                         ->first();
-                }
 
-                // If still not found, return error with available items
-                if (!$lineItem) {
-                    $availableLineItems = InvoiceLineItem::query()
-                        ->where('billing_cycle_id', $billingCycle->id)
-                        ->get(['id', 'service_code', 'service_catalog_id', 'inventory_item_id', 'service_description', 'line_item_status', 'quantity']);
-                    
-                    Log::error('No matching line item found', [
-                        'search_criteria' => [
+                    // Strategy 2: If not found, try to find by service_code only (for active items)
+                    if (!$lineItem) {
+                        Log::info('Strategy 1 failed, trying strategy 2 - match by service_code only', [
                             'service_code' => $serviceCode,
-                            'reference_id' => $referenceId
-                        ],
-                        'available_items' => $availableLineItems->toArray()
-                    ]);
-                    
-                    return [
-                        'success' => false,
-                        'message' => "Refund reference could not be resolved.",
-                        'errors' => [
-                            'line_items' => [
-                                "No refundable invoice line item found with service code '{$serviceCode}' and reference id {$referenceId}.",
-                                "Available line items in this billing cycle: " . $availableLineItems->map(fn($item) => 
-                                    "ID:{$item->id}, Code:{$item->service_code}, Catalog:{$item->service_catalog_id}, Inventory:{$item->inventory_item_id}, Status:{$item->line_item_status}, Qty:{$item->quantity}"
-                                )->implode('; ')
+                            'billing_cycle_id' => $billingCycle->id
+                        ]);
+                        
+                        $lineItem = InvoiceLineItem::query()
+                            ->where('billing_cycle_id', $billingCycle->id)
+                            ->where('service_code', $serviceCode)
+                            ->whereIn('line_item_status', ['pending', 'paid']) // Only active/paid items
+                            ->lockForUpdate()
+                            ->first();
+                    }
+
+                    // If still not found, return error with available items
+                    if (!$lineItem) {
+                        $availableLineItems = InvoiceLineItem::query()
+                            ->where('billing_cycle_id', $billingCycle->id)
+                            ->get(['id', 'service_code', 'service_catalog_id', 'inventory_item_id', 'service_description', 'line_item_status', 'quantity']);
+                        
+                        Log::error('No matching line item found', [
+                            'search_criteria' => [
+                                'service_code' => $serviceCode,
+                                'reference_id' => $referenceId
                             ],
-                        ],
-                    ];
-                }
-
-                // Check if the line item is refundable
-                if (!$this->isRefundableLineItem($lineItem)) {
-                    return [
-                        'success' => false,
-                        'message' => 'Matched line item is not refundable.',
-                        'errors' => [
-                            'line_items' => [
-                                "Line item '{$lineItem->service_description}' (ID: {$lineItem->id}) is not in a refundable state. Status: {$lineItem->line_item_status}, Quantity: {$lineItem->quantity}",
+                            'available_items' => $availableLineItems->toArray()
+                        ]);
+                        
+                        return [
+                            'success' => false,
+                            'message' => "Refund reference could not be resolved.",
+                            'errors' => [
+                                'line_items' => [
+                                    "No refundable invoice line item found with service code '{$serviceCode}' and reference id {$referenceId}.",
+                                    "Available line items in this billing cycle: " . $availableLineItems->map(fn($item) => 
+                                        "ID:{$item->id}, Code:{$item->service_code}, Catalog:{$item->service_catalog_id}, Inventory:{$item->inventory_item_id}, Status:{$item->line_item_status}, Qty:{$item->quantity}"
+                                    )->implode('; ')
+                                ],
                             ],
-                        ],
-                    ];
-                }
+                        ];
+                    }
 
-                // Check if requested refund amount exceeds available amount
-                $availableAmount = (float) $lineItem->line_total_amount;
-                $requestedAmount = isset($requestedItem['refund_amount']) ? (float) $requestedItem['refund_amount'] : $availableAmount;
-                
-                if ($requestedAmount > $availableAmount + 0.01) {
-                    return [
-                        'success' => false,
-                        'message' => "Refund amount exceeds available amount.",
-                        'errors' => [
-                            'line_items' => [
-                                "Requested refund amount {$requestedAmount} exceeds available amount {$availableAmount} for '{$lineItem->service_description}'.",
+                    // Check if the line item is refundable
+                    if (!$this->isRefundableLineItem($lineItem)) {
+                        return [
+                            'success' => false,
+                            'message' => 'Matched line item is not refundable.',
+                            'errors' => [
+                                'line_items' => [
+                                    "Line item '{$lineItem->service_description}' (ID: {$lineItem->id}) is not in a refundable state. Status: {$lineItem->line_item_status}, Quantity: {$lineItem->quantity}",
+                                ],
                             ],
-                        ],
-                    ];
-                }
+                        ];
+                    }
 
-                // Check if requested quantity exceeds available quantity
-                $availableQuantity = (float) $lineItem->quantity;
-                $requestedQuantity = isset($requestedItem['quantity']) ? (float) $requestedItem['quantity'] : $availableQuantity;
-                
-                if ($requestedQuantity > $availableQuantity + 0.01) {
-                    return [
-                        'success' => false,
-                        'message' => "Refund quantity exceeds available quantity.",
-                        'errors' => [
-                            'line_items' => [
-                                "Requested refund quantity {$requestedQuantity} exceeds available quantity {$availableQuantity} for '{$lineItem->service_description}'.",
+                    // Check if requested refund amount exceeds available amount
+                    $availableAmount = (float) $lineItem->line_total_amount;
+                    $requestedAmount = isset($requestedItem['refund_amount']) ? (float) $requestedItem['refund_amount'] : $availableAmount;
+                    
+                    if ($requestedAmount > $availableAmount + 0.01) {
+                        return [
+                            'success' => false,
+                            'message' => "Refund amount exceeds available amount.",
+                            'errors' => [
+                                'line_items' => [
+                                    "Requested refund amount {$requestedAmount} exceeds available amount {$availableAmount} for '{$lineItem->service_description}'.",
+                                ],
                             ],
-                        ],
-                    ];
+                        ];
+                    }
+
+                    // Check if requested quantity exceeds available quantity
+                    $availableQuantity = (float) $lineItem->quantity;
+                    $requestedQuantity = isset($requestedItem['quantity']) ? (float) $requestedItem['quantity'] : $availableQuantity;
+                    
+                    if ($requestedQuantity > $availableQuantity + 0.01) {
+                        return [
+                            'success' => false,
+                            'message' => "Refund quantity exceeds available quantity.",
+                            'errors' => [
+                                'line_items' => [
+                                    "Requested refund quantity {$requestedQuantity} exceeds available quantity {$availableQuantity} for '{$lineItem->service_description}'.",
+                                ],
+                            ],
+                        ];
+                    }
+
+                    // Determine which type of reference matched
+                    $serviceCatalogMatch = (int) ($lineItem->service_catalog_id ?? 0) === $referenceId;
+                    $inventoryMatch = (int) ($lineItem->inventory_item_id ?? 0) === $referenceId;
+
+                    $matchedReferenceType = $serviceCatalogMatch && $inventoryMatch
+                        ? 'service_catalog_or_inventory'
+                        : ($serviceCatalogMatch ? 'service_catalog' : 'inventory');
+
+                    try {
+                    $plan = $this->buildRefundPlanForLineItem(
+                                    $billingCycle,
+                                    $lineItem,
+                                    $requestedAmount,
+                                    $requestedQuantity,
+                                    $referenceId,
+                                    $matchedReferenceType
+                                );
+
+                        
+                        Log::info('Refund plan built successfully', [
+                            'line_item_id' => $lineItem->id,
+                            'service_code' => $lineItem->service_code,
+                            'service' => $lineItem->service_description,
+                            'refund_amount' => $plan['refund_net'],
+                            'refund_quantity' => $plan['refund_quantity'],
+                        ]);
+                        
+                        $plans[] = $plan;
+                        
+                    } catch (RuntimeException $e) {
+                        Log::error('Build refund plan failed', [
+                            'line_item_id' => $lineItem->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                        
+                        return [
+                            'success' => false,
+                            'message' => 'Invalid partial refund request: ' . $e->getMessage(),
+                            'errors' => ['line_items' => [$e->getMessage()]],
+                        ];
+                    }
                 }
 
-                // Determine which type of reference matched
-                $serviceCatalogMatch = (int) ($lineItem->service_catalog_id ?? 0) === $referenceId;
-                $inventoryMatch = (int) ($lineItem->inventory_item_id ?? 0) === $referenceId;
+                return $this->executeRefundAdjustment(
+                    $billingCycle,
+                    $plans,
+                    $refundData,
+                    $staffId,
+                    'partial_refund'
+                );
+            });
+        } catch (Throwable $e) {
+            Log::error('Partial refund processing failed', [
+                'billing_cycle_id' => $billingCycleId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
-                $matchedReferenceType = $serviceCatalogMatch && $inventoryMatch
-                    ? 'service_catalog_or_inventory'
-                    : ($serviceCatalogMatch ? 'service_catalog' : 'inventory');
-
-                try {
-                   $plan = $this->buildRefundPlanForLineItem(
-                                $billingCycle,
-                                $lineItem,
-                                $requestedAmount,
-                                $requestedQuantity,
-                                $referenceId,
-                                $matchedReferenceType
-                            );
-
-                    
-                    Log::info('Refund plan built successfully', [
-                        'line_item_id' => $lineItem->id,
-                        'service_code' => $lineItem->service_code,
-                        'service' => $lineItem->service_description,
-                        'refund_amount' => $plan['refund_net'],
-                        'refund_quantity' => $plan['refund_quantity'],
-                    ]);
-                    
-                    $plans[] = $plan;
-                    
-                } catch (RuntimeException $e) {
-                    Log::error('Build refund plan failed', [
-                        'line_item_id' => $lineItem->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                    
-                    return [
-                        'success' => false,
-                        'message' => 'Invalid partial refund request: ' . $e->getMessage(),
-                        'errors' => ['line_items' => [$e->getMessage()]],
-                    ];
-                }
-            }
-
-            return $this->executeRefundAdjustment(
-                $billingCycle,
-                $plans,
-                $refundData,
-                $staffId,
-                'partial_refund'
-            );
-        });
-    } catch (Throwable $e) {
-        Log::error('Partial refund processing failed', [
-            'billing_cycle_id' => $billingCycleId,
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString(),
-        ]);
-
-        return [
-            'success' => false,
-            'message' => 'Failed to process partial refund. All changes have been rolled back.',
-            'error' => config('app.debug') ? $e->getMessage() : null,
-        ];
+            return [
+                'success' => false,
+                'message' => 'Failed to process partial refund. All changes have been rolled back.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
     }
-}
 
     /**
      * Shared refund executor.
@@ -521,6 +590,10 @@ private function processPartialRefund(
         int $staffId,
         string $refundType
     ): array {
+        // Take cycle snapshot before any mutations
+        $beforeCycleSnapshot = $this->billingAuditTrail->snapshotBillingCycle($billingCycle);
+        $beforeLineItemSnapshots = [];
+        
         $originalSnapshot = $this->createBillingSnapshot($billingCycle->fresh(['lineItems']));
 
         $originalSubtotal = $this->getActiveBillingCycleSubtotal($billingCycle);
@@ -570,14 +643,17 @@ private function processPartialRefund(
             $originalInsurancePaid
         );
 
-        // Apply refund plans to each line item FIRST
+        // Apply refund plans to each line item FIRST, capturing before snapshots
         foreach ($plans as $plan) {
-            $lineItem = InvoiceLineItem::query()
+            $lockedLineItem = InvoiceLineItem::query()
                 ->lockForUpdate()
                 ->findOrFail($plan['line_item_id']);
+            
+            // Capture snapshot before applying refund
+            $beforeLineItemSnapshots[$plan['line_item_id']] = $this->billingAuditTrail->snapshotLineItem($lockedLineItem);
 
             $this->applyRefundPlanToLineItem(
-                $lineItem,
+                $lockedLineItem,
                 $plan,
                 $refundData['reason'],
                 $staffId
@@ -676,6 +752,30 @@ private function processPartialRefund(
             ]),
         ]);
 
+        // Log financial adjustment event
+        $this->billingAuditTrail->logFinancialAdjustmentEvent(
+            $adjustment,
+            $billingCycle,
+            $refundType === 'full_refund' ? 'billing_cycle_full_refund_created' : 'billing_cycle_partial_refund_created',
+            $refundType === 'full_refund' ? 'Full refund created' : 'Partial refund created',
+            $staffId,
+            $refundData['reason'],
+            [],
+            [
+                'refund_amount' => $cashRefundAmount,
+                'patient_refund_amount' => $patientRefundAmount,
+                'insurance_refund_amount' => $insuranceRefundAmount,
+                'refund_type' => $refundType,
+                'reference_number' => $adjustment->reference_number,
+            ],
+            [
+                'action' => 'Refunded',
+                'description' => $refundType === 'full_refund'
+                    ? 'Full refund financial adjustment was created.'
+                    : 'Partial refund financial adjustment was created.',
+            ]
+        );
+
         // Update billing cycle with new values
         $existingRefunds = is_array($metadata['refunds'] ?? null) ? $metadata['refunds'] : [];
 
@@ -773,6 +873,68 @@ private function processPartialRefund(
                 $staffId
             );
         }
+
+        // Log per-line-item refund events after cycle is saved and refreshed
+        foreach ($plans as $plan) {
+            $lineItem = InvoiceLineItem::query()->withTrashed()->find($plan['line_item_id']);
+            if (!$lineItem) {
+                continue;
+            }
+
+            $eventKey = !empty($plan['is_fully_refunded'])
+                ? 'line_item_fully_refunded'
+                : 'line_item_partially_refunded';
+
+            $title = !empty($plan['is_fully_refunded'])
+                ? 'Charge item fully refunded'
+                : 'Charge item partially refunded';
+
+            $this->billingAuditTrail->logLineItemEvent(
+                $lineItem,
+                $billingCycle,
+                $eventKey,
+                $title,
+                $staffId,
+                $refundData['reason'],
+                $beforeLineItemSnapshots[$plan['line_item_id']] ?? [],
+                $this->billingAuditTrail->snapshotLineItem($lineItem),
+                [
+                    'action' => 'Refunded',
+                    'description' => "Refund processed for '{$lineItem->service_description}'.",
+                    'financial_adjustment_id' => $adjustment->id,
+                    'reference_number' => $adjustment->reference_number,
+                    'refund_type' => $refundType,
+                    'refund_quantity' => $plan['refund_quantity'],
+                    'refund_subtotal' => $plan['refund_subtotal'],
+                    'refund_discount' => $plan['refund_discount'],
+                    'refund_net' => $plan['refund_net'],
+                    'remaining_quantity' => $plan['remaining_quantity'],
+                ]
+            );
+        }
+
+        // Log cycle-level refund event
+        $this->billingAuditTrail->logBillingCycleEvent(
+            $billingCycle,
+            $refundType === 'full_refund' ? 'billing_cycle_fully_refunded' : 'billing_cycle_partially_refunded',
+            $refundType === 'full_refund' ? 'Billing cycle fully refunded' : 'Billing cycle partially refunded',
+            $staffId,
+            $refundData['reason'],
+            $beforeCycleSnapshot,
+            $this->billingAuditTrail->snapshotBillingCycle($billingCycle),
+            [
+                'action' => 'Refunded',
+                'description' => $refundType === 'full_refund'
+                    ? 'All refundable charge items were refunded from this billing cycle.'
+                    : 'One or more charge items were refunded from this billing cycle.',
+                'financial_adjustment_id' => $adjustment->id,
+                'reference_number' => $adjustment->reference_number,
+                'refund_amount' => $cashRefundAmount,
+                'patient_refund_amount' => $patientRefundAmount,
+                'insurance_refund_amount' => $insuranceRefundAmount,
+                'affected_line_items_count' => count($plans),
+            ]
+        );
 
         // Complete the adjustment
         $this->completeAdjustment($adjustment, $staffId);

@@ -14,6 +14,8 @@ use App\Services\Billing\Traits\BillingHelpers;
 use App\Services\Billing\Validation\BillingValidation;
 use Illuminate\Support\Facades\Log;
 use Throwable;
+use App\Services\Billing\Support\BillingAuditTrailService;
+
 
 class BillingService
 {
@@ -22,11 +24,18 @@ class BillingService
     protected BillingValidation $validation;
     protected BillingProcessor $processor;
 
-    public function __construct(BillingValidation $validation, BillingProcessor $processor)
-    {
+   protected BillingAuditTrailService $billingAuditTrail;
+
+    public function __construct(
+        BillingValidation $validation,
+        BillingProcessor $processor,
+        BillingAuditTrailService $billingAuditTrail
+    ) {
         $this->validation = $validation;
         $this->processor = $processor;
+        $this->billingAuditTrail = $billingAuditTrail;
     }
+
 
     /**
      * Save a billing submission.
@@ -388,12 +397,19 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?
         ? $billingCycle->lineItems
         : $billingCycle->lineItems()->get();
 
-    $activeLineItems = $this->getActiveBillingCycleLineItems($billingCycle->setRelation('lineItems', $lineItems));
-    
-    // Get refunded items from financial adjustments
-    $refundedItems = $this->getRefundedItemsFromAdjustments($billingCycle);
-    
-    $state = $this->buildCycleStateSnapshot($billingCycle->setRelation('lineItems', $lineItems));
+    $billingCycle->setRelation('lineItems', $lineItems);
+
+    $activeLineItems = $this->getActiveBillingCycleLineItems($billingCycle);
+    $auditBundle = $this->billingAuditTrail->buildBillingCycleAuditBundle($billingCycle);
+    $lineItemAuditMap = $auditBundle['line_items'] ?? [];
+
+    $refundedItems = $this->getRefundedItemsFromAdjustments(
+        $billingCycle,
+        $currentStaffId,
+        $lineItemAuditMap
+    );
+
+    $state = $this->buildCycleStateSnapshot($billingCycle);
     $billingData = $this->buildBillingDataFromState($state);
 
     $paymentMethods = is_array($metadata['payment_methods'] ?? null)
@@ -430,8 +446,13 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?
         'attending_staff_name' => $this->resolveStaffDisplayName($billingCycle->created_by_staff_id),
         'attending_staff_role' => $this->resolveFacilityRoleCode($billingCycle->created_by_staff_id, $visit->facility_id),
         'attending_staff_display' => $this->resolveAttendingStaffDisplay($billingCycle->created_by_staff_id, $visit->facility_id),
-        'charge_items' => $activeLineItems->map(function (InvoiceLineItem $lineItem) use ($billingCycle, $currentStaffId) {
-            return $this->transformLineItem($lineItem, $billingCycle, $currentStaffId);
+        'charge_items' => $activeLineItems->map(function (InvoiceLineItem $lineItem) use ($billingCycle, $currentStaffId, $lineItemAuditMap) {
+            return $this->transformLineItem(
+                $lineItem,
+                $billingCycle,
+                $currentStaffId,
+                $lineItemAuditMap[(int) $lineItem->id] ?? []
+            );
         })->values()->toArray(),
         'refunded_items' => $refundedItems,
         'discount' => $discount,
@@ -441,6 +462,12 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?
         'payment_status' => (string) ($state['payment_status'] ?? 'pending'),
         'status' => (string) ($state['ui_status'] ?? $this->mapBillingStatusToUI((string) $billingCycle->billing_status)),
         'billing_data' => $billingData,
+        'audit_logs' => $auditBundle['timeline'] ?? [],
+        'audit_logs_summary' => $auditBundle['summary'] ?? [
+            'count' => 0,
+            'last_event_at' => null,
+            'last_event' => null,
+        ],
         'billed_at' => optional($billingCycle->billed_at)->toIso8601String(),
         'created_at' => optional($billingCycle->created_at)->toIso8601String(),
         'updated_at' => optional($billingCycle->updated_at)->toIso8601String(),
@@ -457,7 +484,6 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?
         ],
     ];
 }
-
 /**
  * Get refunded items from financial adjustments for a billing cycle.
  * This extracts the affected_line_items from refund adjustments.
@@ -465,8 +491,11 @@ public function transformBillingData(BillingCycle $billingCycle, Visit $visit, ?
 /**
  * Get refunded items from financial adjustments for a billing cycle.
  */
-protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): array
-{
+protected function getRefundedItemsFromAdjustments(
+    BillingCycle $billingCycle,
+    ?int $currentStaffId = null,
+    array $lineItemAuditMap = []
+): array {
     $refundedItems = [];
     
     // Get all refund adjustments for this billing cycle
@@ -498,7 +527,7 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
         // Get the staff member who processed the refund
         $refundedByStaffId = $adjustment->approved_by_staff_id ?? $adjustment->requested_by_staff_id;
         $refundedByStaffName = null;
-        $staffNumber=Staff::where('id',$refundedByStaffId)->value('staff_uuid');
+        $staffNumber = Staff::where('id', $refundedByStaffId)->value('staff_uuid');
         
         if ($refundedByStaffId) {
             $staff = Staff::query()->find($refundedByStaffId);
@@ -513,6 +542,10 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
                 ->where('id', $item['line_item_id'] ?? 0)
                 ->withTrashed()
                 ->first();
+            
+            // Get audit logs for this line item
+            $lineItemId = (int) ($item['line_item_id'] ?? 0);
+            $auditLogs = $lineItemId > 0 ? ($lineItemAuditMap[$lineItemId] ?? []) : [];
             
             $refundedItems[] = [
                 'id' => 'refund::' . ($item['line_item_uuid'] ?? $item['line_item_id']),
@@ -561,7 +594,7 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
                     'refund_reason' => $adjustment->adjustment_reason,
                     'refunded_at' => optional($adjustment->completed_at)->toIso8601String() ?? optional($adjustment->created_at)->toIso8601String(),
                     'refunded_by_staff_id' => $staffNumber,
-                    'refunded_by_staff_name' => $refundedByStaffName,  // Add staff name
+                    'refunded_by_staff_name' => $refundedByStaffName,
                 ],
                 'permissions' => [
                     'entered_by_staff_id' => null,
@@ -576,14 +609,101 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
                     'adjustment_type' => $adjustment->adjustment_type,
                     'completed_at' => optional($adjustment->completed_at)->toIso8601String(),
                 ],
+                'audit_logs' => $auditLogs,
+                'audit_logs_summary' => [
+                    'count' => count($auditLogs),
+                    'last_event_at' => $auditLogs[0]['performed_at'] ?? null,
+                    'last_event' => $auditLogs[0] ?? null,
+                ],
             ];
         }
     }
     
     return $refundedItems;
 }
+    public function getBillingByVisitForFacility(int $visitId, int $facilityId, ?int $currentStaffId = null): array
+    {
+        try {
+            $visit = Visit::query()
+                ->where('id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['patient.user'])
+                ->first();
 
-    public function getBillingByFacility(
+            if (!$visit) {
+                return [
+                    'success' => false,
+                    'message' => 'Visit not found or does not belong to this facility.',
+                    'errors' => ['visit_id' => ['Invalid visit for this facility.']],
+                ];
+            }
+
+            $billingCycle = BillingCycle::query()
+                ->where('visit_id', $visitId)
+                ->where('facility_id', $facilityId)
+                ->with(['lineItems' => fn ($q) => $q->withTrashed()])
+                ->latest('id')
+                ->first();
+
+            if (!$billingCycle) {
+                return [
+                    'success' => true,
+                    'message' => 'No billing record found for this visit.',
+                    'data' => [
+                        'items' => [],
+                        'pagination' => [
+                            'current_page' => 1,
+                            'per_page' => 1,
+                            'total_items' => 0,
+                            'total_pages' => 0,
+                            'from' => null,
+                            'to' => null,
+                            'has_previous' => false,
+                            'has_next' => false,
+                        ],
+                        'filters_applied' => [],
+                        'search_term' => null,
+                        'visit_id' => $visitId,
+                        'has_billing' => false,
+                    ],
+                ];
+            }
+
+            return [
+                'success' => true,
+                'message' => 'Billing data retrieved successfully.',
+                'data' => [
+                    'items' => [$this->transformBillingData($billingCycle, $visit, $currentStaffId)],
+                    'pagination' => [
+                        'current_page' => 1,
+                        'per_page' => 1,
+                        'total_items' => 1,
+                        'total_pages' => 1,
+                        'from' => 1,
+                        'to' => 1,
+                        'has_previous' => false,
+                        'has_next' => false,
+                    ],
+                    'filters_applied' => [],
+                    'search_term' => null,
+                ],
+            ];
+        } catch (Throwable $e) {
+            Log::error('Billing retrieval by visit/facility shape failed.', [
+                'visit_id' => $visitId,
+                'facility_id' => $facilityId,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'An unexpected error occurred while retrieving billing data.',
+                'errors' => ['system' => ['Failed to retrieve billing information.']],
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
+    }
+  public function getBillingByFacility(
         int $facilityId,
         array $filters = [],
         string $search = '',
@@ -694,90 +814,6 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
             ];
         }
     }
-
-    public function getBillingByVisitForFacility(int $visitId, int $facilityId, ?int $currentStaffId = null): array
-    {
-        try {
-            $visit = Visit::query()
-                ->where('id', $visitId)
-                ->where('facility_id', $facilityId)
-                ->with(['patient.user'])
-                ->first();
-
-            if (!$visit) {
-                return [
-                    'success' => false,
-                    'message' => 'Visit not found or does not belong to this facility.',
-                    'errors' => ['visit_id' => ['Invalid visit for this facility.']],
-                ];
-            }
-
-            $billingCycle = BillingCycle::query()
-                ->where('visit_id', $visitId)
-                ->where('facility_id', $facilityId)
-                ->with(['lineItems' => fn ($q) => $q->withTrashed()])
-                ->latest('id')
-                ->first();
-
-            if (!$billingCycle) {
-                return [
-                    'success' => true,
-                    'message' => 'No billing record found for this visit.',
-                    'data' => [
-                        'items' => [],
-                        'pagination' => [
-                            'current_page' => 1,
-                            'per_page' => 1,
-                            'total_items' => 0,
-                            'total_pages' => 0,
-                            'from' => null,
-                            'to' => null,
-                            'has_previous' => false,
-                            'has_next' => false,
-                        ],
-                        'filters_applied' => [],
-                        'search_term' => null,
-                        'visit_id' => $visitId,
-                        'has_billing' => false,
-                    ],
-                ];
-            }
-
-            return [
-                'success' => true,
-                'message' => 'Billing data retrieved successfully.',
-                'data' => [
-                    'items' => [$this->transformBillingData($billingCycle, $visit, $currentStaffId)],
-                    'pagination' => [
-                        'current_page' => 1,
-                        'per_page' => 1,
-                        'total_items' => 1,
-                        'total_pages' => 1,
-                        'from' => 1,
-                        'to' => 1,
-                        'has_previous' => false,
-                        'has_next' => false,
-                    ],
-                    'filters_applied' => [],
-                    'search_term' => null,
-                ],
-            ];
-        } catch (Throwable $e) {
-            Log::error('Billing retrieval by visit/facility shape failed.', [
-                'visit_id' => $visitId,
-                'facility_id' => $facilityId,
-                'error_message' => $e->getMessage(),
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'An unexpected error occurred while retrieving billing data.',
-                'errors' => ['system' => ['Failed to retrieve billing information.']],
-                'error' => config('app.debug') ? $e->getMessage() : null,
-            ];
-        }
-    }
-
     public function getBillingStatistics(int $facilityId, array $filters = []): array
     {
         try {
@@ -1052,50 +1088,59 @@ protected function getRefundedItemsFromAdjustments(BillingCycle $billingCycle): 
         );
     }
 
-    protected function transformLineItem(InvoiceLineItem $lineItem, BillingCycle $billingCycle, ?int $currentStaffId = null): array
-    {
-        $serviceSnapshot = $this->decodeJsonishToArray($lineItem->service_version_snapshot ?? null);
-        $lineMetadata = $this->decodeJsonishToArray($lineItem->metadata ?? null);
+   protected function transformLineItem(
+    InvoiceLineItem $lineItem,
+    BillingCycle $billingCycle,
+    ?int $currentStaffId = null,
+    array $auditLogs = []
+): array {
+    $serviceSnapshot = $this->decodeJsonishToArray($lineItem->service_version_snapshot ?? null);
+    $lineMetadata = $this->decodeJsonishToArray($lineItem->metadata ?? null);
 
-        $serviceCode = (string) ($lineItem->service_code ?? '');
-        $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : 'key::unknown'));
-        $enteredByStaffId = $lineMetadata['originated_by_staff_id']
-            ?? $lineItem->created_by_staff_id
-            ?? $billingCycle->created_by_staff_id;
+    $serviceCode = (string) ($lineItem->service_code ?? '');
+    $serviceKey = (string) ($lineMetadata['service_key'] ?? ($serviceCode !== '' ? "key::{$serviceCode}" : 'key::unknown'));
+    $enteredByStaffId = $lineMetadata['originated_by_staff_id']
+        ?? $lineItem->created_by_staff_id
+        ?? $billingCycle->created_by_staff_id;
 
-        return [
-            'id' => $lineItem->line_item_uuid ? 'backend-charge::' . $lineItem->line_item_uuid : 'backend-charge::' . $lineItem->id,
-            'source' => 'backend',
-            'persisted' => true,
-            'line_item_id' => $lineItem->id,
-            'line_item_uuid' => $lineItem->line_item_uuid,
-            'billing_cycle_id' => $billingCycle->id,
-            'service_key' => $serviceKey,
-            'serviceKey' => $serviceKey,
-            'service' => [
-                'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
-                'code' => $serviceCode,
-                'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
-                'unitPrice' => round((float) ($lineItem->unit_price_at_time ?? 0), 2),
-                'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
-            ],
-            'quantity' => round((float) ($lineItem->quantity ?? 0), 2),
-            'totalAmount' => round((float) ($lineItem->line_total_amount ?? 0), 2),
-            'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
-            'entered_by_staff_id' => $enteredByStaffId,
-            'entered_by_staff_name' => $this->resolveStaffDisplayName($enteredByStaffId),
-            'permissions' => $this->buildLineItemEditPolicy($enteredByStaffId ? (int) $enteredByStaffId : null, $currentStaffId),
-            'audit' => [
-                'originated_by_staff_id' => $enteredByStaffId,
-                'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
-                'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
-                'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
-                'adjustment_history' => $lineMetadata['adjustment_history'] ?? [],
-                'discount_scope' => 'billing_cycle',
-            ],
-        ];
-    }
-
+    return [
+        'id' => $lineItem->line_item_uuid ? 'backend-charge::' . $lineItem->line_item_uuid : 'backend-charge::' . $lineItem->id,
+        'source' => 'backend',
+        'persisted' => true,
+        'line_item_id' => $lineItem->id,
+        'line_item_uuid' => $lineItem->line_item_uuid,
+        'billing_cycle_id' => $billingCycle->id,
+        'service_key' => $serviceKey,
+        'serviceKey' => $serviceKey,
+        'service' => [
+            'id' => $lineItem->service_version_id ?? ($serviceSnapshot['id'] ?? null),
+            'code' => $serviceCode,
+            'name' => (string) ($lineItem->service_description ?? ($serviceSnapshot['name'] ?? '')),
+            'unitPrice' => round((float) ($lineItem->unit_price_at_time ?? 0), 2),
+            'category' => (string) ($lineMetadata['category'] ?? ($serviceSnapshot['category'] ?? 'General')),
+        ],
+        'quantity' => round((float) ($lineItem->quantity ?? 0), 2),
+        'totalAmount' => round((float) ($lineItem->line_total_amount ?? 0), 2),
+        'line_item_status' => (string) ($lineItem->line_item_status ?? 'pending'),
+        'entered_by_staff_id' => $enteredByStaffId,
+        'entered_by_staff_name' => $this->resolveStaffDisplayName($enteredByStaffId),
+        'permissions' => $this->buildLineItemEditPolicy($enteredByStaffId ? (int) $enteredByStaffId : null, $currentStaffId),
+        'audit' => [
+            'originated_by_staff_id' => $enteredByStaffId,
+            'last_adjusted_by_staff_id' => $lineMetadata['last_adjusted_by_staff_id'] ?? null,
+            'last_appended_by_staff_id' => $lineMetadata['last_appended_by_staff_id'] ?? null,
+            'last_adjusted_at' => $lineMetadata['last_adjusted_at'] ?? null,
+            'adjustment_history' => $lineMetadata['adjustment_history'] ?? [],
+            'discount_scope' => 'billing_cycle',
+        ],
+        'audit_logs' => $auditLogs,
+        'audit_logs_summary' => [
+            'count' => count($auditLogs),
+            'last_event_at' => $auditLogs[0]['performed_at'] ?? null,
+            'last_event' => $auditLogs[0] ?? null,
+        ],
+    ];
+}
     protected function resolveStaffDisplayName(?int $staffId): ?string
     {
         if (!$staffId) {

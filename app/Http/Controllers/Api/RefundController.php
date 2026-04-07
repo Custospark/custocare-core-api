@@ -10,6 +10,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Throwable;
+use App\Models\FacilityStaffRole;
+use App\Models\Staff;
+
 
 class RefundController extends Controller
 {
@@ -26,11 +29,14 @@ class RefundController extends Controller
     public function voidTransaction(Request $request, int $billingCycleId): JsonResponse
     {
         try {
-            [$facilityId, $staffId, $headerError] = $this->extractHeaders($request);
-
-            if ($headerError) {
-                return $headerError;
+            $context = $this->validateExecutionContext($request);
+            if ($context instanceof JsonResponse) {
+                return $context;
             }
+
+            $facilityId = $context['facility_id'];
+            $staffId = $context['staff_id'];
+
 
             $validated = $request->validate([
                 'reason' => 'required|in:billing_error,service_not_rendered,duplicate_charge,patient_request,administrative_correction,pricing_error,cancelled_service,other',
@@ -71,13 +77,15 @@ class RefundController extends Controller
      */
     public function refundTransaction(RefundTransactionRequest $request, int $billingCycleId): JsonResponse
     {
-        Log::info($request);
         try {
-            [$facilityId, $staffId, $headerError] = $this->extractHeaders($request);
-
-            if ($headerError) {
-                return $headerError;
+          $context = $this->validateExecutionContext($request);
+            if ($context instanceof JsonResponse) {
+                return $context;
             }
+
+            $facilityId = $context['facility_id'];
+            $staffId = $context['staff_id'];
+
 
             $validated = $request->validated();
 
@@ -147,4 +155,63 @@ class RefundController extends Controller
 
         return [$facilityId, $staffId, null];
     }
+
+        protected function resolveFacilityId(Request $request): int
+    {
+        return (int) $request->header('X-Facility-Id');
+    }
+
+    protected function resolveCurrentStaffId(Request $request, int $facilityId): ?int
+    {
+        $user = $request->user();
+
+        if (!$user || $facilityId <= 0) {
+            return null;
+        }
+
+        $staffIds = Staff::query()
+            ->where('user_id', $user->id)
+            ->pluck('id');
+
+        if ($staffIds->isEmpty()) {
+            return null;
+        }
+
+        $staffId = FacilityStaffRole::query()
+            ->where('facility_id', $facilityId)
+            ->whereIn('staff_id', $staffIds)
+            ->value('staff_id');
+
+        return $staffId ? (int) $staffId : null;
+    }
+
+    protected function validateExecutionContext(Request $request): array|JsonResponse
+    {
+        $facilityId = $this->resolveFacilityId($request);
+        $staffId = $this->resolveCurrentStaffId($request, $facilityId);
+
+        $errors = [];
+
+        if ($facilityId <= 0) {
+            $errors['facility_id'] = ['X-Facility-Id header is required.'];
+        }
+
+        if ($staffId === null) {
+            $errors['staff_id'] = ['Authenticated staff could not be resolved for this facility.'];
+        }
+
+        if (!empty($errors)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Refund request context could not be established.',
+                'errors' => $errors,
+            ], 422);
+        }
+
+        return [
+            'facility_id' => $facilityId,
+            'staff_id' => $staffId,
+        ];
+    }
+
 }

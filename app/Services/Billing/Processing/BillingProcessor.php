@@ -627,6 +627,7 @@ protected function createOrUpdateLineItems(
             if (!in_array($visit->status, ['cancelled', 'no_show'], true)) {
                 $visit->status = 'active';
             }
+            $visit->assigned_staff_id = $assignedStaffId;
 
             unset($metadata['visit_completion']);
         }
@@ -634,7 +635,6 @@ protected function createOrUpdateLineItems(
         $visit->estimated_total_charges = $grandTotal;
         $visit->patient_estimated_responsibility = $balance;
         $visit->updated_by_staff_id = $staffId;
-        $visit->assigned_staff_id = $assignedStaffId;
 
         $metadata['billing'][] = [
             'billing_cycle_id' => $billingCycle->id,

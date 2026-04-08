@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\BillingController;
 use App\Http\Controllers\Api\BillableItemsController;
+use App\Http\Controllers\Api\BillingRevenueDashboardController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('billing')->middleware(['auth:sanctum'])->group(function () {
@@ -17,4 +18,7 @@ Route::prefix('billing')->middleware(['auth:sanctum'])->group(function () {
     Route::get('/facility/{facilityId}', [BillingController::class, 'getByFacility']);
     Route::get('/facility/{facilityId}/statistics', [BillingController::class, 'getFacilityStatistics']);
     Route::get('/patient/{patientId}', [BillingController::class, 'getByPatient']);
+
+    Route::get('/dashboard/revenue', [BillingRevenueDashboardController::class, 'index']);
+
 });

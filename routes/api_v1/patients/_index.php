@@ -1,10 +1,11 @@
 <?php
 use App\Http\Controllers\Api\PatientController;
+use App\Http\Controllers\Api\PatientAnalyticsController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('patients')
     ->name('patients.')
-    ->middleware(['api', 'auth:sanctum'])
+    ->middleware(['auth:sanctum'])
     ->group(function () {
         // Collection / custom routes FIRST
         Route::get('/', [PatientController::class, 'index'])->name('index');
@@ -26,6 +27,10 @@ Route::prefix('patients')
         Route::get('/blood-type/{bloodType}', [PatientController::class, 'byBloodType'])->name('by-blood-type');
         Route::get('/requiring-isolation', [PatientController::class, 'requiringIsolation'])->name('requiring-isolation');
 
+        //Hospital;/clinic Patient Analytics
+        Route::get('/facility-patient-analytics', [PatientAnalyticsController::class, 'overview']);
+
+        
         // Item routes LAST
         Route::prefix('{patient}')->group(function () {
             Route::get('/', [PatientController::class, 'show'])->name('show');
@@ -37,4 +42,5 @@ Route::prefix('patients')
             Route::post('/status', [PatientController::class, 'updateStatus'])->name('update-status');
             Route::get('/export', [PatientController::class, 'export'])->name('export');
         });
+        
     });

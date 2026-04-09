@@ -30,15 +30,15 @@ class PatientAnalyticsService
             $visitsQuery = $this->baseVisitsQuery($facilityId, $startDate, $endDate);
             $previousVisitsQuery = $this->baseVisitsQuery($facilityId, $previousStart, $previousEnd);
 
-            $patientIds = (clone $visitsQuery)
-                ->whereNotNull('patient_id')
-                ->distinct()
-                ->pluck('patient_id');
+            $patientIds = $this->extractDistinctPatientIds($visitsQuery);
+            $previousPatientIds = $this->extractDistinctPatientIds($previousVisitsQuery);
 
-            $previousPatientIds = (clone $previousVisitsQuery)
-                ->whereNotNull('patient_id')
-                ->distinct()
-                ->pluck('patient_id');
+            $patientMix = $this->getPatientMixForRange(
+                $facilityId,
+                $startDate,
+                $endDate,
+                $patientIds
+            );
 
             return [
                 'period' => [
@@ -46,14 +46,20 @@ class PatientAnalyticsService
                     'start_date' => $startDate->toDateString(),
                     'end_date' => $endDate->toDateString(),
                 ],
-                'kpi' => $this->buildKpi($visitsQuery, $previousVisitsQuery, $patientIds, $previousPatientIds),
+                'kpi' => $this->buildKpi(
+                    $visitsQuery,
+                    $previousVisitsQuery,
+                    $patientIds,
+                    $previousPatientIds,
+                    $patientMix
+                ),
                 'patient_trends' => $this->buildPatientTrends($facilityId, $startDate, $endDate),
-                'patient_flow' => $this->buildPatientFlow($facilityId, $visitsQuery),
-                'demographics' => $this->buildDemographics($patientIds),
+                'patient_flow' => $this->buildPatientFlow($visitsQuery),
+                'demographics' => $this->buildDemographics($patientIds, $endDate),
                 'visit_types' => $this->buildVisitTypes($visitsQuery),
-                'retention' => $this->buildRetention($facilityId, $startDate, $endDate, $patientIds),
+                'retention' => $this->buildRetention($visitsQuery, $patientIds, $patientMix),
                 'revenue' => $this->buildRevenue($visitsQuery),
-                'alerts' => $this->buildAlerts($facilityId, $visitsQuery, $previousVisitsQuery),
+                'alerts' => $this->buildAlerts($visitsQuery, $previousVisitsQuery),
             ];
         } catch (Throwable $e) {
             Log::error('Dashboard service failed.', [
@@ -78,9 +84,87 @@ class PatientAnalyticsService
             ->whereBetween('arrived_at', [$startDate, $endDate]);
     }
 
+    protected function extractDistinctPatientIds(Builder $visitsQuery): Collection
+    {
+        return (clone $visitsQuery)
+            ->whereNotNull('patient_id')
+            ->distinct()
+            ->pluck('patient_id');
+    }
+
+    /**
+     * First-ever visit per patient for a facility.
+     */
+    protected function firstVisitPerPatientSubquery(int $facilityId): Builder
+    {
+        return Visit::query()
+            ->where('facility_id', $facilityId)
+            ->whereNotNull('patient_id')
+            ->selectRaw('patient_id, MIN(arrived_at) as first_arrived_at')
+            ->groupBy('patient_id');
+    }
+
+    /**
+     * Consistent patient cohort logic used by KPI and retention.
+     *
+     * New patient:
+     *   first-ever facility visit is within selected range.
+     *
+     * Returning patient:
+     *   patient has a visit in selected range and first-ever facility visit is before selected range.
+     */
+    protected function getPatientMixForRange(
+        int $facilityId,
+        CarbonInterface $startDate,
+        CarbonInterface $endDate,
+        Collection $patientIds
+    ): array {
+        if ($patientIds->isEmpty()) {
+            return [
+                'new' => 0,
+                'returning' => 0,
+            ];
+        }
+
+        $stats = DB::query()
+            ->fromSub($this->firstVisitPerPatientSubquery($facilityId), 'first_visits')
+            ->whereIn('patient_id', $patientIds->values()->all())
+            ->selectRaw(
+                '
+                SUM(CASE WHEN first_arrived_at BETWEEN ? AND ? THEN 1 ELSE 0 END) as new_patients,
+                SUM(CASE WHEN first_arrived_at < ? THEN 1 ELSE 0 END) as returning_patients
+                ',
+                [
+                    $startDate->toDateTimeString(),
+                    $endDate->toDateTimeString(),
+                    $startDate->toDateTimeString(),
+                ]
+            )
+            ->first();
+
+        return [
+            'new' => (int) ($stats->new_patients ?? 0),
+            'returning' => (int) ($stats->returning_patients ?? 0),
+        ];
+    }
+
     protected function resolveDateRange(string $period, ?string $dateFrom, ?string $dateTo): array
     {
         $now = Carbon::now();
+
+        if ($period === 'custom') {
+            $start = Carbon::parse($dateFrom ?? $dateTo ?? $now)->startOfDay();
+            $end = Carbon::parse($dateTo ?? $dateFrom ?? $now)->endOfDay();
+
+            if ($start->gt($end)) {
+                [$start, $end] = [
+                    $end->copy()->startOfDay(),
+                    $start->copy()->endOfDay(),
+                ];
+            }
+
+            return [$start, $end];
+        }
 
         return match ($period) {
             'today' => [
@@ -94,10 +178,6 @@ class PatientAnalyticsService
             'month' => [
                 $now->copy()->startOfMonth(),
                 $now->copy()->endOfMonth(),
-            ],
-            'custom' => [
-                Carbon::parse($dateFrom)->startOfDay(),
-                Carbon::parse($dateTo)->endOfDay(),
             ],
             default => [
                 $now->copy()->startOfWeek(),
@@ -130,14 +210,16 @@ class PatientAnalyticsService
         Builder $visitsQuery,
         Builder $previousVisitsQuery,
         Collection $patientIds,
-        Collection $previousPatientIds
+        Collection $previousPatientIds,
+        array $patientMix
     ): array {
         $totalPatients = $patientIds->count();
         $previousTotalPatients = $previousPatientIds->count();
         $patientGrowth = $this->percentageChange($previousTotalPatients, $totalPatients);
 
-        $newPatients = $patientIds->diff($previousPatientIds)->count();
-        $returningPatients = $patientIds->intersect($previousPatientIds)->count();
+        $newPatients = (int) ($patientMix['new'] ?? 0);
+        $returningPatients = (int) ($patientMix['returning'] ?? 0);
+
         $newPatientRate = $totalPatients > 0
             ? round(($newPatients / $totalPatients) * 100, 1)
             : 0;
@@ -215,16 +297,10 @@ class PatientAnalyticsService
             ])
             ->values();
 
-        $firstVisitSubquery = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereNotNull('patient_id')
-            ->selectRaw('patient_id, MIN(arrived_at) as first_arrived_at')
-            ->groupBy('patient_id');
-
         $newPatientGrowthRaw = DB::query()
-            ->fromSub($firstVisitSubquery, 'first_visits')
-            ->selectRaw('DATE(first_arrived_at) as date, COUNT(*) as new_count')
+            ->fromSub($this->firstVisitPerPatientSubquery($facilityId), 'first_visits')
             ->whereBetween('first_arrived_at', [$startDate, $endDate])
+            ->selectRaw('DATE(first_arrived_at) as date, COUNT(*) as new_count')
             ->groupBy(DB::raw('DATE(first_arrived_at)'))
             ->orderBy('date')
             ->pluck('new_count', 'date');
@@ -266,13 +342,15 @@ class PatientAnalyticsService
         ];
     }
 
-    protected function buildPatientFlow(int $facilityId, Builder $visitsQuery): array
+    protected function buildPatientFlow(Builder $visitsQuery): array
     {
         $visits = (clone $visitsQuery)->get([
             'arrived_at',
             'registered_at',
             'clinical_care_started_at',
             'clinical_care_ended_at',
+            'current_phase',
+            'status',
         ]);
 
         if ($visits->isEmpty()) {
@@ -310,8 +388,7 @@ class PatientAnalyticsService
             }
         }
 
-        $queueLength = Visit::query()
-            ->where('facility_id', $facilityId)
+        $queueLength = (clone $visitsQuery)
             ->whereIn('current_phase', ['waiting_triage', 'waiting_provider', 'registration'])
             ->whereIn('status', ['active', 'in_progress'])
             ->count();
@@ -324,7 +401,7 @@ class PatientAnalyticsService
         ];
     }
 
-    protected function buildDemographics(Collection $patientIds): array
+    protected function buildDemographics(Collection $patientIds, CarbonInterface $asOfDate): array
     {
         if ($patientIds->isEmpty()) {
             return [
@@ -353,14 +430,12 @@ class PatientAnalyticsService
             '65+' => 0,
         ];
 
-        $now = Carbon::now();
-
         foreach ($patients as $patient) {
             if (!$patient->date_of_birth) {
                 continue;
             }
 
-            $age = $now->diffInYears(Carbon::parse($patient->date_of_birth));
+            $age = Carbon::parse($patient->date_of_birth)->diffInYears($asOfDate);
 
             if ($age < 18) {
                 $ageGroups['0-17']++;
@@ -430,6 +505,7 @@ class PatientAnalyticsService
                     : (string) $code;
 
                 $condition = trim((string) $condition);
+
                 if ($condition === '') {
                     $condition = 'unknown';
                 }
@@ -455,14 +531,11 @@ class PatientAnalyticsService
     }
 
     protected function buildRetention(
-        int $facilityId,
-        CarbonInterface $startDate,
-        CarbonInterface $endDate,
-        Collection $currentPatientIds
+        Builder $visitsQuery,
+        Collection $currentPatientIds,
+        array $patientMix
     ): array {
-        $repeatPatients = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereBetween('arrived_at', [$startDate, $endDate])
+        $repeatPatients = (clone $visitsQuery)
             ->whereNotNull('patient_id')
             ->selectRaw('patient_id, COUNT(*) as visit_count')
             ->groupBy('patient_id')
@@ -476,30 +549,21 @@ class PatientAnalyticsService
             ? round(($repeatPatients / $totalUniquePatients) * 100, 1)
             : 0;
 
-        $missed = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereBetween('arrived_at', [$startDate, $endDate])
+        $missed = (clone $visitsQuery)
             ->whereIn('status', ['cancelled', 'no_show'])
             ->count();
 
-        $totalVisits = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereBetween('arrived_at', [$startDate, $endDate])
-            ->count();
+        $totalVisits = (clone $visitsQuery)->count();
 
         $missedRate = $totalVisits > 0
             ? round(($missed / $totalVisits) * 100, 1)
             : 0;
 
-        $followupScheduled = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereBetween('arrived_at', [$startDate, $endDate])
+        $followupScheduled = (clone $visitsQuery)
             ->whereNotNull('followup_scheduled_at')
             ->count();
 
-        $completedVisits = Visit::query()
-            ->where('facility_id', $facilityId)
-            ->whereBetween('arrived_at', [$startDate, $endDate])
+        $completedVisits = (clone $visitsQuery)
             ->where('status', 'completed')
             ->count();
 
@@ -507,16 +571,7 @@ class PatientAnalyticsService
             ? round(($followupScheduled / $completedVisits) * 100, 1)
             : 0;
 
-        $returningPatients = 0;
-
-        if ($currentPatientIds->isNotEmpty()) {
-            $returningPatients = Visit::query()
-                ->where('facility_id', $facilityId)
-                ->whereIn('patient_id', $currentPatientIds->all())
-                ->where('arrived_at', '<', $startDate)
-                ->distinct()
-                ->count('patient_id');
-        }
+        $returningPatients = (int) ($patientMix['returning'] ?? 0);
 
         $returningPercentage = $totalUniquePatients > 0
             ? round(($returningPatients / $totalUniquePatients) * 100, 1)
@@ -581,6 +636,7 @@ class PatientAnalyticsService
                     : (string) $code;
 
                 $service = trim((string) $service);
+
                 if ($service === '') {
                     $service = 'unknown';
                 }
@@ -607,13 +663,12 @@ class PatientAnalyticsService
     }
 
     protected function buildAlerts(
-        int $facilityId,
         Builder $visitsQuery,
         Builder $previousVisitsQuery
     ): array {
         $alerts = [];
 
-        $flow = $this->buildPatientFlow($facilityId, $visitsQuery);
+        $flow = $this->buildPatientFlow($visitsQuery);
 
         $avgWait = $flow['average_waiting_minutes'] ?? 0;
         if ($avgWait > 30) {
@@ -626,6 +681,7 @@ class PatientAnalyticsService
         }
 
         $totalVisits = (clone $visitsQuery)->count();
+
         $missed = (clone $visitsQuery)
             ->whereIn('status', ['cancelled', 'no_show'])
             ->count();

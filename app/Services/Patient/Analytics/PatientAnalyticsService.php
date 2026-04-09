@@ -126,53 +126,83 @@ class PatientAnalyticsService
         };
     }
 
-    protected function buildKpi(
-        Builder $visitsQuery,
-        Builder $previousVisitsQuery,
-        Collection $patientIds,
-        Collection $previousPatientIds
-    ): array {
-        $totalPatients = $patientIds->count();
-        $previousTotalPatients = $previousPatientIds->count();
-        $patientGrowth = $this->percentageChange($previousTotalPatients, $totalPatients);
+  protected function buildKpi(
+    Builder $visitsQuery,
+    Builder $previousVisitsQuery,
+    Collection $patientIds,
+    Collection $previousPatientIds
+): array {
+    $totalPatients = $patientIds->count();
+    $previousTotalPatients = $previousPatientIds->count();
+    $patientGrowth = $this->percentageChange($previousTotalPatients, $totalPatients);
 
-        $newPatients = $patientIds->diff($previousPatientIds)->count();
-        $returningPatients = $patientIds->intersect($previousPatientIds)->count();
-        $newPatientRate = $totalPatients > 0
-            ? round(($newPatients / $totalPatients) * 100, 1)
-            : 0;
-
-        $activeVisits = (clone $visitsQuery)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->count();
-
-        $completedVisits = (clone $visitsQuery)
-            ->where('status', 'completed')
-            ->count();
-
-        $cancelledMissed = (clone $visitsQuery)
-            ->whereIn('status', ['cancelled', 'no_show'])
-            ->count();
-
-        return [
-            'total_patients' => [
-                'value' => $totalPatients,
-                'previous_value' => $previousTotalPatients,
-                'change_percentage' => $patientGrowth,
-                'trend' => $patientGrowth >= 0 ? 'up' : 'down',
-            ],
-            'new_vs_returning' => [
-                'new' => $newPatients,
-                'returning' => $returningPatients,
-                'new_rate' => $newPatientRate,
-            ],
-            'active_visits' => $activeVisits,
-            'completed_visits' => $completedVisits,
-            'cancelled_missed' => $cancelledMissed,
-        ];
+    // FIX: Get patients whose FIRST EVER visit is within the date range
+    $newPatients = 0;
+    $returningPatients = 0;
+    
+    if ($patientIds->isNotEmpty()) {
+        // Get first visit date for each patient
+        $firstVisitDates = Visit::query()
+            ->where('facility_id', $visitsQuery->getModel()->getAttribute('facility_id'))
+            ->whereIn('patient_id', $patientIds)
+            ->selectRaw('patient_id, MIN(arrived_at) as first_visit')
+            ->groupBy('patient_id')
+            ->get()
+            ->keyBy('patient_id');
+        
+        // Get the date range boundaries
+        $startDate = $visitsQuery->getQuery()->wheres[1]['values'][0] ?? null;
+        $endDate = $visitsQuery->getQuery()->wheres[1]['values'][1] ?? null;
+        
+        foreach ($patientIds as $patientId) {
+            $firstVisit = $firstVisitDates[$patientId] ?? null;
+            if ($firstVisit && $firstVisit->first_visit) {
+                $firstVisitDate = Carbon::parse($firstVisit->first_visit);
+                // Patient is NEW if their first ever visit is within the date range
+                if ($firstVisitDate->between($startDate, $endDate)) {
+                    $newPatients++;
+                } else {
+                    $returningPatients++;
+                }
+            }
+        }
     }
+    
+    $newPatientRate = $totalPatients > 0
+        ? round(($newPatients / $totalPatients) * 100, 1)
+        : 0;
 
-   protected function buildPatientTrends(
+    $activeVisits = (clone $visitsQuery)
+        ->whereIn('status', ['active', 'in_progress'])
+        ->count();
+
+    $completedVisits = (clone $visitsQuery)
+        ->where('status', 'completed')
+        ->count();
+
+    $cancelledMissed = (clone $visitsQuery)
+        ->whereIn('status', ['cancelled', 'no_show'])
+        ->count();
+
+    return [
+        'total_patients' => [
+            'value' => $totalPatients,
+            'previous_value' => $previousTotalPatients,
+            'change_percentage' => $patientGrowth,
+            'trend' => $patientGrowth >= 0 ? 'up' : 'down',
+        ],
+        'new_vs_returning' => [
+            'new' => $newPatients,
+            'returning' => $returningPatients,
+            'new_rate' => $newPatientRate,
+        ],
+        'active_visits' => $activeVisits,
+        'completed_visits' => $completedVisits,
+        'cancelled_missed' => $cancelledMissed,
+    ];
+}
+
+ protected function buildPatientTrends(
     int $facilityId,
     CarbonInterface $startDate,
     CarbonInterface $endDate
@@ -215,8 +245,9 @@ class PatientAnalyticsService
         ])
         ->values();
 
-    // FIX: Pure SQL approach - Get patients whose first ever visit is within date range
-    $newPatientGrowthRaw = DB::table('visits as v1')
+    // FIX: Get patients whose FIRST EVER visit is within date range
+    // Get all patients who visited in this period with their first ever visit date
+    $patientsWithFirstVisit = DB::table('visits as v1')
         ->join(
             DB::raw('(SELECT patient_id, MIN(arrived_at) as first_visit 
                       FROM visits 
@@ -229,11 +260,26 @@ class PatientAnalyticsService
         )
         ->where('v1.facility_id', $facilityId)
         ->whereBetween('v1.arrived_at', [$startDate, $endDate])
-        ->whereColumn('v1.arrived_at', '=', 'first_visits.first_visit')
-        ->selectRaw('DATE(v1.arrived_at) as date, COUNT(DISTINCT v1.patient_id) as new_count')
-        ->groupBy(DB::raw('DATE(v1.arrived_at)'))
-        ->orderBy('date')
-        ->pluck('new_count', 'date');
+        ->select(
+            'v1.patient_id',
+            DB::raw('DATE(v1.arrived_at) as visit_date'),
+            'first_visits.first_visit'
+        )
+        ->get();
+
+    // Filter to only include patients whose first ever visit is within the date range
+    // AND that first visit date matches the current visit date
+    $newPatientGrowthRaw = $patientsWithFirstVisit
+        ->filter(function ($visit) use ($startDate, $endDate) {
+            $firstVisitDate = Carbon::parse($visit->first_visit);
+            $visitDate = Carbon::parse($visit->visit_date);
+            // Patient is NEW if their first ever visit is within the date range
+            // AND this visit is their first visit
+            return $firstVisitDate->between($startDate, $endDate) 
+                && $firstVisitDate->toDateString() === $visitDate->toDateString();
+        })
+        ->groupBy('visit_date')
+        ->map(fn ($group) => $group->count());
 
     $newPatientGrowth = collect();
     $cursor = $startDate->copy()->startOfDay();

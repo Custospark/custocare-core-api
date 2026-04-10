@@ -69,12 +69,12 @@ class FacilityOwnerAnalyticsService
      * STAFF AVAILABILITY / WORKLOAD
      * ---------------------------------------------------------------------
      *
-     * Key corrections:
-     * 1. Snapshot is resolved AS OF date_to, not just "latest row inside range".
-     * 2. Presence trend is bucketed as a per-staff latest-status snapshot
-     *    for each bucket, not raw event counting.
-     * 3. Staff considered in each bucket must be assigned/active at that point.
-     * 4. Grouping logic respects day/week/month consistently.
+     * Rules:
+     * 1. Snapshot is always resolved as of date_to.
+     * 2. "week" means a rolling 7-day window inclusive of today/date_to.
+     * 3. "month" means a rolling 30-day window inclusive of today/date_to.
+     * 4. Presence trend resolves latest known per-staff status at each bucket end.
+     * 5. Only staff active at the relevant point are counted for that point.
      */
     protected function buildStaffMetrics(int $facilityId, array $normalized): array
     {
@@ -135,22 +135,30 @@ class FacilityOwnerAnalyticsService
             $snapshotCounts[$status]++;
         }
 
+        $totalCurrentlyActive = $snapshotCounts['on_duty'] + $snapshotCounts['busy'];
+
         $currentSnapshot = [
             'staff_on_duty' => $snapshotCounts['on_duty'],
             'staff_busy' => $snapshotCounts['busy'],
             'staff_off_duty' => $snapshotCounts['off_duty'],
-            'total_active' => $snapshotCounts['on_duty'] + $snapshotCounts['busy'],
-            'occupancy_rate' => ($snapshotCounts['on_duty'] + $snapshotCounts['busy']) > 0
-                ? round(($snapshotCounts['busy'] / ($snapshotCounts['on_duty'] + $snapshotCounts['busy'])) * 100, 2)
+            'total_active' => $totalCurrentlyActive,
+            'occupancy_rate' => $totalCurrentlyActive > 0
+                ? round(($snapshotCounts['busy'] / $totalCurrentlyActive) * 100, 2)
                 : 0.0,
         ];
 
         $roleDistribution = $assignments
+            ->filter(function (array $assignment) use ($dateTo) {
+                $startsOk = empty($assignment['effective_from']) || $assignment['effective_from']->lte($dateTo);
+                $endsOk = empty($assignment['effective_to']) || $assignment['effective_to']->gte($dateTo);
+
+                return $startsOk && $endsOk;
+            })
             ->groupBy('role_code')
             ->map(function (Collection $rows, string $roleCode) {
                 return [
                     'role' => $roleCode,
-                    'count' => $rows->count(),
+                    'count' => $rows->pluck('staff_id')->unique()->count(),
                 ];
             })
             ->sortByDesc('count')
@@ -163,7 +171,7 @@ class FacilityOwnerAnalyticsService
             ->groupBy('assigned_staff_id')
             ->map(fn (Collection $rows) => $rows->pluck('id')->unique()->count());
 
-        $highWorkloadStaff = $allStaffIds
+        $highWorkloadStaff = $staffIdsAtDateTo
             ->map(function (int $staffId) use ($staffDirectory, $visitsPerStaff) {
                 $staff = $staffDirectory->get($staffId, [
                     'staff_id' => $staffId,
@@ -179,6 +187,7 @@ class FacilityOwnerAnalyticsService
 
                 $currentLoad = (int) ($visitsPerStaff->get($staffId, 0));
                 $maxConcurrentPatients = (int) ($staff['max_concurrent_patients'] ?? 0);
+
                 $workloadPercentage = $maxConcurrentPatients > 0
                     ? round(($currentLoad / $maxConcurrentPatients) * 100, 2)
                     : 0.0;
@@ -228,12 +237,11 @@ class FacilityOwnerAnalyticsService
             ->values()
             ->toArray();
 
-        $workloadVisitsByBucket = $workloadVisits
-            ->groupBy(fn (array $row) => $this->formatTrendBucket($row['event_at'], $groupBy));
-
         $workloadTrend = collect($buckets)
-            ->map(function (array $bucket) use ($workloadVisitsByBucket) {
-                $rows = $workloadVisitsByBucket->get($bucket['key'], collect());
+            ->map(function (array $bucket) use ($workloadVisits) {
+                $rows = $workloadVisits->filter(function (array $row) use ($bucket) {
+                    return $row['event_at']->betweenIncluded($bucket['start'], $bucket['end']);
+                });
 
                 $totalActivePatients = $rows->pluck('id')->unique()->count();
                 $uniqueStaffAssigned = $rows->pluck('assigned_staff_id')->filter()->unique()->count();
@@ -725,6 +733,13 @@ class FacilityOwnerAnalyticsService
      * ---------------------------------------------------------------------
      * GENERIC HELPERS
      * ---------------------------------------------------------------------
+     *
+     * Default behavior:
+     * - group_by defaults to "day"
+     * - date_to defaults to today endOfDay
+     * - day   => today only
+     * - week  => 7 days inclusive of today
+     * - month => 30 days inclusive of today
      */
     protected function normalizeFilters(array $filters): array
     {
@@ -732,13 +747,17 @@ class FacilityOwnerAnalyticsService
             ? ($filters['group_by'] ?? 'day')
             : 'day';
 
-        $dateFrom = !empty($filters['date_from'])
-            ? Carbon::parse($filters['date_from'])->startOfDay()
-            : now()->subDays(30)->startOfDay();
-
-        $dateTo = !empty($filters['date_to'])
+        $referenceDate = !empty($filters['date_to'])
             ? Carbon::parse($filters['date_to'])->endOfDay()
-            : now()->endOfDay();
+            : Carbon::today()->endOfDay();
+
+        if (!empty($filters['date_from'])) {
+            $dateFrom = Carbon::parse($filters['date_from'])->startOfDay();
+        } else {
+            $dateFrom = $this->resolveDefaultDateFrom($referenceDate, $groupBy);
+        }
+
+        $dateTo = $referenceDate->copy();
 
         if ($dateTo->lt($dateFrom)) {
             [$dateFrom, $dateTo] = [$dateTo->copy()->startOfDay(), $dateFrom->copy()->endOfDay()];
@@ -752,6 +771,17 @@ class FacilityOwnerAnalyticsService
         ];
     }
 
+    protected function resolveDefaultDateFrom(CarbonInterface $referenceDate, string $groupBy): Carbon
+    {
+        $reference = Carbon::parse($referenceDate);
+
+        return match ($groupBy) {
+            'week' => $reference->copy()->subDays(6)->startOfDay(),   // 7 days incl. today
+            'month' => $reference->copy()->subDays(29)->startOfDay(), // 30 days incl. today
+            default => $reference->copy()->startOfDay(),              // today
+        };
+    }
+
     protected function normalizePresenceStatus(?string $status): string
     {
         return match ((string) $status) {
@@ -762,71 +792,45 @@ class FacilityOwnerAnalyticsService
         };
     }
 
+    /**
+     * Rolling buckets anchored to date_to:
+     * - day   => 1 day per bucket
+     * - week  => 7 days per bucket
+     * - month => 30 days per bucket
+     *
+     * This ensures "week" always includes today/date_to and spans 7 days.
+     */
     protected function buildTrendBuckets(
         CarbonInterface $dateFrom,
         CarbonInterface $dateTo,
         string $groupBy
     ): array {
+        $windowSize = match ($groupBy) {
+            'week' => 7,
+            'month' => 30,
+            default => 1,
+        };
+
         $buckets = [];
+        $cursorEnd = Carbon::parse($dateTo)->copy()->endOfDay();
 
-        $cursor = $this->getBucketStart($dateFrom, $groupBy);
-        $endBoundary = $this->getBucketStart($dateTo, $groupBy);
+        while ($cursorEnd->gte($dateFrom)) {
+            $bucketStart = $cursorEnd->copy()->subDays($windowSize - 1)->startOfDay();
 
-        while ($cursor->lte($endBoundary)) {
-            $bucketStart = $cursor->copy();
-            $bucketEnd = match ($groupBy) {
-                'week' => $bucketStart->copy()->endOfWeek(),
-                'month' => $bucketStart->copy()->endOfMonth(),
-                default => $bucketStart->copy()->endOfDay(),
-            };
-
-            if ($bucketEnd->gt($dateTo)) {
-                $bucketEnd = $dateTo->copy();
+            if ($bucketStart->lt($dateFrom)) {
+                $bucketStart = Carbon::parse($dateFrom)->copy()->startOfDay();
             }
 
-            $key = $bucketStart->toDateString();
-
-            $buckets[$key] = [
-                'key' => $key,
+            $buckets[] = [
+                'key' => $bucketStart->toDateString(),
                 'start' => $bucketStart,
-                'end' => $bucketEnd,
+                'end' => $cursorEnd->copy(),
             ];
 
-            $cursor = $this->incrementBucket($cursor, $groupBy);
+            $cursorEnd = $bucketStart->copy()->subDay()->endOfDay();
         }
 
-        return $buckets;
-    }
-
-    protected function formatTrendBucket(CarbonInterface $date, string $groupBy): string
-    {
-        return match ($groupBy) {
-            'week' => $date->copy()->startOfWeek()->toDateString(),
-            'month' => $date->copy()->startOfMonth()->toDateString(),
-            default => $date->copy()->startOfDay()->toDateString(),
-        };
-    }
-
-    protected function getBucketStart(CarbonInterface $date, string $groupBy): Carbon
-    {
-        $date = Carbon::parse($date);
-
-        return match ($groupBy) {
-            'week' => $date->startOfWeek(),
-            'month' => $date->startOfMonth(),
-            default => $date->startOfDay(),
-        };
-    }
-
-    protected function incrementBucket(CarbonInterface $date, string $groupBy): Carbon
-    {
-        $date = Carbon::parse($date);
-
-        return match ($groupBy) {
-            'week' => $date->addWeek(),
-            'month' => $date->addMonth(),
-            default => $date->addDay(),
-        };
+        return array_reverse($buckets);
     }
 
     protected function emptyPresenceTrend(

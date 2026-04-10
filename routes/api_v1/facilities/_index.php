@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\FacilityController;
+use App\Http\Controllers\Api\Statistics\FacilityOwnerAnalyticsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,6 +20,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('facility/identity', [FacilityController::class, 'getFacilityDetails']);
 
+    //Get Facility Statistics for facility owners.
+    
+    Route::get('dashboard/facility-analytics', [FacilityOwnerAnalyticsController::class, 'index'])
+            ->name('operational.dashboard');
     
     // Facility resource routes
     Route::apiResource('facilities', FacilityController::class)

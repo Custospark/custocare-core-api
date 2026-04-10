@@ -5,6 +5,7 @@ namespace App\Services\Statistics;
 use App\Services\Billing\Analytics\BillingRevenueDashboardService;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -18,397 +19,299 @@ class FacilityOwnerAnalyticsService
         $this->billingService = $billingService;
     }
 
-    /**
-     * Main entry point: returns all decision‑oriented metrics.
-     */
     public function getDashboard(int $facilityId, array $filters = []): array
     {
         try {
             $normalized = $this->normalizeFilters($filters);
 
-            $staffMetrics = $this->getStaffMetrics($facilityId, $normalized);
-            $capacityMetrics = $this->getCapacityMetrics($facilityId);
-            $inventoryMetrics = $this->getInventoryMetrics($facilityId);
-            $serviceMetrics = $this->getServiceMetrics($facilityId, $normalized['top']);
-            $billingDashboard = $this->billingService->getDashboard($facilityId, $filters);
+            $data = [
+                'staff_availability'   => $this->buildStaffMetrics($facilityId, $normalized),
+                'capacity_utilization' => $this->buildCapacityMetrics($facilityId),
+                'inventory_risk'       => $this->buildInventoryMetrics($facilityId),
+                'service_pricing'      => $this->buildServiceMetrics($facilityId, $normalized['top']),
+                'financial'            => $this->buildFinancialMetrics($facilityId, $normalized),
+            ];
 
             return [
                 'success' => true,
                 'message' => 'Operational decisions dashboard generated successfully.',
-                'data'    => [
-                    'staff_availability'   => $staffMetrics,
-                    'capacity_utilization' => $capacityMetrics,
-                    'inventory_risk'       => $inventoryMetrics,
-                    'service_pricing'      => $serviceMetrics,
-                    'financial'            => $billingDashboard['data'] ?? null,
+                'data' => $data,
+                'filters' => [
+                    'facility_id' => $facilityId,
+                    'date_from' => $normalized['date_from']->toDateString(),
+                    'date_to' => $normalized['date_to']->toDateString(),
+                    'group_by' => $normalized['group_by'],
+                    'top' => $normalized['top'],
                 ],
-                'filters' => $normalized,
             ];
         } catch (Throwable $e) {
-            Log::error('Operational decisions dashboard generation failed.', [
-                'facility_id'   => $facilityId,
+            Log::error('Facility owner analytics generation failed.', [
+                'facility_id' => $facilityId,
+                'filters' => $filters,
                 'error_message' => $e->getMessage(),
-                'file'          => $e->getFile(),
-                'line'          => $e->getLine(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
 
             return [
                 'success' => false,
                 'message' => 'Failed to generate operational dashboard.',
-                'error'   => config('app.debug') ? $e->getMessage() : null,
+                'errors' => [
+                    'system' => ['An unexpected error occurred while generating the dashboard.'],
+                ],
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }
 
-    /* ----------------------------------------------------------------------
-       1. STAFF AVAILABILITY & WORKLOAD
-       - Presence metrics now use updated_at + current status
-       - Does NOT rely on created_at
-       - Maintains existing response structure
-    ---------------------------------------------------------------------- */
-    protected function getStaffMetrics(int $facilityId, array $normalized): array
+    /**
+     * ---------------------------------------------------------------------
+     * STAFF AVAILABILITY / WORKLOAD
+     * ---------------------------------------------------------------------
+     *
+     * Key corrections:
+     * 1. Snapshot is resolved AS OF date_to, not just "latest row inside range".
+     * 2. Presence trend is bucketed as a per-staff latest-status snapshot
+     *    for each bucket, not raw event counting.
+     * 3. Staff considered in each bucket must be assigned/active at that point.
+     * 4. Grouping logic respects day/week/month consistently.
+     */
+    protected function buildStaffMetrics(int $facilityId, array $normalized): array
     {
         $dateFrom = $normalized['date_from'];
         $dateTo   = $normalized['date_to'];
         $groupBy  = $normalized['group_by'];
         $top      = $normalized['top'];
 
-        /*
-         |------------------------------------------------------------------
-         | Staff presence rows in selected date range
-         |
-         | Since staff presence is created once and status is updated later,
-         | the meaningful activity timestamp is updated_at, not created_at.
-         |
-         | We keep the existing output structure:
-         | - on_duty
-         | - busy
-         | - off_duty
-         |
-         | Therefore:
-         | - on_break      -> off_duty bucket
-         | - unavailable   -> off_duty bucket
-         |------------------------------------------------------------------
-         */
-        $presenceRows = DB::table('staff_presences')
-            ->where('facility_id', $facilityId)
-            ->whereNotNull('updated_at')
-            ->whereBetween('updated_at', [$dateFrom, $dateTo])
-            ->select('staff_id', 'status', 'updated_at')
-            ->get();
+        $assignments = $this->getFacilityStaffAssignments($facilityId, $dateFrom, $dateTo);
 
-        // Defensive uniqueness in case of data anomalies.
-        $latestPresenceRows = $presenceRows
-            ->sortByDesc('updated_at')
-            ->unique('staff_id')
+        $allStaffIds = $assignments
+            ->pluck('staff_id')
+            ->unique()
             ->values();
 
+        if ($allStaffIds->isEmpty()) {
+            return [
+                'current_snapshot' => [
+                    'staff_on_duty' => 0,
+                    'staff_busy' => 0,
+                    'staff_off_duty' => 0,
+                    'total_active' => 0,
+                    'occupancy_rate' => 0.0,
+                ],
+                'role_distribution' => [],
+                'high_workload_staff' => [],
+                'presence_trend' => $this->emptyPresenceTrend($dateFrom, $dateTo, $groupBy),
+                'workload_trend' => $this->emptyWorkloadTrend($dateFrom, $dateTo, $groupBy),
+            ];
+        }
+
+        $staffDirectory = $this->getStaffDirectory($allStaffIds->all());
+
+        $presenceEvents = $this->getStaffPresenceEvents(
+            $facilityId,
+            $allStaffIds->all(),
+            $dateTo
+        );
+
+        $presenceByStaff = $presenceEvents
+            ->groupBy('staff_id')
+            ->map(fn (Collection $rows) => $rows->sortBy('event_at')->values());
+
+        $staffIdsAtDateTo = $this->getStaffIdsActiveAtPoint($assignments, $dateTo);
+
         $snapshotCounts = [
-            'on_duty'  => 0,
-            'busy'     => 0,
+            'on_duty' => 0,
+            'busy' => 0,
             'off_duty' => 0,
         ];
 
-        foreach ($latestPresenceRows as $row) {
-            $normalizedStatus = $this->normalizePresenceStatus($row->status);
-            $snapshotCounts[$normalizedStatus]++;
+        foreach ($staffIdsAtDateTo as $staffId) {
+            $status = $this->resolvePresenceStatusAt(
+                $presenceByStaff->get($staffId, collect()),
+                $dateTo
+            );
+
+            $snapshotCounts[$status]++;
         }
 
-        $onDuty = $snapshotCounts['on_duty'];
-        $busy = $snapshotCounts['busy'];
-        $offDuty = $snapshotCounts['off_duty'];
-        $totalActiveStaff = $onDuty + $busy;
+        $currentSnapshot = [
+            'staff_on_duty' => $snapshotCounts['on_duty'],
+            'staff_busy' => $snapshotCounts['busy'],
+            'staff_off_duty' => $snapshotCounts['off_duty'],
+            'total_active' => $snapshotCounts['on_duty'] + $snapshotCounts['busy'],
+            'occupancy_rate' => ($snapshotCounts['on_duty'] + $snapshotCounts['busy']) > 0
+                ? round(($snapshotCounts['busy'] / ($snapshotCounts['on_duty'] + $snapshotCounts['busy'])) * 100, 2)
+                : 0.0,
+        ];
 
-        /*
-         |------------------------------------------------------------------
-         | Role distribution
-         |------------------------------------------------------------------
-         */
-        $roleDistribution = DB::table('facility_staff_roles')
-            ->where('facility_id', $facilityId)
-            ->where('assignment_status', 'active')
-            ->where(function ($query) use ($dateFrom) {
-                $query->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', $dateFrom->toDateString());
-            })
-            ->select('role_code', DB::raw('COUNT(*) as count'))
+        $roleDistribution = $assignments
             ->groupBy('role_code')
-            ->get()
-            ->map(fn ($row) => [
-                'role'  => $row->role_code,
-                'count' => (int) $row->count,
-            ])
+            ->map(function (Collection $rows, string $roleCode) {
+                return [
+                    'role' => $roleCode,
+                    'count' => $rows->count(),
+                ];
+            })
+            ->sortByDesc('count')
             ->values()
             ->toArray();
 
-        /*
-         |------------------------------------------------------------------
-         | Real workload in selected date range
-         |------------------------------------------------------------------
-         */
-        $activeVisitsPerStaff = DB::table('visits')
-            ->where('facility_id', $facilityId)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->whereNotNull('assigned_staff_id')
-            ->whereBetween('created_at', [$dateFrom, $dateTo])
-            ->select('assigned_staff_id', DB::raw('COUNT(*) as patient_count'))
+        $workloadVisits = $this->getWorkloadVisits($facilityId, $dateFrom, $dateTo);
+
+        $visitsPerStaff = $workloadVisits
             ->groupBy('assigned_staff_id')
-            ->get()
-            ->keyBy('assigned_staff_id');
+            ->map(fn (Collection $rows) => $rows->pluck('id')->unique()->count());
 
-        /*
-         |------------------------------------------------------------------
-         | Staff list
-         |------------------------------------------------------------------
-         */
-        $staffList = DB::table('staff')
-            ->join('facility_staff_roles', 'staff.id', '=', 'facility_staff_roles.staff_id')
-            ->join('users', 'staff.user_id', '=', 'users.id')
-            ->where('facility_staff_roles.facility_id', $facilityId)
-            ->where('facility_staff_roles.assignment_status', 'active')
-            ->where(function ($query) use ($dateFrom) {
-                $query->whereNull('facility_staff_roles.effective_to')
-                    ->orWhereDate('facility_staff_roles.effective_to', '>=', $dateFrom->toDateString());
-            })
-            ->select(
-                'staff.id',
-                'staff.staff_uuid',
-                'staff.max_concurrent_patients',
-                'staff.total_patients_treated',
-                'staff.patient_satisfaction_score',
-                'users.first_name',
-                'users.last_name',
-                'users.display_name'
-            )
-            ->groupBy(
-                'staff.id',
-                'staff.staff_uuid',
-                'staff.max_concurrent_patients',
-                'staff.total_patients_treated',
-                'staff.patient_satisfaction_score',
-                'users.first_name',
-                'users.last_name',
-                'users.display_name'
-            )
-            ->get();
+        $highWorkloadStaff = $allStaffIds
+            ->map(function (int $staffId) use ($staffDirectory, $visitsPerStaff) {
+                $staff = $staffDirectory->get($staffId, [
+                    'staff_id' => $staffId,
+                    'staff_uuid' => null,
+                    'first_name' => null,
+                    'last_name' => null,
+                    'display_name' => null,
+                    'full_name' => 'Unknown Staff',
+                    'max_concurrent_patients' => 0,
+                    'total_patients_treated' => 0,
+                    'patient_satisfaction' => null,
+                ]);
 
-        $highWorkload = $staffList
-            ->map(function ($staff) use ($activeVisitsPerStaff) {
-                $currentLoad = (int) ($activeVisitsPerStaff[$staff->id]->patient_count ?? 0);
-                $maxCap = (int) ($staff->max_concurrent_patients ?? 0);
-                $loadPercent = $maxCap > 0 ? round(($currentLoad / $maxCap) * 100, 2) : 0;
-
-                $fullName = $staff->display_name;
-                if (empty($fullName) && ($staff->first_name || $staff->last_name)) {
-                    $fullName = trim(($staff->first_name ?? '') . ' ' . ($staff->last_name ?? ''));
-                }
-                if (empty($fullName)) {
-                    $fullName = 'Unknown Staff';
-                }
+                $currentLoad = (int) ($visitsPerStaff->get($staffId, 0));
+                $maxConcurrentPatients = (int) ($staff['max_concurrent_patients'] ?? 0);
+                $workloadPercentage = $maxConcurrentPatients > 0
+                    ? round(($currentLoad / $maxConcurrentPatients) * 100, 2)
+                    : 0.0;
 
                 return [
-                    'staff_uuid'              => $staff->staff_uuid,
-                    'first_name'              => $staff->first_name,
-                    'last_name'               => $staff->last_name,
-                    'display_name'            => $staff->display_name,
-                    'full_name'               => $fullName,
-                    'max_concurrent_patients' => $maxCap,
-                    'current_patient_load'    => $currentLoad,
-                    'workload_percentage'     => $loadPercent,
-                    'total_patients_treated'  => (int) ($staff->total_patients_treated ?? 0),
-                    'patient_satisfaction'    => $staff->patient_satisfaction_score !== null
-                        ? (float) $staff->patient_satisfaction_score
-                        : null,
+                    'staff_uuid' => $staff['staff_uuid'],
+                    'first_name' => $staff['first_name'],
+                    'last_name' => $staff['last_name'],
+                    'display_name' => $staff['display_name'],
+                    'full_name' => $staff['full_name'],
+                    'max_concurrent_patients' => $maxConcurrentPatients,
+                    'current_patient_load' => $currentLoad,
+                    'workload_percentage' => $workloadPercentage,
+                    'total_patients_treated' => (int) ($staff['total_patients_treated'] ?? 0),
+                    'patient_satisfaction' => $staff['patient_satisfaction'],
                 ];
             })
             ->sortByDesc('workload_percentage')
-            ->values()
             ->take($top)
+            ->values()
             ->toArray();
 
-        /*
-         |------------------------------------------------------------------
-         | Presence trend
-         |
-         | Uses updated_at only for staff presence timing.
-         | No created_at reliance.
-         |------------------------------------------------------------------
-         */
-        $presenceTrendBuckets = $this->initializeTrendBuckets(
-            $dateFrom,
-            $dateTo,
-            $groupBy,
-            fn (string $date) => [
-                'date'     => $date,
-                'on_duty'  => 0,
-                'busy'     => 0,
-                'off_duty' => 0,
-            ]
-        );
+        $buckets = $this->buildTrendBuckets($dateFrom, $dateTo, $groupBy);
 
-        foreach ($presenceRows as $row) {
-            if (empty($row->updated_at)) {
-                continue;
-            }
+        $presenceTrend = collect($buckets)
+            ->map(function (array $bucket) use ($assignments, $presenceByStaff) {
+                $staffIdsAtBucketEnd = $this->getStaffIdsActiveAtPoint($assignments, $bucket['end']);
 
-            $bucketKey = $this->formatTrendBucket(Carbon::parse($row->updated_at), $groupBy);
-
-            if (!isset($presenceTrendBuckets[$bucketKey])) {
-                $presenceTrendBuckets[$bucketKey] = [
-                    'date'     => $bucketKey,
-                    'on_duty'  => 0,
-                    'busy'     => 0,
+                $counts = [
+                    'date' => $bucket['key'],
+                    'on_duty' => 0,
+                    'busy' => 0,
                     'off_duty' => 0,
                 ];
-            }
 
-            $normalizedStatus = $this->normalizePresenceStatus($row->status);
-            $presenceTrendBuckets[$bucketKey][$normalizedStatus]++;
-        }
+                foreach ($staffIdsAtBucketEnd as $staffId) {
+                    $status = $this->resolvePresenceStatusAt(
+                        $presenceByStaff->get($staffId, collect()),
+                        $bucket['end']
+                    );
 
-        $presenceTrend = collect($presenceTrendBuckets)
-            ->sortBy('date')
+                    $counts[$status]++;
+                }
+
+                return $counts;
+            })
             ->values()
             ->toArray();
 
-        /*
-         |------------------------------------------------------------------
-         | Workload trend
-         |------------------------------------------------------------------
-         */
-        $visitRows = DB::table('visits')
-            ->where('facility_id', $facilityId)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->whereNotNull('assigned_staff_id')
-            ->whereBetween('created_at', [$dateFrom, $dateTo])
-            ->select('assigned_staff_id', 'created_at')
-            ->get();
+        $workloadVisitsByBucket = $workloadVisits
+            ->groupBy(fn (array $row) => $this->formatTrendBucket($row['event_at'], $groupBy));
 
-        $workloadTrendBuckets = $this->initializeTrendBuckets(
-            $dateFrom,
-            $dateTo,
-            $groupBy,
-            fn (string $date) => [
-                'date'                   => $date,
-                'total_active_patients'  => 0,
-                'unique_staff_assigned'  => 0,
-                'avg_patients_per_staff' => 0,
-                '_staff_ids'             => [],
-            ]
-        );
+        $workloadTrend = collect($buckets)
+            ->map(function (array $bucket) use ($workloadVisitsByBucket) {
+                $rows = $workloadVisitsByBucket->get($bucket['key'], collect());
 
-        foreach ($visitRows as $visit) {
-            if (empty($visit->created_at)) {
-                continue;
-            }
+                $totalActivePatients = $rows->pluck('id')->unique()->count();
+                $uniqueStaffAssigned = $rows->pluck('assigned_staff_id')->filter()->unique()->count();
 
-            $bucketKey = $this->formatTrendBucket(Carbon::parse($visit->created_at), $groupBy);
-
-            if (!isset($workloadTrendBuckets[$bucketKey])) {
-                $workloadTrendBuckets[$bucketKey] = [
-                    'date'                   => $bucketKey,
-                    'total_active_patients'  => 0,
-                    'unique_staff_assigned'  => 0,
-                    'avg_patients_per_staff' => 0,
-                    '_staff_ids'             => [],
+                return [
+                    'date' => $bucket['key'],
+                    'total_active_patients' => $totalActivePatients,
+                    'unique_staff_assigned' => $uniqueStaffAssigned,
+                    'avg_patients_per_staff' => $uniqueStaffAssigned > 0
+                        ? round($totalActivePatients / $uniqueStaffAssigned, 2)
+                        : 0.0,
                 ];
-            }
-
-            $workloadTrendBuckets[$bucketKey]['total_active_patients']++;
-            $workloadTrendBuckets[$bucketKey]['_staff_ids'][$visit->assigned_staff_id] = true;
-        }
-
-        $workloadTrend = collect($workloadTrendBuckets)
-            ->sortBy('date')
-            ->map(function ($bucket) {
-                $uniqueStaff = count($bucket['_staff_ids']);
-                $totalPatients = (int) $bucket['total_active_patients'];
-
-                unset($bucket['_staff_ids']);
-
-                $bucket['unique_staff_assigned'] = $uniqueStaff;
-                $bucket['avg_patients_per_staff'] = $uniqueStaff > 0
-                    ? round($totalPatients / $uniqueStaff, 2)
-                    : 0;
-
-                return $bucket;
             })
             ->values()
             ->toArray();
 
         return [
-            'current_snapshot' => [
-                'staff_on_duty'  => $onDuty,
-                'staff_busy'     => $busy,
-                'staff_off_duty' => $offDuty,
-                'total_active'   => $totalActiveStaff,
-                'occupancy_rate' => $totalActiveStaff > 0
-                    ? round(($busy / $totalActiveStaff) * 100, 2)
-                    : 0,
-            ],
-            'role_distribution'   => $roleDistribution,
-            'high_workload_staff' => $highWorkload,
-            'presence_trend'      => $presenceTrend,
-            'workload_trend'      => $workloadTrend,
+            'current_snapshot' => $currentSnapshot,
+            'role_distribution' => $roleDistribution,
+            'high_workload_staff' => $highWorkloadStaff,
+            'presence_trend' => $presenceTrend,
+            'workload_trend' => $workloadTrend,
         ];
     }
 
-    /* ----------------------------------------------------------------------
-       2. DEPARTMENT & SPACE CAPACITY
-    ---------------------------------------------------------------------- */
-    protected function getCapacityMetrics(int $facilityId): array
+    protected function buildCapacityMetrics(int $facilityId): array
     {
         $departments = DB::table('departments')
             ->where('facility_id', $facilityId)
             ->where('status', 'active')
-            ->select(
+            ->select([
                 'id',
                 'department_name',
                 'department_type',
                 'bed_count',
                 'treatment_room_count',
                 'max_concurrent_capacity',
-                'average_wait_time_minutes'
-            )
+                'average_wait_time_minutes',
+            ])
             ->get();
 
-        $totalBeds = $departments->sum('bed_count');
-        $totalRooms = $departments->sum('treatment_room_count');
-        $totalCapacity = $departments->sum('max_concurrent_capacity');
-
-        $staffPerDept = DB::table('facility_staff_roles')
+        $staffPerDepartment = DB::table('facility_staff_roles')
             ->where('facility_id', $facilityId)
             ->where('assignment_status', 'active')
             ->get()
             ->flatMap(function ($role) {
-                $deptIds = json_decode($role->department_ids, true) ?? [];
+                $departmentIds = json_decode($role->department_ids, true) ?? [];
 
-                return collect($deptIds)->map(fn ($id) => [
-                    'dept_id'  => $id,
+                return collect($departmentIds)->map(fn ($departmentId) => [
+                    'department_id' => $departmentId,
                     'staff_id' => $role->staff_id,
                 ]);
             })
-            ->groupBy('dept_id')
-            ->map->count();
+            ->groupBy('department_id')
+            ->map(fn (Collection $rows) => $rows->pluck('staff_id')->unique()->count());
 
-        $departmentsWithStaff = $departments->map(function ($dept) use ($staffPerDept) {
-            $assignedStaff = $staffPerDept[$dept->id] ?? 0;
+        $departmentRows = $departments
+            ->map(function ($department) use ($staffPerDepartment) {
+                $assignedStaffCount = (int) ($staffPerDepartment->get($department->id, 0));
+                $maxCapacity = (int) ($department->max_concurrent_capacity ?? 0);
 
-            return [
-                'department_name'           => $dept->department_name,
-                'department_type'           => $dept->department_type,
-                'bed_count'                 => (int) $dept->bed_count,
-                'treatment_rooms'           => (int) $dept->treatment_room_count,
-                'max_capacity'              => (int) $dept->max_concurrent_capacity,
-                'assigned_staff_count'      => $assignedStaff,
-                'avg_wait_time_minutes'     => $dept->average_wait_time_minutes,
-                'capacity_utilization_hint' => $dept->max_concurrent_capacity > 0
-                    ? round(($assignedStaff / $dept->max_concurrent_capacity) * 100, 2) . '% (staff vs capacity)'
-                    : 'N/A',
-            ];
-        });
+                return [
+                    'department_name' => $department->department_name,
+                    'department_type' => $department->department_type,
+                    'bed_count' => (int) ($department->bed_count ?? 0),
+                    'treatment_rooms' => (int) ($department->treatment_room_count ?? 0),
+                    'max_capacity' => $maxCapacity,
+                    'assigned_staff_count' => $assignedStaffCount,
+                    'avg_wait_time_minutes' => $department->average_wait_time_minutes,
+                    'capacity_utilization_hint' => $maxCapacity > 0
+                        ? round(($assignedStaffCount / $maxCapacity) * 100, 2) . '% (staff vs capacity)'
+                        : 'N/A',
+                ];
+            })
+            ->values()
+            ->toArray();
 
-        $spaces = DB::table('facility_spaces')
+        $spaceTypes = DB::table('facility_spaces')
             ->where('facility_id', $facilityId)
             ->where('is_active', 1)
             ->select('type', DB::raw('COUNT(*) as total'))
@@ -416,9 +319,10 @@ class FacilityOwnerAnalyticsService
             ->get()
             ->map(fn ($row) => [
                 'space_type' => $row->type,
-                'total'      => (int) $row->total,
+                'total' => (int) $row->total,
             ])
-            ->values();
+            ->values()
+            ->toArray();
 
         $occupiedSpaces = DB::table('staff_space_assignments')
             ->where('facility_id', $facilityId)
@@ -433,12 +337,12 @@ class FacilityOwnerAnalyticsService
 
         $spaceUtilizationRate = $totalActiveSpaces > 0
             ? round(($occupiedSpaces / $totalActiveSpaces) * 100, 2)
-            : 0;
+            : 0.0;
 
         $wards = DB::table('wards')
             ->where('facility_id', $facilityId)
             ->where('status', 'active')
-            ->select(
+            ->select([
                 'id',
                 'code',
                 'name',
@@ -448,71 +352,69 @@ class FacilityOwnerAnalyticsService
                 'capacity_declared',
                 'capacity_operational',
                 'sex_restriction',
-                'age_group'
-            )
+                'age_group',
+            ])
             ->get();
-
-        $totalDeclaredCapacity = $wards->sum('capacity_declared');
-        $totalOperationalCapacity = $wards->sum('capacity_operational');
 
         $wardsByType = $wards
             ->groupBy('ward_type')
-            ->map(fn ($group, $type) => [
-                'ward_type'                => $type,
-                'count'                    => $group->count(),
-                'total_declared_capacity'  => $group->sum('capacity_declared'),
-                'total_operational_capacity' => $group->sum('capacity_operational'),
-            ])
-            ->values();
+            ->map(function (Collection $rows, string $wardType) {
+                return [
+                    'ward_type' => $wardType,
+                    'count' => $rows->count(),
+                    'total_declared_capacity' => (int) $rows->sum('capacity_declared'),
+                    'total_operational_capacity' => (int) $rows->sum('capacity_operational'),
+                ];
+            })
+            ->values()
+            ->toArray();
 
-        $wardsWithDetails = $wards->map(function ($ward) {
-            return [
-                'id'                      => $ward->id,
-                'code'                    => $ward->code,
-                'name'                    => $ward->name,
-                'ward_type'               => $ward->ward_type,
-                'building'                => $ward->building,
-                'floor'                   => $ward->floor,
-                'capacity_declared'       => (int) $ward->capacity_declared,
-                'capacity_operational'    => (int) $ward->capacity_operational,
-                'sex_restriction'         => $ward->sex_restriction,
-                'age_group'               => $ward->age_group,
-                'status'                  => 'active',
+        $wardRows = $wards
+            ->map(fn ($ward) => [
+                'id' => $ward->id,
+                'code' => $ward->code,
+                'name' => $ward->name,
+                'ward_type' => $ward->ward_type,
+                'building' => $ward->building,
+                'floor' => $ward->floor,
+                'capacity_declared' => (int) ($ward->capacity_declared ?? 0),
+                'capacity_operational' => (int) ($ward->capacity_operational ?? 0),
+                'sex_restriction' => $ward->sex_restriction,
+                'age_group' => $ward->age_group,
+                'status' => 'active',
                 'estimated_occupied_beds' => null,
-                'utilization_percentage'  => null,
-            ];
-        });
+                'utilization_percentage' => null,
+            ])
+            ->values()
+            ->toArray();
 
         return [
-            'departments' => $departmentsWithStaff,
-            'summary'     => [
-                'total_beds'                => $totalBeds,
-                'total_treatment_rooms'     => $totalRooms,
-                'total_concurrent_capacity' => $totalCapacity,
-                'space_utilization_rate'    => $spaceUtilizationRate,
-                'occupied_spaces'           => $occupiedSpaces,
-                'total_active_spaces'       => $totalActiveSpaces,
-                'wards'                     => [
-                    'total_wards'                => $wards->count(),
-                    'total_declared_capacity'    => $totalDeclaredCapacity,
-                    'total_operational_capacity' => $totalOperationalCapacity,
-                    'wards_by_type'              => $wardsByType,
+            'departments' => $departmentRows,
+            'summary' => [
+                'total_beds' => (int) $departments->sum('bed_count'),
+                'total_treatment_rooms' => (int) $departments->sum('treatment_room_count'),
+                'total_concurrent_capacity' => (int) $departments->sum('max_concurrent_capacity'),
+                'space_utilization_rate' => $spaceUtilizationRate,
+                'occupied_spaces' => (int) $occupiedSpaces,
+                'total_active_spaces' => (int) $totalActiveSpaces,
+                'wards' => [
+                    'total_wards' => $wards->count(),
+                    'total_declared_capacity' => (int) $wards->sum('capacity_declared'),
+                    'total_operational_capacity' => (int) $wards->sum('capacity_operational'),
+                    'wards_by_type' => $wardsByType,
                 ],
             ],
-            'space_types' => $spaces,
-            'wards'       => $wardsWithDetails,
+            'space_types' => $spaceTypes,
+            'wards' => $wardRows,
         ];
     }
 
-    /* ----------------------------------------------------------------------
-       3. INVENTORY RISK
-    ---------------------------------------------------------------------- */
-    protected function getInventoryMetrics(int $facilityId): array
+    protected function buildInventoryMetrics(int $facilityId): array
     {
         $items = DB::table('inventory_items')
             ->where('facility_id', $facilityId)
             ->where('status', 'active')
-            ->select(
+            ->select([
                 'item_code',
                 'item_name',
                 'item_category',
@@ -524,131 +426,306 @@ class FacilityOwnerAnalyticsService
                 'max_stock_level',
                 'unit_cost',
                 'requires_prescription',
-                'controlled_substance_schedule'
-            )
+                'controlled_substance_schedule',
+            ])
             ->get();
 
-        $needsReorder = $items
-            ->filter(fn ($item) => !is_null($item->reorder_point) && $item->package_quantity <= $item->reorder_point)
+        $itemsNeedingReorder = $items
+            ->filter(fn ($item) => !is_null($item->reorder_point) && (float) $item->package_quantity <= (float) $item->reorder_point)
             ->map(function ($item) {
-                $shortage = $item->reorder_point - $item->package_quantity;
+                $shortageUnits = max(0, (float) $item->reorder_point - (float) $item->package_quantity);
 
                 return [
-                    'item_code'      => $item->item_code,
-                    'item_name'      => $item->item_name,
-                    'category'       => $item->item_category,
-                    'current_stock'  => (int) $item->package_quantity,
-                    'reorder_point'  => (int) $item->reorder_point,
-                    'shortage_units' => $shortage > 0 ? $shortage : 0,
-                    'reorder_qty'    => (int) $item->reorder_quantity,
-                    'safety_stock'   => (int) $item->safety_stock_level,
-                    'unit_cost'      => (float) $item->unit_cost,
-                    'risk_level'     => $this->assessInventoryRisk($item),
+                    'item_code' => $item->item_code,
+                    'item_name' => $item->item_name,
+                    'category' => $item->item_category,
+                    'current_stock' => (int) ($item->package_quantity ?? 0),
+                    'reorder_point' => (int) ($item->reorder_point ?? 0),
+                    'shortage_units' => (int) $shortageUnits,
+                    'reorder_qty' => (int) ($item->reorder_quantity ?? 0),
+                    'safety_stock' => (int) ($item->safety_stock_level ?? 0),
+                    'unit_cost' => (float) ($item->unit_cost ?? 0),
+                    'risk_level' => $this->assessInventoryRisk($item),
                 ];
             })
             ->values();
 
-        $controlled = $items
+        $controlledItems = $items
             ->filter(fn ($item) => in_array($item->controlled_substance_schedule, ['II', 'III', 'IV'], true))
             ->values();
 
         return [
-            'items_needing_reorder'       => $needsReorder,
-            'controlled_substances_count' => $controlled->count(),
-            'controlled_items'            => $controlled
+            'items_needing_reorder' => $itemsNeedingReorder->toArray(),
+            'controlled_substances_count' => $controlledItems->count(),
+            'controlled_items' => $controlledItems
                 ->map(fn ($item) => [
                     'item_name' => $item->item_name,
-                    'schedule'  => $item->controlled_substance_schedule,
+                    'schedule' => $item->controlled_substance_schedule,
                 ])
-                ->values(),
-            'summary'                     => [
-                'total_active_items'        => $items->count(),
-                'items_below_reorder_point' => $needsReorder->count(),
-                'high_risk_inventory_count' => $controlled->count(),
+                ->values()
+                ->toArray(),
+            'summary' => [
+                'total_active_items' => $items->count(),
+                'items_below_reorder_point' => $itemsNeedingReorder->count(),
+                'high_risk_inventory_count' => $controlledItems->count(),
             ],
         ];
     }
 
-    protected function assessInventoryRisk($item): string
-    {
-        if ($item->controlled_substance_schedule && in_array($item->controlled_substance_schedule, ['II', 'III'], true)) {
-            return 'high (controlled substance)';
-        }
-
-        if ($item->package_quantity <= ($item->safety_stock_level ?? 0)) {
-            return 'high (below safety stock)';
-        }
-
-        if (!is_null($item->reorder_point) && $item->package_quantity <= $item->reorder_point) {
-            return 'medium (below reorder point)';
-        }
-
-        return 'low';
-    }
-
-    /* ----------------------------------------------------------------------
-       4. SERVICE CATALOG PRICING & REVENUE POTENTIAL
-    ---------------------------------------------------------------------- */
-    protected function getServiceMetrics(int $facilityId, int $top): array
+    protected function buildServiceMetrics(int $facilityId, int $top): array
     {
         $services = DB::table('service_catalogs')
             ->where('facility_id', $facilityId)
             ->where('status', 'active')
-            ->select(
+            ->select([
                 'service_code',
                 'service_name',
                 'service_category',
                 'price_amount',
                 'currency_code',
                 'risk_level',
-                'default_duration_minutes'
-            )
+                'default_duration_minutes',
+            ])
             ->get();
 
-        $totalRevenuePotential = $services->sum('price_amount');
+        $totalRevenuePotential = round((float) $services->sum('price_amount'), 2);
 
         $topByPrice = $services
             ->sortByDesc('price_amount')
             ->take($top)
             ->map(fn ($service) => [
-                'service_name'     => $service->service_name,
-                'category'         => $service->service_category,
-                'price'            => (float) $service->price_amount,
-                'currency'         => $service->currency_code,
-                'risk_level'       => $service->risk_level,
+                'service_name' => $service->service_name,
+                'category' => $service->service_category,
+                'price' => round((float) ($service->price_amount ?? 0), 2),
+                'currency' => $service->currency_code,
+                'risk_level' => $service->risk_level,
                 'duration_minutes' => $service->default_duration_minutes,
             ])
-            ->values();
+            ->values()
+            ->toArray();
 
         $categoryBreakdown = $services
             ->groupBy('service_category')
-            ->map(fn ($group, $category) => [
-                'category'         => $category,
-                'count'            => $group->count(),
-                'total_price_sum'  => round($group->sum('price_amount'), 2),
-                'avg_price'        => round($group->avg('price_amount'), 2),
-                'share_percentage' => $totalRevenuePotential > 0
-                    ? round(($group->sum('price_amount') / $totalRevenuePotential) * 100, 2)
-                    : 0,
-            ])
+            ->map(function (Collection $rows, string $category) use ($totalRevenuePotential) {
+                $totalPrice = round((float) $rows->sum('price_amount'), 2);
+
+                return [
+                    'category' => $category,
+                    'count' => $rows->count(),
+                    'total_price_sum' => $totalPrice,
+                    'avg_price' => round((float) ($rows->avg('price_amount') ?? 0), 2),
+                    'share_percentage' => $totalRevenuePotential > 0
+                        ? round(($totalPrice / $totalRevenuePotential) * 100, 2)
+                        : 0.0,
+                ];
+            })
             ->sortByDesc('total_price_sum')
-            ->values();
+            ->values()
+            ->toArray();
 
         return [
             'top_services_by_price' => $topByPrice,
-            'category_breakdown'    => $categoryBreakdown,
-            'summary'               => [
-                'total_active_services'   => $services->count(),
-                'total_revenue_potential' => round($totalRevenuePotential, 2),
-                'average_service_price'   => round($services->avg('price_amount'), 2),
-                'highest_price_service'   => $services->max('price_amount'),
+            'category_breakdown' => $categoryBreakdown,
+            'summary' => [
+                'total_active_services' => $services->count(),
+                'total_revenue_potential' => $totalRevenuePotential,
+                'average_service_price' => round((float) ($services->avg('price_amount') ?? 0), 2),
+                'highest_price_service' => round((float) ($services->max('price_amount') ?? 0), 2),
             ],
         ];
     }
 
-    /* ----------------------------------------------------------------------
-       Helpers
-    ---------------------------------------------------------------------- */
+    protected function buildFinancialMetrics(int $facilityId, array $normalized): ?array
+    {
+        $billingDashboard = $this->billingService->getDashboard($facilityId, [
+            'date_from' => $normalized['date_from']->toDateString(),
+            'date_to' => $normalized['date_to']->toDateString(),
+            'group_by' => $normalized['group_by'],
+            'top' => $normalized['top'],
+        ]);
+
+        return $billingDashboard['data'] ?? null;
+    }
+
+    /**
+     * ---------------------------------------------------------------------
+     * STAFF HELPERS
+     * ---------------------------------------------------------------------
+     */
+    protected function getFacilityStaffAssignments(
+        int $facilityId,
+        CarbonInterface $dateFrom,
+        CarbonInterface $dateTo
+    ): Collection {
+        return DB::table('facility_staff_roles')
+            ->where('facility_id', $facilityId)
+            ->where('assignment_status', 'active')
+            ->where(function ($query) use ($dateTo) {
+                $query->whereNull('effective_from')
+                    ->orWhereDate('effective_from', '<=', $dateTo->toDateString());
+            })
+            ->where(function ($query) use ($dateFrom) {
+                $query->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', $dateFrom->toDateString());
+            })
+            ->select([
+                'staff_id',
+                'role_code',
+                'effective_from',
+                'effective_to',
+            ])
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'staff_id' => (int) $row->staff_id,
+                    'role_code' => $row->role_code ?: 'unknown',
+                    'effective_from' => !empty($row->effective_from)
+                        ? Carbon::parse($row->effective_from)->startOfDay()
+                        : null,
+                    'effective_to' => !empty($row->effective_to)
+                        ? Carbon::parse($row->effective_to)->endOfDay()
+                        : null,
+                ];
+            });
+    }
+
+    protected function getStaffIdsActiveAtPoint(Collection $assignments, CarbonInterface $point): Collection
+    {
+        return $assignments
+            ->filter(function (array $assignment) use ($point) {
+                $startsOk = empty($assignment['effective_from']) || $assignment['effective_from']->lte($point);
+                $endsOk = empty($assignment['effective_to']) || $assignment['effective_to']->gte($point);
+
+                return $startsOk && $endsOk;
+            })
+            ->pluck('staff_id')
+            ->unique()
+            ->values();
+    }
+
+    protected function getStaffDirectory(array $staffIds): Collection
+    {
+        if (empty($staffIds)) {
+            return collect();
+        }
+
+        return DB::table('staff')
+            ->leftJoin('users', 'users.id', '=', 'staff.user_id')
+            ->whereIn('staff.id', $staffIds)
+            ->select([
+                'staff.id',
+                'staff.staff_uuid',
+                'staff.max_concurrent_patients',
+                'staff.total_patients_treated',
+                'staff.patient_satisfaction_score',
+                'users.display_name',
+                'users.first_name',
+                'users.last_name',
+            ])
+            ->get()
+            ->mapWithKeys(function ($row) {
+                $fullName = trim((string) (
+                    $row->display_name
+                    ?: trim(($row->first_name ?? '') . ' ' . ($row->last_name ?? ''))
+                ));
+
+                return [
+                    (int) $row->id => [
+                        'staff_id' => (int) $row->id,
+                        'staff_uuid' => $row->staff_uuid,
+                        'first_name' => $row->first_name,
+                        'last_name' => $row->last_name,
+                        'display_name' => $row->display_name,
+                        'full_name' => $fullName !== '' ? $fullName : 'Unknown Staff',
+                        'max_concurrent_patients' => (int) ($row->max_concurrent_patients ?? 0),
+                        'total_patients_treated' => (int) ($row->total_patients_treated ?? 0),
+                        'patient_satisfaction' => $row->patient_satisfaction_score !== null
+                            ? (float) $row->patient_satisfaction_score
+                            : null,
+                    ],
+                ];
+            });
+    }
+
+    protected function getStaffPresenceEvents(
+        int $facilityId,
+        array $staffIds,
+        CarbonInterface $dateTo
+    ): Collection {
+        if (empty($staffIds)) {
+            return collect();
+        }
+
+        return DB::table('staff_presences')
+            ->where('facility_id', $facilityId)
+            ->whereIn('staff_id', $staffIds)
+            ->where(function ($query) {
+                $query->whereNotNull('updated_at')
+                    ->orWhereNotNull('created_at');
+            })
+            ->whereRaw('COALESCE(updated_at, created_at) <= ?', [$dateTo->toDateTimeString()])
+            ->select([
+                'staff_id',
+                'status',
+                DB::raw('COALESCE(updated_at, created_at) as event_at'),
+            ])
+            ->orderBy('staff_id')
+            ->orderBy('event_at')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'staff_id' => (int) $row->staff_id,
+                    'status' => $this->normalizePresenceStatus($row->status),
+                    'event_at' => Carbon::parse($row->event_at),
+                ];
+            });
+    }
+
+    protected function resolvePresenceStatusAt(Collection $events, CarbonInterface $point): string
+    {
+        $event = $events
+            ->filter(fn (array $row) => $row['event_at']->lte($point))
+            ->sortByDesc('event_at')
+            ->first();
+
+        if (!$event) {
+            return 'off_duty';
+        }
+
+        return $this->normalizePresenceStatus($event['status'] ?? null);
+    }
+
+    protected function getWorkloadVisits(
+        int $facilityId,
+        CarbonInterface $dateFrom,
+        CarbonInterface $dateTo
+    ): Collection {
+        return DB::table('visits')
+            ->where('facility_id', $facilityId)
+            ->whereIn('status', ['active', 'in_progress'])
+            ->whereNotNull('assigned_staff_id')
+            ->whereRaw('COALESCE(updated_at, created_at) BETWEEN ? AND ?', [
+                $dateFrom->toDateTimeString(),
+                $dateTo->toDateTimeString(),
+            ])
+            ->select([
+                'id',
+                'assigned_staff_id',
+                DB::raw('COALESCE(updated_at, created_at) as event_at'),
+            ])
+            ->get()
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'assigned_staff_id' => (int) $row->assigned_staff_id,
+                'event_at' => Carbon::parse($row->event_at),
+            ]);
+    }
+
+    /**
+     * ---------------------------------------------------------------------
+     * GENERIC HELPERS
+     * ---------------------------------------------------------------------
+     */
     protected function normalizeFilters(array $filters): array
     {
         $groupBy = in_array($filters['group_by'] ?? 'day', ['day', 'week', 'month'], true)
@@ -669,19 +746,15 @@ class FacilityOwnerAnalyticsService
 
         return [
             'date_from' => $dateFrom,
-            'date_to'   => $dateTo,
-            'group_by'  => $groupBy,
-            'top'       => max(1, min((int) ($filters['top'] ?? 10), 25)),
+            'date_to' => $dateTo,
+            'group_by' => $groupBy,
+            'top' => max(1, min((int) ($filters['top'] ?? 10), 25)),
         ];
     }
 
-    /**
-     * Keep output contract unchanged.
-     * Existing contract only has: on_duty, busy, off_duty
-     */
     protected function normalizePresenceStatus(?string $status): string
     {
-        return match ($status) {
+        return match ((string) $status) {
             'on_duty' => 'on_duty',
             'busy' => 'busy',
             'off_duty', 'on_break', 'unavailable' => 'off_duty',
@@ -689,33 +762,49 @@ class FacilityOwnerAnalyticsService
         };
     }
 
-    protected function formatTrendBucket(CarbonInterface $date, string $groupBy): string
-    {
-        return match ($groupBy) {
-            'week'  => $date->copy()->startOfWeek()->toDateString(),
-            'month' => $date->copy()->startOfMonth()->toDateString(),
-            default => $date->copy()->toDateString(),
-        };
-    }
-
-    protected function initializeTrendBuckets(
+    protected function buildTrendBuckets(
         CarbonInterface $dateFrom,
         CarbonInterface $dateTo,
-        string $groupBy,
-        callable $resolver
+        string $groupBy
     ): array {
         $buckets = [];
 
         $cursor = $this->getBucketStart($dateFrom, $groupBy);
-        $end = $this->getBucketStart($dateTo, $groupBy);
+        $endBoundary = $this->getBucketStart($dateTo, $groupBy);
 
-        while ($cursor->lte($end)) {
-            $key = $cursor->toDateString();
-            $buckets[$key] = $resolver($key);
+        while ($cursor->lte($endBoundary)) {
+            $bucketStart = $cursor->copy();
+            $bucketEnd = match ($groupBy) {
+                'week' => $bucketStart->copy()->endOfWeek(),
+                'month' => $bucketStart->copy()->endOfMonth(),
+                default => $bucketStart->copy()->endOfDay(),
+            };
+
+            if ($bucketEnd->gt($dateTo)) {
+                $bucketEnd = $dateTo->copy();
+            }
+
+            $key = $bucketStart->toDateString();
+
+            $buckets[$key] = [
+                'key' => $key,
+                'start' => $bucketStart,
+                'end' => $bucketEnd,
+            ];
+
             $cursor = $this->incrementBucket($cursor, $groupBy);
         }
 
         return $buckets;
+    }
+
+    protected function formatTrendBucket(CarbonInterface $date, string $groupBy): string
+    {
+        return match ($groupBy) {
+            'week' => $date->copy()->startOfWeek()->toDateString(),
+            'month' => $date->copy()->startOfMonth()->toDateString(),
+            default => $date->copy()->startOfDay()->toDateString(),
+        };
     }
 
     protected function getBucketStart(CarbonInterface $date, string $groupBy): Carbon
@@ -723,7 +812,7 @@ class FacilityOwnerAnalyticsService
         $date = Carbon::parse($date);
 
         return match ($groupBy) {
-            'week'  => $date->startOfWeek(),
+            'week' => $date->startOfWeek(),
             'month' => $date->startOfMonth(),
             default => $date->startOfDay(),
         };
@@ -734,9 +823,64 @@ class FacilityOwnerAnalyticsService
         $date = Carbon::parse($date);
 
         return match ($groupBy) {
-            'week'  => $date->addWeek(),
+            'week' => $date->addWeek(),
             'month' => $date->addMonth(),
             default => $date->addDay(),
         };
+    }
+
+    protected function emptyPresenceTrend(
+        CarbonInterface $dateFrom,
+        CarbonInterface $dateTo,
+        string $groupBy
+    ): array {
+        return collect($this->buildTrendBuckets($dateFrom, $dateTo, $groupBy))
+            ->map(fn (array $bucket) => [
+                'date' => $bucket['key'],
+                'on_duty' => 0,
+                'busy' => 0,
+                'off_duty' => 0,
+            ])
+            ->values()
+            ->toArray();
+    }
+
+    protected function emptyWorkloadTrend(
+        CarbonInterface $dateFrom,
+        CarbonInterface $dateTo,
+        string $groupBy
+    ): array {
+        return collect($this->buildTrendBuckets($dateFrom, $dateTo, $groupBy))
+            ->map(fn (array $bucket) => [
+                'date' => $bucket['key'],
+                'total_active_patients' => 0,
+                'unique_staff_assigned' => 0,
+                'avg_patients_per_staff' => 0.0,
+            ])
+            ->values()
+            ->toArray();
+    }
+
+    protected function assessInventoryRisk(object $item): string
+    {
+        if (
+            !empty($item->controlled_substance_schedule)
+            && in_array($item->controlled_substance_schedule, ['II', 'III'], true)
+        ) {
+            return 'high (controlled substance)';
+        }
+
+        if ((float) ($item->package_quantity ?? 0) <= (float) ($item->safety_stock_level ?? 0)) {
+            return 'high (below safety stock)';
+        }
+
+        if (
+            !is_null($item->reorder_point)
+            && (float) ($item->package_quantity ?? 0) <= (float) $item->reorder_point
+        ) {
+            return 'medium (below reorder point)';
+        }
+
+        return 'low';
     }
 }

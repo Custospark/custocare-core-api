@@ -11,11 +11,11 @@ use Illuminate\Validation\ValidationException;
 
 class FacilityOwnerAnalyticsController extends Controller
 {
-    protected FacilityOwnerAnalyticsService $operationalService;
+    protected FacilityOwnerAnalyticsService $dashboardService;
 
-    public function __construct(FacilityOwnerAnalyticsService $operationalService)
+    public function __construct(FacilityOwnerAnalyticsService $dashboardService)
     {
-        $this->operationalService = $operationalService;
+        $this->dashboardService = $dashboardService;
     }
 
     protected function resolveFacilityId(Request $request): int
@@ -27,11 +27,14 @@ class FacilityOwnerAnalyticsController extends Controller
     {
         try {
             $facilityId = $this->resolveFacilityId($request);
+
             if ($facilityId <= 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Missing or invalid X-Facility-Id header.',
-                    'errors' => ['facility_id' => ['Facility context is required for operational analytics.']],
+                    'message' => 'Missing X-Facility-Id header.',
+                    'errors' => [
+                        'facility_id' => ['Facility context is required for facility owner analytics.'],
+                    ],
                 ], 422);
             }
 
@@ -42,32 +45,32 @@ class FacilityOwnerAnalyticsController extends Controller
                 'top'       => ['nullable', 'integer', 'min:1', 'max:25'],
             ]);
 
-            Log::info('Operational decisions dashboard request.', [
+            Log::info('Facility owner analytics request received.', [
                 'facility_id' => $facilityId,
-                'filters'     => $filters,
-                'user_id'     => optional($request->user())->id,
+                'filters' => $filters,
+                'user_id' => optional($request->user())->id,
             ]);
 
-            $result = $this->operationalService->getDashboard($facilityId, $filters);
+            $result = $this->dashboardService->getDashboard($facilityId, $filters);
 
-            return response()->json($result, $result['success'] ? 200 : 500);
+            return response()->json($result, !empty($result['success']) ? 200 : 500);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Filter validation failed.',
-                'errors'  => $e->errors(),
+                'message' => 'Dashboard filter validation failed.',
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Throwable $e) {
-            Log::error('Operational decisions dashboard controller failed.', [
+            Log::error('Facility owner analytics controller failed.', [
                 'error_message' => $e->getMessage(),
-                'file'          => $e->getFile(),
-                'line'          => $e->getLine(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to retrieve operational dashboard data.',
-                'error'   => config('app.debug') ? $e->getMessage() : null,
+                'message' => 'Failed to retrieve facility owner analytics data.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }

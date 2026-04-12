@@ -96,99 +96,146 @@ class DepartmentService implements DepartmentServiceInterface
      * @param array $data
      * @return array
      */
-    public function createDepartment(array $data): array
-    {
-        DB::beginTransaction();
+        public function createDepartment(array $data): array
+        {
+            DB::beginTransaction();
 
-        try {
-            // -------------------------------
-            // 1️⃣ Validate department data
-            // -------------------------------
-            $validationResult = $this->validateDepartmentData($data);
-            if (!$validationResult['success']) {
-                DB::rollBack();
-                return $validationResult;
-            }
+            try {
+                // -------------------------------
+                // 1️⃣ Validate department data (basic validation without code uniqueness check)
+                // -------------------------------
+                $validationResult = $this->validateDepartmentData($data);
+                if (!$validationResult['success']) {
+                    DB::rollBack();
+                    return $validationResult;
+                }
 
-            // -------------------------------
-            // 2️⃣ Ensure department code is unique within the facility
-            // -------------------------------
-            if (!$this->repository->isDepartmentCodeUnique($data['department_code'], $data['facility_id'])) {
+                // -------------------------------
+                // 2️⃣ Ensure department code is unique within the facility
+                // If not unique, generate a new one
+                // -------------------------------
+                $originalCode = $data['department_code'] ?? null;
+                $maxAttempts = 10;
+                $attempt = 0;
+                
+                while ($attempt < $maxAttempts) {
+                    $isUnique = $this->repository->isDepartmentCodeUnique($data['department_code'], $data['facility_id']);
+                    
+                    if ($isUnique) {
+                        break;
+                    }
+                    
+                    // Code already exists, generate a new one
+                    $attempt++;
+                    $data['department_code'] = $this->generateUniqueDepartmentCode($data['facility_id']);
+                    
+                    Log::info('Department code already exists, generating new code', [
+                        'facility_id' => $data['facility_id'],
+                        'original_code' => $originalCode,
+                        'new_code' => $data['department_code'],
+                        'attempt' => $attempt
+                    ]);
+                }
+                
+                // If we've exhausted all attempts
+                if ($attempt >= $maxAttempts) {
+                    DB::rollBack();
+                    return [
+                        'success' => false,
+                        'message' => 'Unable to generate a unique department code. Please try again.',
+                        'status' => 500,
+                    ];
+                }
+
+                // -------------------------------
+                // 3️⃣ Validate parent department (if provided)
+                // -------------------------------
+                if (!empty($data['parent_department_id'])) {
+                    $parent = $this->repository->findById($data['parent_department_id']);
+                    if (!$parent) {
+                        DB::rollBack();
+                        return [
+                            'success' => false,
+                            'message' => 'Parent department not found.',
+                            'errors' => [
+                                'parent_department_id' => ['The selected parent department does not exist.']
+                            ],
+                            'status' => 422,
+                        ];
+                    }
+
+                    if ($parent->facility_id != $data['facility_id']) {
+                        DB::rollBack();
+                        return [
+                            'success' => false,
+                            'message' => 'Parent department must be in the same facility.',
+                            'errors' => [
+                                'parent_department_id' => ['Parent department must belong to the same facility.']
+                            ],
+                            'status' => 422,
+                        ];
+                    }
+                }
+
+                // -------------------------------
+                // 4️⃣ Prepare department data
+                // -------------------------------
+                $data['department_uuid'] = $data['department_uuid'] ?? (string) \Illuminate\Support\Str::uuid();
+
+                // -------------------------------
+                // 5️⃣ Create the department
+                // -------------------------------
+                $department = $this->repository->create($data);
+
+                DB::commit();
+
+                return [
+                    'success' => true,
+                    'data' => $department,
+                    'message' => 'Department created successfully.',
+                    'status' => 201,
+                ];
+            } catch (\Exception $e) {
                 DB::rollBack();
+
+                Log::error('Failed to create department: ' . $e->getMessage(), [
+                    'trace' => $e->getTraceAsString(),
+                    'data' => $data,
+                ]);
+
                 return [
                     'success' => false,
-                    'message' => 'Department code already exists in this facility.',
-                    'errors' => [
-                        'department_code' => ['The department code must be unique within the facility.']
-                    ],
-                    'status' => 422,
+                    'message' => 'Failed to create department. Please try again.',
+                    'error' => config('app.debug') ? $e->getMessage() : null,
+                    'status' => 500,
                 ];
             }
-
-            // -------------------------------
-            // 3️⃣ Validate parent department (if provided)
-            // -------------------------------
-            if (!empty($data['parent_department_id'])) {
-                $parent = $this->repository->findById($data['parent_department_id']);
-                if (!$parent) {
-                    DB::rollBack();
-                    return [
-                        'success' => false,
-                        'message' => 'Parent department not found.',
-                        'errors' => [
-                            'parent_department_id' => ['The selected parent department does not exist.']
-                        ],
-                        'status' => 422,
-                    ];
-                }
-
-                if ($parent->facility_id != $data['facility_id']) {
-                    DB::rollBack();
-                    return [
-                        'success' => false,
-                        'message' => 'Parent department must be in the same facility.',
-                        'errors' => [
-                            'parent_department_id' => ['Parent department must belong to the same facility.']
-                        ],
-                        'status' => 422,
-                    ];
-                }
-            }
-
-            // -------------------------------
-            // 4️⃣ Prepare department data
-            // -------------------------------
-            $data['department_uuid'] = $data['department_uuid'] ?? (string) \Illuminate\Support\Str::uuid();
-
-            // -------------------------------
-            // 5️⃣ Create the department
-            // -------------------------------
-            $department = $this->repository->create($data);
-
-            DB::commit();
-
-            return [
-                'success' => true,
-                'data' => $department,
-                'message' => 'Department created successfully.',
-                'status' => 201,
-            ];
-        } catch (\Exception $e) {
-            DB::rollBack();
-
-            Log::error('Failed to create department: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'data' => $data,
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Failed to create department. Please try again.',
-                'error' => config('app.debug') ? $e->getMessage() : null,
-                'status' => 500,
-            ];
         }
-    }
+
+        /**
+        * Generate a unique department code that doesn't exist in the facility
+        * Format: DPT-XXXX where XXXX is a random 4-digit number
+        * Example: DPT-1234, DPT-5678, DPT-9012
+        */
+        private function generateUniqueDepartmentCode(int $facilityId): string
+        {
+            do {
+                // Generate random number between 1 and 9999
+                $randomNum = random_int(1, 9999);
+                
+                // Pad with leading zeros to 4 digits
+                $paddedNum = str_pad($randomNum, 4, '0', STR_PAD_LEFT);
+                
+                // Create code in format: DPT-XXXX
+                $code = "DPT-{$paddedNum}";
+                
+                // Check if this code already exists for this facility
+                $exists = !$this->repository->isDepartmentCodeUnique($code, $facilityId);
+                
+            } while ($exists);
+            
+            return $code;
+        }
 
 
     /**

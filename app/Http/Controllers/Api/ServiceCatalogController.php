@@ -107,7 +107,6 @@ class ServiceCatalogController extends Controller
     public function store(StoreServiceCatalogRequest $request): JsonResponse
     {
          Log::info("Creation data: ");
-        Log::info($request);
       
         try {
             // Validate facility header is present

@@ -277,6 +277,7 @@ class UserContextResolverService
            $facilities[] = [
             'facility_id' => $role->facility_id,
             'facility_name' => $facility->facility_name ?? null,
+            'facility_code' => $facility->facility_code ?? null,
             
             // Core Identity Fields
             'legal_entity_name' => $facility->legal_entity_name ?? null,
@@ -341,7 +342,9 @@ class UserContextResolverService
             'tax_rate' => $facility->tax_rate ?? null,
             
             // Branding Fields
-            'facility_logo_path' => $facility->facility_logo_path ?? null,
+            'facility_logo_path' =>  $facility->facility_logo_path
+                                            ? asset('storage/' . $facility->facility_logo_path)
+                                            : null,//simply return the logo url.
             'primary_brand_color' => $facility->primary_brand_color ?? null,
             'secondary_brand_color' => $facility->secondary_brand_color ?? null,
             

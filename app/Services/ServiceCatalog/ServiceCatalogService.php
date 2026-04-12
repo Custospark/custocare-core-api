@@ -203,109 +203,133 @@ class ServiceCatalogService implements ServiceCatalogServiceInterface
      * @param array $data
      * @return array
      */
-    public function createServiceCatalog(array $data): array
-    {
-        // Never allow callers to set auto-increment PK
-        unset($data['id']);
+   public function createServiceCatalog(array $data): array
+{
+    // Never allow callers to set auto-increment PK
+    unset($data['id']);
 
-        try {
-            $this->validateFacilityId();
+    try {
+        $this->validateFacilityId();
+        
+        /**
+         * 1) Normalize + provide safe defaults BEFORE validation
+         */
+
+        // Auto-generate service_code if missing/empty OR if it already exists
+        if (!isset($data['service_code']) || trim((string) $data['service_code']) === '') {
+            $data['service_code'] = $this->generateUniqueServiceCode($this->facilityId);
+        } else {
+            $data['service_code'] = trim((string) $data['service_code']);
             
-            /**
-             * 1) Normalize + provide safe defaults BEFORE validation
-             */
-
-            // Auto-generate service_code if missing/empty
-            if (!isset($data['service_code']) || trim((string) $data['service_code']) === '') {
+            // Check if the provided service code already exists for this facility
+            $existingService = $this->findByFacilityAndCode(
+                $this->facilityId, 
+                $data['service_code']
+            );
+            
+            if ($existingService) {
+                // Service code already exists, generate a new unique one
+                Log::info('Service code already exists, generating new code', [
+                    'facility_id' => $this->facilityId,
+                    'requested_code' => $data['service_code']
+                ]);
+                
                 $data['service_code'] = $this->generateUniqueServiceCode($this->facilityId);
-            } else {
-                $data['service_code'] = trim((string) $data['service_code']);
             }
+        }
 
-            // Ensure service_uuid exists
-            if (!isset($data['service_uuid']) || trim((string) $data['service_uuid']) === '') {
-                $data['service_uuid'] = (string) Str::uuid();
-            } else {
-                $data['service_uuid'] = trim((string) $data['service_uuid']);
-            }
+        // Ensure service_uuid exists
+        if (!isset($data['service_uuid']) || trim((string) $data['service_uuid']) === '') {
+            $data['service_uuid'] = (string) Str::uuid();
+        } else {
+            $data['service_uuid'] = trim((string) $data['service_uuid']);
+        }
 
-            // Set facility_id from headers (cannot be overridden)
-            $data['facility_id'] = $this->facilityId;
+        // Set facility_id from headers (cannot be overridden)
+        $data['facility_id'] = $this->facilityId;
 
-            // If effective_from is missing, start today (YYYY-MM-DD)
-            if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
-                $data['effective_from'] = Carbon::now()->toDateString();
-            }
+        // If effective_from is missing, start today (YYYY-MM-DD)
+        if (!isset($data['effective_from']) || trim((string) $data['effective_from']) === '') {
+            $data['effective_from'] = Carbon::now()->toDateString();
+        }
 
-            // Set created_by_staff_id if missing and user is authenticated
-            if (!isset($data['created_by_staff_id']) && Auth::check()) {
-                $data['created_by_staff_id'] = Auth::id();
-            }
+        // Set created_by_staff_id if missing and user is authenticated
+        if (!isset($data['created_by_staff_id']) && Auth::check()) {
+            $data['created_by_staff_id'] = Auth::id();
+        }
 
-            // Validate business rules before creation
-            $validationResult = $this->validateServiceCatalogData($data);
-            if (!$validationResult['success']) {
-                return $validationResult;
-            }
+        // Validate business rules before creation
+        $validationResult = $this->validateServiceCatalogData($data);
+        if (!$validationResult['success']) {
+            return $validationResult;
+        }
 
-            /**
-             * 3) Cross-field validation
-             */
-            if (isset($data['effective_from'], $data['effective_to']) &&
-                trim((string) $data['effective_to']) !== '') {
+        /**
+         * 3) Cross-field validation
+         */
+        if (isset($data['effective_from'], $data['effective_to']) &&
+            trim((string) $data['effective_to']) !== '') {
 
-                try {
-                    $effectiveFrom = Carbon::parse($data['effective_from']);
-                    $effectiveTo   = Carbon::parse($data['effective_to']);
+            try {
+                $effectiveFrom = Carbon::parse($data['effective_from']);
+                $effectiveTo   = Carbon::parse($data['effective_to']);
 
-                    if ($effectiveTo->lessThan($effectiveFrom)) {
-                        return [
-                            'success' => false,
-                            'message' => 'Effective to date must be after effective from date.',
-                            'data' => []
-                        ];
-                    }
-                } catch (\Exception $e) {
+                if ($effectiveTo->lessThan($effectiveFrom)) {
                     return [
                         'success' => false,
-                        'message' => 'Invalid effective_to date format. Please use YYYY-MM-DD format.',
+                        'message' => 'Effective to date must be after effective from date.',
                         'data' => []
                     ];
                 }
+            } catch (\Exception $e) {
+                return [
+                    'success' => false,
+                    'message' => 'Invalid effective_to date format. Please use YYYY-MM-DD format.',
+                    'data' => []
+                ];
             }
-
-            /**
-             * 4) Persist
-             */
-            $serviceCatalog = DB::transaction(function () use ($data) {
-                return $this->repository->create($data);
-            });
-
-            Log::info('Service catalog created successfully', [
-                'facility_id' => $this->facilityId,
-                'service_uuid' => $serviceCatalog->service_uuid,
-                'service_code' => $serviceCatalog->service_code,
-            ]);
-
-            return [
-                'success' => true,
-                'message' => 'Service catalog created successfully.',
-                'data' => $serviceCatalog
-            ];
-        } catch (\Throwable $e) {
-            Log::error('Failed to create service catalog', [
-                'facility_id' => $this->facilityId,
-                'data' => $data,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Failed to create service catalog. Please try again.',
-                'data' => []
-            ];
         }
+
+        /**
+         * 4) Persist
+         */
+        $serviceCatalog = DB::transaction(function () use ($data) {
+            return $this->repository->create($data);
+        });
+
+        Log::info('Service catalog created successfully', [
+            'facility_id' => $this->facilityId,
+            'service_uuid' => $serviceCatalog->service_uuid,
+            'service_code' => $serviceCatalog->service_code,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Service catalog created successfully.',
+            'data' => $serviceCatalog
+        ];
+    } catch (\Throwable $e) {
+        Log::error('Failed to create service catalog', [
+            'facility_id' => $this->facilityId,
+            'data' => $data,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to create service catalog. Please try again.',
+            'data' => []
+        ];
+    }
+}
+
+    // In your repository class
+    public function findByFacilityAndCode(int $facilityId, string $serviceCode): ?ServiceCatalog
+    {
+        return ServiceCatalog::where('facility_id', $facilityId)
+            ->where('service_code', $serviceCode)
+            ->first();
     }
 
     /**

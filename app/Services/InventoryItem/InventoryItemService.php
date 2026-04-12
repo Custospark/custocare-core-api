@@ -205,145 +205,169 @@ class InventoryItemService implements InventoryItemServiceInterface
      * @param array $data
      * @return array
      */
-    public function createInventoryItem(array $data): array
-    {
-        // Never allow callers to set auto-increment PK
-        unset($data['id']);
+ public function createInventoryItem(array $data): array
+{
+    // Never allow callers to set auto-increment PK
+    unset($data['id']);
 
-        try {
-            $this->validateFacilityId();
+    try {
+        $this->validateFacilityId();
+        
+        /**
+         * 1) Normalize + provide safe defaults BEFORE validation
+         */
+
+        // Auto-generate item_code if missing/empty OR if it already exists
+        if (!isset($data['item_code']) || trim((string) $data['item_code']) === '') {
+            $data['item_code'] = $this->generateUniqueItemCode($this->facilityId);
+        } else {
+            $data['item_code'] = trim((string) $data['item_code']);
             
-            /**
-             * 1) Normalize + provide safe defaults BEFORE validation
-             */
-
-            // Auto-generate item_code if missing/empty
-            if (!isset($data['item_code']) || trim((string) $data['item_code']) === '') {
+            // Check if the provided item code already exists for this facility
+            $existingItem = $this->findByFacilityAndCode(
+                $this->facilityId, 
+                $data['item_code']
+            );
+            
+            if ($existingItem) {
+                // Item code already exists, generate a new unique one
+                Log::info('Item code already exists, generating new code', [
+                    'facility_id' => $this->facilityId,
+                    'requested_code' => $data['item_code']
+                ]);
+                
                 $data['item_code'] = $this->generateUniqueItemCode($this->facilityId);
-            } else {
-                $data['item_code'] = trim((string) $data['item_code']);
             }
-
-            // Ensure item_uuid exists
-            if (!isset($data['item_uuid']) || trim((string) $data['item_uuid']) === '') {
-                $data['item_uuid'] = (string) Str::uuid();
-            } else {
-                $data['item_uuid'] = trim((string) $data['item_uuid']);
-            }
-
-            // Set facility_id from headers (cannot be overridden)
-            $data['facility_id'] = $this->facilityId;
-
-            // Set default currency code
-            if (!isset($data['currency_code']) || trim((string) $data['currency_code']) === '') {
-                $data['currency_code'] = 'USD';
-            } else {
-                $data['currency_code'] = strtoupper(trim((string) $data['currency_code']));
-            }
-
-            // Set default unit of measure
-            if (!isset($data['unit_of_measure']) || trim((string) $data['unit_of_measure']) === '') {
-                $data['unit_of_measure'] = 'each';
-            }
-
-            // Set default package quantity
-            if (!isset($data['package_quantity']) || $data['package_quantity'] < 1) {
-                $data['package_quantity'] = 1;
-            }
-
-            // Set default boolean fields
-            $defaultBooleans = [
-                'requires_refrigeration' => false,
-                'requires_controlled_access' => false,
-                'requires_prescription' => false,
-                'is_hazardous' => false,
-                'is_billable' => true,
-                'track_by_lot' => false,
-                'track_by_serial' => false,
-            ];
-
-            foreach ($defaultBooleans as $field => $defaultValue) {
-                if (!isset($data[$field])) {
-                    $data[$field] = $defaultValue;
-                }
-            }
-
-            // Set default status
-            if (!isset($data['status']) || trim((string) $data['status']) === '') {
-                $data['status'] = 'active';
-            }
-
-            // Set created_by_staff_id if missing and user is authenticated
-            if (!isset($data['created_by_staff_id']) && Auth::check()) {
-                $data['created_by_staff_id'] = Auth::id();
-            }
-
-            // Process JSON fields
-            $data = $this->processJsonFields($data);
-
-            // Validate business rules before creation
-            $validationResult = $this->validateInventoryItemData($data);
-            if (!$validationResult['success']) {
-                return $validationResult;
-            }
-
-            /**
-             * 3) Validate numeric ranges
-             */
-            $numericValidations = [
-                'unit_cost' => ['min' => 0, 'max' => 99999999.99],
-                'average_wholesale_price' => ['min' => 0, 'max' => 99999999.99],
-                'package_quantity' => ['min' => 1, 'max' => 65535],
-                'reorder_point' => ['min' => 0, 'max' => 65535],
-                'reorder_quantity' => ['min' => 1, 'max' => 65535],
-                'safety_stock_level' => ['min' => 0, 'max' => 65535],
-                'max_stock_level' => ['min' => 0, 'max' => 65535],
-            ];
-
-            foreach ($numericValidations as $field => $limits) {
-                if (isset($data[$field]) && $data[$field] !== null) {
-                    if ($data[$field] < $limits['min'] || $data[$field] > $limits['max']) {
-                        return [
-                            'success' => false,
-                            'message' => "{$field} must be between {$limits['min']} and {$limits['max']}.",
-                            'data' => []
-                        ];
-                    }
-                }
-            }
-
-            /**
-             * 4) Persist
-             */
-            $inventoryItem = DB::transaction(function () use ($data) {
-                return $this->repository->create($data);
-            });
-
-            Log::info('Inventory item created successfully', [
-                'facility_id' => $this->facilityId,
-                'item_uuid' => $inventoryItem->item_uuid,
-                'item_code' => $inventoryItem->item_code,
-            ]);
-
-            return [
-                'success' => true,
-                'message' => 'Inventory item created successfully.',
-                'data' => $inventoryItem
-            ];
-        } catch (\Throwable $e) {
-            Log::error('Failed to create inventory item', [
-                'facility_id' => $this->facilityId,
-                'data' => $this->sanitizeDataForLogging($data),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return [
-                'success' => false,
-                'message' => 'Failed to create inventory item. Please try again.',
-                'data' => []
-            ];
         }
+
+        // Ensure item_uuid exists
+        if (!isset($data['item_uuid']) || trim((string) $data['item_uuid']) === '') {
+            $data['item_uuid'] = (string) Str::uuid();
+        } else {
+            $data['item_uuid'] = trim((string) $data['item_uuid']);
+        }
+
+        // Set facility_id from headers (cannot be overridden)
+        $data['facility_id'] = $this->facilityId;
+
+        // Set default currency code
+        if (!isset($data['currency_code']) || trim((string) $data['currency_code']) === '') {
+            $data['currency_code'] = 'USD';
+        } else {
+            $data['currency_code'] = strtoupper(trim((string) $data['currency_code']));
+        }
+
+        // Set default unit of measure
+        if (!isset($data['unit_of_measure']) || trim((string) $data['unit_of_measure']) === '') {
+            $data['unit_of_measure'] = 'each';
+        }
+
+        // Set default package quantity
+        if (!isset($data['package_quantity']) || $data['package_quantity'] < 1) {
+            $data['package_quantity'] = 1;
+        }
+
+        // Set default boolean fields
+        $defaultBooleans = [
+            'requires_refrigeration' => false,
+            'requires_controlled_access' => false,
+            'requires_prescription' => false,
+            'is_hazardous' => false,
+            'is_billable' => true,
+            'track_by_lot' => false,
+            'track_by_serial' => false,
+        ];
+
+        foreach ($defaultBooleans as $field => $defaultValue) {
+            if (!isset($data[$field])) {
+                $data[$field] = $defaultValue;
+            }
+        }
+
+        // Set default status
+        if (!isset($data['status']) || trim((string) $data['status']) === '') {
+            $data['status'] = 'active';
+        }
+
+        // Set created_by_staff_id if missing and user is authenticated
+        if (!isset($data['created_by_staff_id']) && Auth::check()) {
+            $data['created_by_staff_id'] = Auth::id();
+        }
+
+        // Process JSON fields
+        $data = $this->processJsonFields($data);
+
+        // Validate business rules before creation
+        $validationResult = $this->validateInventoryItemData($data);
+        if (!$validationResult['success']) {
+            return $validationResult;
+        }
+
+        /**
+         * 3) Validate numeric ranges
+         */
+        $numericValidations = [
+            'unit_cost' => ['min' => 0, 'max' => 99999999.99],
+            'average_wholesale_price' => ['min' => 0, 'max' => 99999999.99],
+            'package_quantity' => ['min' => 1, 'max' => 65535],
+            'reorder_point' => ['min' => 0, 'max' => 65535],
+            'reorder_quantity' => ['min' => 1, 'max' => 65535],
+            'safety_stock_level' => ['min' => 0, 'max' => 65535],
+            'max_stock_level' => ['min' => 0, 'max' => 65535],
+        ];
+
+        foreach ($numericValidations as $field => $limits) {
+            if (isset($data[$field]) && $data[$field] !== null) {
+                if ($data[$field] < $limits['min'] || $data[$field] > $limits['max']) {
+                    return [
+                        'success' => false,
+                        'message' => "{$field} must be between {$limits['min']} and {$limits['max']}.",
+                        'data' => []
+                    ];
+                }
+            }
+        }
+
+        /**
+         * 4) Persist
+         */
+        $inventoryItem = DB::transaction(function () use ($data) {
+            return $this->repository->create($data);
+        });
+
+        Log::info('Inventory item created successfully', [
+            'facility_id' => $this->facilityId,
+            'item_uuid' => $inventoryItem->item_uuid,
+            'item_code' => $inventoryItem->item_code,
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Inventory item created successfully.',
+            'data' => $inventoryItem
+        ];
+    } catch (\Throwable $e) {
+        Log::error('Failed to create inventory item', [
+            'facility_id' => $this->facilityId,
+            'data' => $this->sanitizeDataForLogging($data),
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return [
+            'success' => false,
+            'message' => 'Failed to create inventory item. Please try again.',
+            'data' => []
+        ];
+    }
+}
+
+// In your repository class
+    public function findByFacilityAndCode(int $facilityId, string $itemCode): ?InventoryItem
+    {
+        return InventoryItem::where('facility_id', $facilityId)
+            ->where('item_code', $itemCode)
+            ->first();
     }
 
     /**
@@ -1014,9 +1038,20 @@ class InventoryItemService implements InventoryItemServiceInterface
     private function generateUniqueItemCode(int $facilityId): string
     {
         do {
-            $code = 'ITEM-' . str_pad((string) random_int(1, 99999), 5, '0', STR_PAD_LEFT);
-        } while ($this->repository->itemCodeExists($code, $facilityId));
-
+            // Generate random number between 1 and 9999
+            $randomNum = random_int(1, 9999);
+            
+            // Format as 4-digit with leading zeros (e.g., 0001, 0042, 9999)
+            $paddedNum = str_pad($randomNum, 4, '0', STR_PAD_LEFT);
+            
+            // Create code in format: INVT-XXXX
+            $code = "INVT-{$paddedNum}";
+            
+            // Check if this code already exists for the facility
+            $exists = $this->findByFacilityAndCode($facilityId, $code);
+            
+        } while ($exists);
+        
         return $code;
     }
 

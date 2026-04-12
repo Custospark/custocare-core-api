@@ -5,6 +5,7 @@ namespace App\Http\Requests\ServiceCatalog;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Validation\Validator;
+use Carbon\Carbon;
 
 class StoreServiceCatalogRequest extends FormRequest
 {
@@ -316,7 +317,6 @@ class StoreServiceCatalogRequest extends FormRequest
             ]);
         }
 
-
         // Normalize price_amount to integer (UGX cents not needed, so use whole UGX)
         if ($this->has('price_amount')) {
             $raw = $this->input('price_amount');
@@ -333,7 +333,6 @@ class StoreServiceCatalogRequest extends FormRequest
             ]);
         }
 
-
         // Set default values if not provided
         if (!$this->has('risk_level')) {
             $this->merge(['risk_level' => 'low']);
@@ -345,6 +344,13 @@ class StoreServiceCatalogRequest extends FormRequest
 
         if (!$this->has('requires_informed_consent')) {
             $this->merge(['requires_informed_consent' => false]);
+        }
+
+        // Set effective_from to today's date if not provided
+        if (!$this->has('effective_from') || empty($this->input('effective_from'))) {
+            $this->merge([
+                'effective_from' => Carbon::today()->toDateString()
+            ]);
         }
 
         // Generate service UUID if not provided

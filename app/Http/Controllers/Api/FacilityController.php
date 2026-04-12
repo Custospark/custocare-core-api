@@ -100,6 +100,7 @@ class FacilityController extends Controller
      */
     public function store(StoreFacilityRequest $request): JsonResponse
     {
+       
         try {
             $validatedData = $request->validated();
             $createdByStaffId = $validatedData['user_id'];

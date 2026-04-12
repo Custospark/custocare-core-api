@@ -273,13 +273,86 @@ class UserContextResolverService
             if (!in_array('account', $moduleCodes)) {
                 $moduleCodes[] = 'account';
             }
+            $facility=$role->facility;
+           $facilities[] = [
+            'facility_id' => $role->facility_id,
+            'facility_name' => $facility->facility_name ?? null,
             
-            $facilities[] = [
-                'facility_id' => $role->facility_id,
-                'facility_name' => $role->facility->facility_name ?? null,
-                'role_code' => $role->role_code,
-                'modules' => $this->buildModuleList($allModules, $moduleCodes),
-            ];
+            // Core Identity Fields
+            'legal_entity_name' => $facility->legal_entity_name ?? null,
+            'health_system_name' => $facility->health_system_name ?? null,
+            
+            // Classification Fields
+            'nature_of_facility' => $facility->nature_of_facility ?? null,
+            'facility_type' => $facility->facility_type ?? null,
+            'facility_tier' => $facility->facility_tier ?? null,
+            
+            // Capacity Fields
+            'bed_capacity' => $facility->bed_capacity ?? null,
+            'available_services' => $facility->available_services ?? [],
+            'specialty_services' => $facility->specialty_services ?? [],
+            'equipment_inventory_summary' => $facility->equipment_inventory_summary ?? [],
+            
+            // Location Fields
+            'address_line1' => $facility->address_line1 ?? null,
+            'address_line2' => $facility->address_line2 ?? null,
+            'city' => $facility->city ?? null,
+            'state_province' => $facility->state_province ?? null,
+            'postal_code' => $facility->postal_code ?? null,
+            'country_code' => $facility->country_code ?? null,
+            'latitude' => $facility->latitude ?? null,
+            'longitude' => $facility->longitude ?? null,
+            
+            // Contact Fields
+            'main_phone' => $facility->main_phone ?? null,
+            'emergency_phone' => $facility->emergency_phone ?? null,
+            'fax' => $facility->fax ?? null,
+            'email' => $facility->email ?? null,
+            'website' => $facility->website ?? null,
+            
+            // Operations Fields
+            'operating_hours' => $facility->operating_hours ?? [],
+            'emergency_services_hours' => $facility->emergency_services_hours ?? [],
+            'is_24_7' => $facility->is_24_7 ?? false,
+            'operational_status' => $facility->operational_status ?? null,
+            'average_wait_time_minutes' => $facility->average_wait_time_minutes ?? null,
+            'monthly_patient_volume' => $facility->monthly_patient_volume ?? null,
+            
+            // Licensing Fields
+            'license_number' => $facility->license_number ?? null,
+            'license_issuing_authority' => $facility->license_issuing_authority ?? null,
+            'license_expiry_date' => $facility->license_expiry_date ?? null,
+            'regulatory_identifiers' => $facility->regulatory_identifiers ?? [],
+            'participates_in_medicare' => $facility->participates_in_medicare ?? false,
+            'participates_in_medicaid' => $facility->participates_in_medicaid ?? false,
+            
+            // Clinical Capabilities Fields
+            'has_emergency_department' => $facility->has_emergency_department ?? false,
+            'has_trauma_center' => $facility->has_trauma_center ?? false,
+            'trauma_center_level' => $facility->trauma_center_level ?? null,
+            'has_intensive_care' => $facility->has_intensive_care ?? false,
+            'has_neonatal_icu' => $facility->has_neonatal_icu ?? false,
+            'has_cardiac_cath_lab' => $facility->has_cardiac_cath_lab ?? false,
+            
+            // Financial Configuration Fields
+            'facility_currency' => $facility->currency ?? null,
+            'tax_enabled' => $facility->tax_enabled ?? false,
+            'tax_name' => $facility->tax_name ?? null,
+            'tax_rate' => $facility->tax_rate ?? null,
+            
+            // Branding Fields
+            'facility_logo_path' => $facility->facility_logo_path ?? null,
+            'primary_brand_color' => $facility->primary_brand_color ?? null,
+            'secondary_brand_color' => $facility->secondary_brand_color ?? null,
+            
+            // System Configuration Fields
+            'timezone' => $facility->timezone ?? null,
+            'data_residency_region' => $facility->data_residency_region ?? null,
+            
+            // Role Information
+            'role_code' => $role->role_code,
+            'modules' => $this->buildModuleList($allModules, $moduleCodes),
+        ];
         }
 
         return $facilities;

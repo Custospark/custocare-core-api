@@ -58,6 +58,16 @@ class UserService implements UserServiceInterface
     {
         return DB::transaction(function () use ($data) {
             $email     = strtolower(trim($data['email']));
+                    $email = filled($data['email'] ?? null)
+            ? mb_strtolower(trim($data['email']))
+            : null;
+
+            $phone = $data['phone'] ?? null;
+
+            // If phone provided but no email, create a unique placeholder
+            if (!$email && $phone) {
+            $email = 'no-email-' . Str::uuid()->toString() . '@custocare-placeholder.local';
+            }
             $emailHash = hash('sha256', $email);
 
             // ── Uniqueness guards ──────────────────────────────────────────

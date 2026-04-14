@@ -408,7 +408,7 @@ public function createPatientByAdmin(Request $request): JsonResponse
                 $userData = [
                     'first_name' => $firstName,
                     'last_name'  => $lastName,
-                    'email'      => $email,
+                    'email'      => $email ?? 'patient-no-email-' . Str::uuid()->toString() . '@custocare.local',
                     'phone'      => $phone,
                     'password'   => null, // will generate random password
                     'created_from_facility_id' => $data['created_from_facility_id'] ?? null,

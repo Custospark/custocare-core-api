@@ -110,6 +110,9 @@ class UserRepository implements UserRepositoryInterface
     public function update(User $user, array $data): bool
     {
         $updated = $user->update($data);
+        /**
+         * 
+         */
         
         if ($updated) {
             $this->assignSuperAdminRoleIfMatches($user->fresh());

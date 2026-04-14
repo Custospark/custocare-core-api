@@ -58,7 +58,7 @@ class WalkInCustomerService
                     
                     'metadata' => [
                         'is_system_user' => true,
-                        'system_user_type' => 'walk_in_customer',
+                        'system_user_type' => 'walk_in_patient',
                         'immutable' => true,
                         'purpose' => 'Anchor identity for facility-scoped walk-in patients',
                     ],
@@ -119,7 +119,7 @@ class WalkInCustomerService
                     
                     'metadata' => [
                         'is_system_user' => true,
-                        'system_user_type' => 'walk_in_customer',
+                        'system_user_type' => 'walk_in_patient',
                         'immutable' => true,
                         'purpose' => 'Anchor identity for facility-scoped walk-in patients',
                         'created_via' => 'SystemUserService::getOrCreateGlobalSystemUserWithTransaction',
@@ -219,7 +219,7 @@ class WalkInCustomerService
                 'updated_by_staff_id' => $staffId,
 
                 'metadata' => json_encode([
-                    'walk_in_customer' => true,
+                    'walk_in_patient' => true,
                     'facility_id' => $facilityId,
                     'note' => 'Reusable facility-scoped anonymous patient',
                 ]),

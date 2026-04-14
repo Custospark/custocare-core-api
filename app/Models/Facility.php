@@ -12,86 +12,6 @@ use App\Models\Payment;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-/**
- * Class Facility
- * 
- * Healthcare facility registry model representing medical facilities in the system.
- * Reference data optimized for CDN distribution and caching-first strategy.
- * 
- * @property int $id
- * @property string $facility_uuid
- * @property string $facility_code
- * @property string $facility_name
- * @property string $legal_entity_name
- * @property string|null $tax_id_encrypted
- * @property string $facility_type
- * @property string $facility_tier
- * @property int|null $bed_capacity
- * @property array|null $accreditations
- * @property string $address_line1
- * @property string|null $address_line2
- * @property string $city
- * @property string $state_province
- * @property string $postal_code
- * @property string $country_code
- * @property float|null $latitude
- * @property float|null $longitude
- * @property string $timezone
- * @property string $main_phone
- * @property string|null $emergency_phone
- * @property string|null $fax
- * @property string|null $email
- * @property string|null $website
- * @property array $operating_hours
- * @property array|null $emergency_services_hours
- * @property bool $is_24_7
- * @property int|null $parent_organization_id
- * @property array|null $affiliated_facility_ids
- * @property array|null $referral_network_facility_ids
- * @property string|null $health_system_name
- * @property string|null $license_number
- * @property string|null $license_issuing_authority
- * @property string|null $license_expiry_date
- * @property array|null $regulatory_identifiers
- * @property bool $participates_in_medicare
- * @property bool $participates_in_medicaid
- * @property array $available_services
- * @property array|null $specialty_services
- * @property array|null $equipment_inventory_summary
- * @property bool $has_emergency_department
- * @property bool $has_trauma_center
- * @property int|null $trauma_center_level
- * @property bool $has_intensive_care
- * @property bool $has_neonatal_icu
- * @property bool $has_cardiac_cath_lab
- * @property string $data_residency_region
- * @property string $primary_database_shard
- * @property array|null $replica_shard_locations
- * @property float|null $average_wait_time_minutes
- * @property float|null $patient_satisfaction_score
- * @property int|null $monthly_patient_volume
- * @property string $operational_status
- * @property \Illuminate\Support\Carbon|null $deleted_at
- * @property int|null $created_by_staff_id
- * @property int|null $updated_by_staff_id
- * @property array|null $metadata
- * @property \Illuminate\Support\Carbon $created_at
- * @property \Illuminate\Support\Carbon $updated_at
- *  * --------------------------------------------------------------------------
- * 🆕 Financial Configuration
- * --------------------------------------------------------------------------
- * @property string $currency
- * @property bool $tax_enabled
- * @property string|null $tax_name
- * @property float|null $tax_rate
- *
- * --------------------------------------------------------------------------
- * 🆕 Branding
- * --------------------------------------------------------------------------
- * @property string|null $facility_logo_path
- * @property string|null $primary_brand_color
- * @property string|null $secondary_brand_color
- */
 class Facility extends Model
 {
     use HasFactory, SoftDeletes;
@@ -167,6 +87,15 @@ class Facility extends Model
         'tax_enabled',
         'tax_name',
         'tax_rate',
+             /*
+        |--------------------------------------------------------------------------
+        | 🆕 Facility Status Fields
+        |--------------------------------------------------------------------------
+        */
+        'status',
+        'status_reason',
+        'status_set_at',
+        'status_set_by',
 
         /*
         |--------------------------------------------------------------------------

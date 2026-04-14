@@ -15,60 +15,7 @@ use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasPermissions;
 use Spatie\Permission\Traits\HasRoles;
 
-/**
- * @property int $id
- * @property string $global_user_uuid
- * @property string $national_id_hash
- * @property string $national_id_encrypted
- * @property string $national_id_country_code
- * @property string $identity_state
- * @property Carbon|null $identity_verified_at
- * @property string|null $identity_verification_method
- * @property int|null $identity_verified_by_staff_id
- * @property string $data_residency_region
- * @property array|null $allowed_processing_regions
- * @property int|null $created_from_facility_id
- * @property string|null $email_encrypted
- * @property string|null $email_hash
- * @property string|null $phone_encrypted
- * @property string|null $phone_hash
- * @property string|null $first_name
- * @property string|null $last_name
- * @property string|null $title
- * @property string|null $display_name
- * @property Carbon|null $dob
- * @property string|null $gender
- * @property string|null $address_line1
- * @property string|null $address_line2
- * @property string|null $city
- * @property string|null $state
- * @property string|null $country
- * @property string|null $postal_code
- * @property string|null $password_hash
- * @property Carbon|null $password_changed_at
- * @property bool $requires_password_change
- * @property bool $mfa_enabled
- * @property string|null $mfa_secret_encrypted
- * @property Carbon|null $last_login_at
- * @property string|null $last_login_ip
- * @property string|null $last_login_user_agent
- * @property int $failed_login_attempts
- * @property Carbon|null $account_locked_until
- * @property int|null $created_by_staff_id
- * @property int|null $updated_by_staff_id
- * @property string|null $created_ip
- * @property array|null $metadata
- * @property string $theme_mode
- * @property string $ui_density
- * @property string|null $timezone
- * @property string|null $locale
- * @property string|null $profile_photo_path
- * @property string|null $profile_photo_disk
- * @property Carbon|null $profile_photo_updated_at
- * @property Carbon $created_at
- * @property Carbon $updated_at
- * @property Carbon|null $deleted_at
- */
+
 class User extends Authenticatable
 {
     use HasFactory, Notifiable, SoftDeletes,HasApiTokens,HasRoles,HasPermissions;
@@ -123,7 +70,16 @@ class User extends Authenticatable
         'updated_by_staff_id',
         'created_ip',
         'metadata',
-        // NEW FIELDS
+        /*
+        |--------------------------------------------------------------------------
+        | 🆕 User Status Fields
+        |--------------------------------------------------------------------------
+        */
+        'status',
+        'status_reason',
+        'status_set_at',
+        'status_set_by',
+       
         'theme_mode',
         'ui_density',
         'timezone',

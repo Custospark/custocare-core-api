@@ -23,20 +23,24 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Services\User\UserService;
+use Illuminate\Support\Carbon;
 
 class PatientController extends Controller
 {
-    /**
-     * @var PatientServiceInterface
-     */
+   
     private $patientService;
+    private UserService $userService;
+
 
     /**
      * Constructor.
      */
-    public function __construct(PatientServiceInterface $patientService)
+    public function __construct(PatientServiceInterface $patientService,UserService $userService)
     {
         $this->patientService = $patientService;
+        $this->userService = $userService;
+
         
         // Apply policy middleware
         // $this->authorizeResource(Patient::class, 'patient');
@@ -165,8 +169,7 @@ class PatientController extends Controller
      * Returns lean PatientSearchResource for immediate UI use.
      */
    
-
-    public function createPatientByAdmin(Request $request): JsonResponse
+public function createPatientByAdmin(Request $request): JsonResponse
 {
     try {
         $data = $request->validate([
@@ -188,9 +191,7 @@ class PatientController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Provide at least email or phone.',
-                'errors' => [
-                    'contact' => ['Email or phone is required.'],
-                ],
+                'errors' => ['contact' => ['Email or phone is required.']],
                 'data' => [],
             ], 422);
         }
@@ -200,63 +201,40 @@ class PatientController extends Controller
             abort(403, 'Authenticated user is not linked to a staff record.');
         }
 
+        // Normalization helpers (unchanged)
         $normalizeHumanName = static function (?string $value): ?string {
-            if (!filled($value)) {
-                return null;
-            }
-
+            if (!filled($value)) return null;
             return (string) Str::of($value)->trim()->squish();
         };
-
         $normalizeComparableName = static function (?string $value): ?string {
-            if (!filled($value)) {
-                return null;
-            }
-
+            if (!filled($value)) return null;
             return mb_strtolower((string) Str::of($value)->trim()->squish());
         };
-
         $normalizePhone = static function (?string $value): ?string {
-            if (!filled($value)) {
-                return null;
-            }
-
+            if (!filled($value)) return null;
             $trimmed = trim($value);
             $normalized = preg_replace('/(?!^\+)[^\d]/', '', $trimmed);
-
             return $normalized !== '' ? $normalized : null;
         };
-
         $generateUniquePatientUuid = static function (): string {
             $attempts = 0;
-
             do {
                 $attempts++;
                 $candidate = HealthcareIdGenerator::generate('patient');
                 $exists = Patient::where('patient_uuid', $candidate)->exists();
-
-                if (!$exists) {
-                    return $candidate;
-                }
+                if (!$exists) return $candidate;
             } while ($attempts < 10);
-
             throw new \RuntimeException('Unable to generate a unique patient identifier.');
         };
-
         $generateUniqueMedicalRecord = static function (): array {
             $attempts = 0;
-
             do {
                 $attempts++;
                 $plain = 'MRN-' . strtoupper(Str::random(10));
                 $hash = hash('sha256', $plain);
                 $exists = Patient::where('medical_record_number_hash', $hash)->exists();
-
-                if (!$exists) {
-                    return [$plain, $hash, Crypt::encryptString($plain)];
-                }
+                if (!$exists) return [$plain, $hash, Crypt::encryptString($plain)];
             } while ($attempts < 10);
-
             throw new \RuntimeException('Unable to generate a unique medical record number.');
         };
 
@@ -265,52 +243,31 @@ class PatientController extends Controller
         $firstNameComparable = $normalizeComparableName($firstName);
         $lastNameComparable = $normalizeComparableName($lastName);
 
-        $email = filled($data['email'] ?? null)
-            ? mb_strtolower(trim($data['email']))
-            : null;
-
+        $email = filled($data['email'] ?? null) ? mb_strtolower(trim($data['email'])) : null;
         $phone = $normalizePhone($data['phone'] ?? null);
 
         $emailHash = $email ? hash('sha256', $email) : null;
         $phoneHash = $phone ? hash('sha256', $phone) : null;
 
-        $emailEncrypted = $email ? Crypt::encryptString($email) : null;
-        $phoneEncrypted = $phone ? Crypt::encryptString($phone) : null;
-
         $duplicateAction = $data['action_on_possible_duplicate'] ?? 'block';
         $existingUserAction = $data['existing_user_action'] ?? 'block';
 
         $result = DB::transaction(function () use (
-            $data,
-            $request,
-            $staffId,
-            $firstName,
-            $lastName,
-            $firstNameComparable,
-            $lastNameComparable,
-            $emailHash,
-            $phoneHash,
-            $emailEncrypted,
-            $phoneEncrypted,
-            $duplicateAction,
-            $existingUserAction,
-            $generateUniquePatientUuid,
-            $generateUniqueMedicalRecord
+            $data, $request, $staffId,
+            $firstName, $lastName, $firstNameComparable, $lastNameComparable,
+            $email, $phone, $emailHash, $phoneHash,
+            $duplicateAction, $existingUserAction,
+            $generateUniquePatientUuid, $generateUniqueMedicalRecord
         ) {
             $matchedContactFields = [];
 
+            // Look for existing user by email or phone hash
             $user = User::query()
                 ->where(function ($query) use ($emailHash, $phoneHash) {
-                    if ($emailHash) {
-                        $query->where('email_hash', $emailHash);
-                    }
-
+                    if ($emailHash) $query->where('email_hash', $emailHash);
                     if ($phoneHash) {
-                        if ($emailHash) {
-                            $query->orWhere('phone_hash', $phoneHash);
-                        } else {
-                            $query->where('phone_hash', $phoneHash);
-                        }
+                        if ($emailHash) $query->orWhere('phone_hash', $phoneHash);
+                        else $query->where('phone_hash', $phoneHash);
                     }
                 })
                 ->lockForUpdate()
@@ -320,7 +277,6 @@ class PatientController extends Controller
                 if ($emailHash && !empty($user->email_hash) && hash_equals($user->email_hash, $emailHash)) {
                     $matchedContactFields[] = 'email';
                 }
-
                 if ($phoneHash && !empty($user->phone_hash) && hash_equals($user->phone_hash, $phoneHash)) {
                     $matchedContactFields[] = 'phone';
                 }
@@ -331,31 +287,22 @@ class PatientController extends Controller
             $demographicMatch = false;
 
             if ($user) {
-                $existingPatient = Patient::query()
-                    ->where('user_id', $user->id)
-                    ->with('user')
-                    ->lockForUpdate()
-                    ->first();
+                $existingPatient = Patient::where('user_id', $user->id)->with('user')->lockForUpdate()->first();
 
                 $userFirstComparable = filled($user->first_name)
                     ? mb_strtolower((string) Str::of($user->first_name)->trim()->squish())
                     : null;
-
                 $userLastComparable = filled($user->last_name)
                     ? mb_strtolower((string) Str::of($user->last_name)->trim()->squish())
                     : null;
-
-                $nameMatch = $userFirstComparable === $firstNameComparable
-                    && $userLastComparable === $lastNameComparable;
+                $nameMatch = $userFirstComparable === $firstNameComparable && $userLastComparable === $lastNameComparable;
 
                 if ($existingPatient) {
                     $existingDob = $existingPatient->date_of_birth
-                        ? \Illuminate\Support\Carbon::parse($existingPatient->date_of_birth)->format('Y-m-d')
+                        ? Carbon::parse($existingPatient->date_of_birth)->format('Y-m-d')
                         : null;
-
                     $dobMatch = $existingDob === $data['date_of_birth'];
                     $sexMatch = $existingPatient->biological_sex === $data['biological_sex'];
-
                     $demographicMatch = $nameMatch && $dobMatch && $sexMatch;
 
                     if ($demographicMatch) {
@@ -428,9 +375,8 @@ class PatientController extends Controller
                     ->whereDate('date_of_birth', $data['date_of_birth'])
                     ->where('biological_sex', $data['biological_sex'])
                     ->whereHas('user', function ($query) use ($firstNameComparable, $lastNameComparable) {
-                        $query
-                            ->whereRaw('LOWER(TRIM(first_name)) = ?', [$firstNameComparable])
-                            ->whereRaw('LOWER(TRIM(last_name)) = ?', [$lastNameComparable]);
+                        $query->whereRaw('LOWER(TRIM(first_name)) = ?', [$firstNameComparable])
+                              ->whereRaw('LOWER(TRIM(last_name)) = ?', [$lastNameComparable]);
                     })
                     ->lockForUpdate()
                     ->first();
@@ -454,79 +400,66 @@ class PatientController extends Controller
 
             $createdNewUser = false;
 
+            // ─────────────────────────────────────────────────────────────
+            // USE USER SERVICE FOR CONSISTENT ENCRYPTION & HASHING
+            // ─────────────────────────────────────────────────────────────
             if (!$user) {
-                $user = User::create([
-                    'global_user_uuid' => (string) Str::uuid(),
-
+                // Create new user via UserService
+                $userData = [
                     'first_name' => $firstName,
-                    'last_name' => $lastName,
-                    'display_name' => trim($firstName . ' ' . $lastName),
-
-                    'email_encrypted' => $emailEncrypted,
-                    'email_hash' => $emailHash,
-                    'phone_encrypted' => $phoneEncrypted,
-                    'phone_hash' => $phoneHash,
-
-                    'password_hash' => null,
-                    'requires_password_change' => true,
-
+                    'last_name'  => $lastName,
+                    'email'      => $email,
+                    'phone'      => $phone,
+                    'password'   => null, // will generate random password
                     'created_from_facility_id' => $data['created_from_facility_id'] ?? null,
                     'created_by_staff_id' => $staffId,
                     'created_ip' => $request->ip(),
-                ]);
-
+                    'requires_password_change' => true,
+                ];
+                $user = $this->userService->register($userData);
                 $createdNewUser = true;
             } else {
-                $dirty = false;
-
+                // Update existing user with missing contact info (if any)
+                $updateData = [];
                 if ($emailHash && empty($user->email_hash)) {
-                    $user->email_hash = $emailHash;
-                    $user->email_encrypted = $emailEncrypted;
-                    $dirty = true;
+                    $updateData['email'] = $email;
                 }
-
                 if ($phoneHash && empty($user->phone_hash)) {
-                    $user->phone_hash = $phoneHash;
-                    $user->phone_encrypted = $phoneEncrypted;
-                    $dirty = true;
+                    $updateData['phone'] = $phone;
                 }
-
-                if ($dirty) {
-                    $user->updated_by_staff_id = $staffId;
-                    $user->save();
+                if (!empty($updateData)) {
+                    $updateData['updated_by_staff_id'] = $staffId;
+                    $this->userService->updateUser($user->id, $updateData);
                 }
+                // Refresh user model after potential update
+                $user->refresh();
             }
 
+            // Create patient record
             $patientUuid = $generateUniquePatientUuid();
             [$mrnPlain, $mrnHash, $mrnEncrypted] = $generateUniqueMedicalRecord();
 
             $patient = Patient::create([
                 'patient_uuid' => $patientUuid,
                 'user_id' => $user->id,
-
                 'medical_record_number_hash' => $mrnHash,
                 'medical_record_number_encrypted' => $mrnEncrypted,
-
                 'date_of_birth' => $data['date_of_birth'],
                 'biological_sex' => $data['biological_sex'],
-
                 'status' => 'active',
                 'portal_access_enabled' => true,
                 'created_by_staff_id' => $staffId,
             ])->load('user');
 
-            $shouldIssueOnboardingToken = $createdNewUser || (
-                empty($user->password_hash) || (bool) $user->requires_password_change
-            );
+            $shouldIssueOnboardingToken = $createdNewUser || (empty($user->password_hash) || (bool) $user->requires_password_change);
 
             if ($shouldIssueOnboardingToken) {
                 $rawToken = Str::random(64);
-
                 OnboardingToken::create([
                     'user_id' => $user->id,
                     'token_hash' => hash('sha256', $rawToken),
                     'expires_at' => now()->addMinutes(30),
-                    'channel' => filled($data['email'] ?? null) ? 'email' : 'sms',
+                    'channel' => filled($email) ? 'email' : 'sms',
                     'created_by_staff_id' => $staffId,
                     'created_ip' => $request->ip(),
                 ]);
@@ -547,6 +480,7 @@ class PatientController extends Controller
             ];
         });
 
+        // Response handling (unchanged)
         if ($result['status'] === 'possible_duplicate') {
             return response()->json([
                 'success' => false,
@@ -632,22 +566,17 @@ class PatientController extends Controller
         ], 201);
 
     } catch (\Illuminate\Database\QueryException $e) {
-        Log::warning('createPatientByAdmin DB constraint error', [
-            'error' => $e->getMessage(),
-        ]);
-
+        Log::warning('createPatientByAdmin DB constraint error', ['error' => $e->getMessage()]);
         return response()->json([
             'success' => false,
             'message' => 'A conflicting patient or user record already exists.',
             'data' => [],
         ], 409);
-
     } catch (\Throwable $e) {
         Log::error('Failed to createPatientByAdmin', [
             'error' => $e->getMessage(),
             'trace' => $e->getTraceAsString(),
         ]);
-
         return response()->json([
             'success' => false,
             'message' => 'Failed to create patient.',
@@ -655,7 +584,6 @@ class PatientController extends Controller
         ], 500);
     }
 }
-
 
 
 

@@ -657,7 +657,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
         $userId = Auth::id();
 
         $excludeStaffIds = [];
-        if ($excludeCurrentStaff && $userId) {
+        if ($excludeCurrentStaff || $userId) {
             $excludeStaffIds = Staff::query()
                 ->where('user_id', $userId)
                 ->pluck('id')

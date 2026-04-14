@@ -615,32 +615,35 @@ class VisitController extends Controller
  * @param Request $request
  * @return JsonResponse
  */
+
 public function getStaffForPatientForwarding(Request $request): JsonResponse
 {
-    Log::error($request);
     try {
-        // 1) Facility from header
         $facilityId = (int) $request->header('X-Facility-Id');
-        
+
         if (!$facilityId) {
             return response()->json([
                 'success' => false,
                 'message' => 'Missing X-Facility-Id header.',
-                'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                'errors' => [
+                    'facility_id' => ['X-Facility-Id header is required.'],
+                ],
                 'data' => [],
             ], 422);
         }
 
-        // Cast exclude_current_staff to boolean before validation
+        // Normalize boolean input
         if ($request->has('exclude_current_staff')) {
             $request->merge([
-                'exclude_current_staff' => filter_var($request->input('exclude_current_staff'), FILTER_VALIDATE_BOOLEAN)
+                'exclude_current_staff' => filter_var(
+                    $request->input('exclude_current_staff'),
+                    FILTER_VALIDATE_BOOLEAN
+                ),
             ]);
         }
 
-        // 2) Optional filters from request
         $filters = $request->validate([
-            'role_code' => 'nullable',
+            'role_code' => 'nullable|string',
             'department_id' => 'nullable|integer',
             'presence_status' => 'nullable|in:on_duty,busy',
             'search' => 'nullable|string|max:100',
@@ -648,30 +651,60 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             'exclude_current_staff' => 'nullable|boolean',
         ]);
 
-        // 3) Get current user ID and exclude this user's staff record(s)
-        $userId = Auth::id();
-        
-        // Get ALL staff IDs that belong to the current user
-        $excludeStaffIds = Staff::query()
-            ->where('user_id', $userId)
-            ->pluck('id')
-            ->toArray();
+        $excludeCurrentStaff = $filters['exclude_current_staff'] ?? true;
+        $limit = $filters['limit'] ?? 100;
 
-        // 4) Query to get staff available for forwarding
+        $userId = Auth::id();
+
+        $excludeStaffIds = [];
+        if ($excludeCurrentStaff && $userId) {
+            $excludeStaffIds = Staff::query()
+                ->where('user_id', $userId)
+                ->pluck('id')
+                ->toArray();
+        }
+
+        /**
+         * Visit counts per staff.
+         * In your system, visit count = patient count for workload.
+         */
+        $visitCountSubQuery = DB::table('visits as v')
+            ->selectRaw('v.assigned_staff_id, COUNT(v.id) as current_patient_count')
+            ->where('v.facility_id', $facilityId)
+            ->whereNotNull('v.assigned_staff_id')
+            ->whereNull('v.deleted_at')
+            ->whereNull('v.cancelled_at')
+            ->whereIn('v.status', ['active', 'in_progress'])
+            ->groupBy('v.assigned_staff_id');
+
         $staffList = Staff::query()
-            ->with(['user:id,first_name,last_name,display_name'])
             ->select([
                 'staff.id',
                 'staff.staff_uuid',
+                'staff.employee_id',
                 'staff.professional_title',
                 'staff.global_role_level',
-                'staff.employee_id',
                 'staff.max_concurrent_patients',
                 'staff.total_patients_treated',
+
+                'users.first_name',
+                'users.last_name',
+                'users.display_name',
+
+                'fsr.role_code',
+                'fsr.module_code',
+                'fsr.department_ids',
+
+                'sp.status as presence_status',
+                'sp.started_at as presence_started_at',
+
+                'fs.name as current_space_name',
+                'fs.type as current_space_type',
+                'fs.floor as current_space_floor',
+
+                DB::raw('COALESCE(vcounts.current_patient_count, 0) as current_patient_count'),
             ])
-            // Join with users table for names
             ->join('users', 'staff.user_id', '=', 'users.id')
-            // Join with facility_staff_roles to filter by current facility and active assignment
             ->join('facility_staff_roles as fsr', function ($join) use ($facilityId) {
                 $join->on('staff.id', '=', 'fsr.staff_id')
                     ->where('fsr.facility_id', $facilityId)
@@ -679,124 +712,84 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                     ->whereDate('fsr.effective_from', '<=', now()->toDateString())
                     ->where(function ($q) {
                         $q->whereNull('fsr.effective_to')
-                            ->orWhereDate('fsr.effective_to', '>=', now()->toDateString());
+                          ->orWhereDate('fsr.effective_to', '>=', now()->toDateString());
                     });
             })
-            // Join with staff_presences to get current status
             ->leftJoin('staff_presences as sp', function ($join) use ($facilityId) {
                 $join->on('staff.id', '=', 'sp.staff_id')
                     ->where('sp.facility_id', $facilityId)
                     ->whereNull('sp.ended_at');
             })
-            // Optional: Join with staff_space_assignments for current space
             ->leftJoin('staff_space_assignments as ssa', function ($join) use ($facilityId) {
                 $join->on('staff.id', '=', 'ssa.staff_id')
                     ->where('ssa.facility_id', $facilityId)
                     ->whereNull('ssa.released_at');
             })
-            // Optional: Join with facility_spaces for space details
             ->leftJoin('facility_spaces as fs', 'ssa.space_id', '=', 'fs.id')
-            // Subquery to get current patient count for each staff member
-            ->leftJoinSub(
-                DB::table('visits')
-                    ->select('assigned_staff_id', DB::raw('COUNT(*) as current_patient_count'))
-                    ->where('facility_id', $facilityId)
-                    ->whereIn('status', ['active', 'in_progress'])
-                    ->whereNull('deleted_at')
-                    ->groupBy('assigned_staff_id'),
-                'patient_counts',
-                'staff.id',
-                '=',
-                'patient_counts.assigned_staff_id'
-            )
-            // ALWAYS exclude the current user's staff records
-            ->when(!empty($excludeStaffIds), function ($query) use ($excludeStaffIds) {
-                return $query->whereNotIn('staff.id', $excludeStaffIds);
+            ->leftJoinSub($visitCountSubQuery, 'vcounts', function ($join) {
+                $join->on('staff.id', '=', 'vcounts.assigned_staff_id');
             })
-            // Also handle the optional exclude_current_staff flag for backward compatibility
-            ->when(
-                isset($filters['exclude_current_staff']) && $filters['exclude_current_staff'] === true && !empty($excludeStaffIds), 
-                function ($query) use ($excludeStaffIds) {
-                    // This is redundant now but kept for clarity
-                    return $query->whereNotIn('staff.id', $excludeStaffIds);
-                }
-            )
-            // Apply filters
+            ->when(!empty($excludeStaffIds), function ($query) use ($excludeStaffIds) {
+                $query->whereNotIn('staff.id', $excludeStaffIds);
+            })
             ->when($filters['role_code'] ?? null, function ($query, $roleCode) {
-                return $query->where('fsr.role_code', $roleCode);
+                $query->where('fsr.role_code', $roleCode);
             })
             ->when($filters['department_id'] ?? null, function ($query, $departmentId) {
-                return $query->whereJsonContains('fsr.department_ids', (int)$departmentId);
+                $query->whereJsonContains('fsr.department_ids', (int) $departmentId);
             })
-            ->when($filters['presence_status'] ?? null, function ($query, $status) {
-                return $query->where('sp.status', $status);
+            ->when($filters['presence_status'] ?? null, function ($query, $presenceStatus) {
+                $query->where('sp.status', $presenceStatus);
             }, function ($query) {
-                // Default: only show staff who are on_duty or busy
-                return $query->whereIn('sp.status', ['on_duty', 'busy']);
+                $query->whereIn('sp.status', ['on_duty', 'busy']);
             })
             ->when($filters['search'] ?? null, function ($query, $search) {
-                return $query->where(function ($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('users.first_name', 'LIKE', "%{$search}%")
                         ->orWhere('users.last_name', 'LIKE', "%{$search}%")
                         ->orWhere('users.display_name', 'LIKE', "%{$search}%")
                         ->orWhere('staff.employee_id', 'LIKE', "%{$search}%");
                 });
             })
-            // Group by staff to avoid duplicates from multiple joins
             ->groupBy([
                 'staff.id',
                 'staff.staff_uuid',
+                'staff.employee_id',
                 'staff.professional_title',
                 'staff.global_role_level',
-                'staff.employee_id',
                 'staff.max_concurrent_patients',
                 'staff.total_patients_treated',
-                'users.id',
+
                 'users.first_name',
                 'users.last_name',
                 'users.display_name',
+
                 'fsr.role_code',
                 'fsr.module_code',
                 'fsr.department_ids',
+
                 'sp.status',
                 'sp.started_at',
+
                 'fs.name',
                 'fs.type',
                 'fs.floor',
-                'patient_counts.current_patient_count',
-            ])
-            // Select additional columns after grouping
-            ->addSelect([
-                'users.first_name',
-                'users.last_name',
-                'users.display_name',
-                'fsr.role_code',
-                'fsr.module_code',
-                'fsr.department_ids',
-                'sp.status as presence_status',
-                'sp.started_at as presence_started_at',
-                'fs.name as current_space_name',
-                'fs.type as current_space_type',
-                'fs.floor as current_space_floor',
-                DB::raw('COALESCE(patient_counts.current_patient_count, 0) as current_patient_count'),
+
+                'vcounts.current_patient_count',
             ])
             ->orderBy('users.first_name')
             ->orderBy('users.last_name')
-            ->limit($filters['limit'] ?? 50)
+            ->limit($limit)
             ->get();
 
-        // 5) Transform the results
         $transformedStaff = $staffList->map(function ($staff) {
-            // Get the current patient count (already calculated in the query)
+            $currentPatientCount = (int) $staff->current_patient_count;
+            $maxConcurrentPatients = (int) $staff->max_concurrent_patients;
 
-            $currentPatientCount = Visit::where('assigned_staff_id', $staff->id)
-            ->whereIn('status', ['in_progress', 'active'])
-            ->count();
-            // Determine availability status
             $availability = $this->determineStaffAvailability(
                 $staff->presence_status,
                 $currentPatientCount,
-                $staff->max_concurrent_patients
+                $maxConcurrentPatients
             );
 
             return [
@@ -805,49 +798,67 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'employee_id' => $staff->employee_id,
                 'professional_title' => $staff->professional_title,
                 'global_role_level' => $staff->global_role_level,
-                
-                // User information
+
                 'first_name' => $staff->first_name,
                 'last_name' => $staff->last_name,
                 'display_name' => $staff->display_name,
-                'full_name' => trim("{$staff->first_name} {$staff->last_name}"),
-                
-                // Facility role information
+                'full_name' => trim(($staff->first_name ?? '') . ' ' . ($staff->last_name ?? '')),
+
                 'role_code' => $staff->role_code,
                 'module_code' => $staff->module_code,
                 'department_ids' => $staff->department_ids,
-                
-                // Presence information
+
                 'presence_status' => $staff->presence_status,
                 'presence_started_at' => $staff->presence_started_at,
+
                 'is_available' => $availability['is_available'],
+                'can_receive_patients' => $availability['can_receive_patients'],
                 'availability_reason' => $availability['reason'],
-                
-                // Space information
+
                 'current_space' => $staff->current_space_name ? [
                     'name' => $staff->current_space_name,
                     'type' => $staff->current_space_type,
                     'floor' => $staff->current_space_floor,
                 ] : null,
-                
-                // Workload metrics
-                'max_concurrent_patients' => $staff->max_concurrent_patients,
+
+                'max_concurrent_patients' => $maxConcurrentPatients,
                 'current_patient_count' => $currentPatientCount,
-                'total_patients_treated' => $staff->total_patients_treated,
-                'workload_percentage' => $staff->max_concurrent_patients > 0 
-                    ? round(($currentPatientCount / $staff->max_concurrent_patients) * 100, 2)
+                'total_patients_treated' => (int) $staff->total_patients_treated,
+
+                'workload_percentage' => $maxConcurrentPatients > 0
+                    ? round(($currentPatientCount / $maxConcurrentPatients) * 100, 2)
                     : 0,
-                'has_capacity' => $currentPatientCount < $staff->max_concurrent_patients,
-                'remaining_capacity' => max(0, ($staff->max_concurrent_patients ?? 0) - $currentPatientCount),
+
+                'has_capacity' => $maxConcurrentPatients > 0
+                    ? $currentPatientCount < $maxConcurrentPatients
+                    : true,
+
+                'remaining_capacity' => $maxConcurrentPatients > 0
+                    ? max(0, $maxConcurrentPatients - $currentPatientCount)
+                    : 0,
             ];
         });
 
-        // 6) Group by availability status for better UI presentation
         $groupedStaff = [
-            'available' => $transformedStaff->where('is_available', true)->where('has_capacity', true)->values(),
-            'busy' => $transformedStaff->where('presence_status', 'busy')->where('is_available', false)->values(),
-            'other' => $transformedStaff->where('is_available', false)->where('presence_status', '!=', 'busy')->values(),
-            'at_capacity' => $transformedStaff->where('has_capacity', false)->where('is_available', true)->values(),
+            'available' => $transformedStaff
+                ->where('presence_status', 'on_duty')
+                ->where('can_receive_patients', true)
+                ->values(),
+
+            'busy' => $transformedStaff
+                ->where('presence_status', 'busy')
+                ->where('can_receive_patients', true)
+                ->values(),
+
+            'at_capacity' => $transformedStaff
+                ->where('has_capacity', false)
+                ->values(),
+
+            'other' => $transformedStaff
+                ->filter(function ($staff) {
+                    return !$staff['can_receive_patients'] && $staff['has_capacity'];
+                })
+                ->values(),
         ];
 
         return response()->json([
@@ -859,8 +870,8 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                     'total' => $transformedStaff->count(),
                     'available' => $groupedStaff['available']->count(),
                     'busy' => $groupedStaff['busy']->count(),
-                    'other' => $groupedStaff['other']->count(),
                     'at_capacity' => $groupedStaff['at_capacity']->count(),
+                    'other' => $groupedStaff['other']->count(),
                 ],
             ],
             'meta' => [
@@ -878,7 +889,8 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             'errors' => $e->errors(),
             'data' => [],
         ], 422);
-    } catch (\Exception $e) {
+
+    } catch (\Throwable $e) {
         Log::error('Failed to retrieve staff for patient forwarding', [
             'facility_id' => $facilityId ?? null,
             'error' => $e->getMessage(),
@@ -895,45 +907,40 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
 
 /**
  * Determine if a staff member is available for patient assignment
- */private function determineStaffAvailability($presenceStatus, $currentPatientCount, $maxConcurrentPatients): array
+ */
+private function determineStaffAvailability($presenceStatus, int $currentPatientCount, int $maxConcurrentPatients): array
 {
-    // Staff is not on duty or busy
-    if (!in_array($presenceStatus, ['on_duty', 'busy'])) {
+    if (!in_array($presenceStatus, ['on_duty', 'busy'], true)) {
         return [
             'is_available' => false,
+            'can_receive_patients' => false,
             'reason' => 'Staff is not currently on duty',
-            'can_receive_patients' => false,
         ];
     }
-    
-    // Check capacity
-    $hasCapacity = !($maxConcurrentPatients && $currentPatientCount >= $maxConcurrentPatients);
-    
-    if (!$hasCapacity) {
+
+    if ($maxConcurrentPatients > 0 && $currentPatientCount >= $maxConcurrentPatients) {
         return [
             'is_available' => false,
-            'reason' => 'Staff has reached maximum patient capacity (' . $currentPatientCount . '/' . $maxConcurrentPatients . ')',
             'can_receive_patients' => false,
+            'reason' => "Staff has reached maximum patient capacity ({$currentPatientCount}/{$maxConcurrentPatients})",
         ];
     }
-    
-    // Staff has capacity, now check status
+
     if ($presenceStatus === 'busy') {
         return [
-            'is_available' => true,
-            'reason' => 'Staff is currently busy but can accept more patients',
+            'is_available' => false,
             'can_receive_patients' => true,
-            'warning' => 'This staff member is currently busy',
+            'reason' => 'Staff is currently busy but can accept more patients',
         ];
     }
-    
-    // Staff is on duty and available
+
     return [
         'is_available' => true,
-        'reason' => 'Staff is available to take new patients',
         'can_receive_patients' => true,
+        'reason' => 'Staff is available to take new patients',
     ];
 }
+
 
 
     /**

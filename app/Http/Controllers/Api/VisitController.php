@@ -371,7 +371,7 @@ class VisitController extends Controller
      */
    public function update(UpdateVisitRequest $request, string $uuid): JsonResponse
 {
-    Log::info($request);
+
     
     try {
         // Get validated data
@@ -696,6 +696,19 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             })
             // Optional: Join with facility_spaces for space details
             ->leftJoin('facility_spaces as fs', 'ssa.space_id', '=', 'fs.id')
+            // Subquery to get current patient count for each staff member
+            ->leftJoinSub(
+                DB::table('visits')
+                    ->select('assigned_staff_id', DB::raw('COUNT(*) as current_patient_count'))
+                    ->where('facility_id', $facilityId)
+                    ->whereIn('status', ['active', 'in_progress'])
+                    ->whereNull('deleted_at')
+                    ->groupBy('assigned_staff_id'),
+                'patient_counts',
+                'staff.id',
+                '=',
+                'patient_counts.assigned_staff_id'
+            )
             // ALWAYS exclude the current user's staff records
             ->when(!empty($excludeStaffIds), function ($query) use ($excludeStaffIds) {
                 return $query->whereNotIn('staff.id', $excludeStaffIds);
@@ -750,6 +763,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.name',
                 'fs.type',
                 'fs.floor',
+                'patient_counts.current_patient_count',
             ])
             // Select additional columns after grouping
             ->addSelect([
@@ -764,6 +778,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.name as current_space_name',
                 'fs.type as current_space_type',
                 'fs.floor as current_space_floor',
+                DB::raw('COALESCE(patient_counts.current_patient_count, 0) as current_patient_count'),
             ])
             ->orderBy('users.first_name')
             ->orderBy('users.last_name')
@@ -771,10 +786,12 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             ->get();
 
         // 5) Transform the results
-        $transformedStaff = $staffList->map(function ($staff) use ($facilityId) {
-            // Calculate current workload (you might want to get actual current patient count)
-            $currentPatientCount = 0; // You can implement this based on your data
-            
+        $transformedStaff = $staffList->map(function ($staff) {
+            // Get the current patient count (already calculated in the query)
+
+            $currentPatientCount = Visit::where('assigned_staff_id', $staff->id)
+            ->whereIn('status', ['in_progress', 'active'])
+            ->count();
             // Determine availability status
             $availability = $this->determineStaffAvailability(
                 $staff->presence_status,
@@ -820,14 +837,17 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'workload_percentage' => $staff->max_concurrent_patients > 0 
                     ? round(($currentPatientCount / $staff->max_concurrent_patients) * 100, 2)
                     : 0,
+                'has_capacity' => $currentPatientCount < $staff->max_concurrent_patients,
+                'remaining_capacity' => max(0, ($staff->max_concurrent_patients ?? 0) - $currentPatientCount),
             ];
         });
 
         // 6) Group by availability status for better UI presentation
         $groupedStaff = [
-            'available' => $transformedStaff->where('is_available', true)->values(),
+            'available' => $transformedStaff->where('is_available', true)->where('has_capacity', true)->values(),
             'busy' => $transformedStaff->where('presence_status', 'busy')->where('is_available', false)->values(),
             'other' => $transformedStaff->where('is_available', false)->where('presence_status', '!=', 'busy')->values(),
+            'at_capacity' => $transformedStaff->where('has_capacity', false)->where('is_available', true)->values(),
         ];
 
         return response()->json([
@@ -840,6 +860,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                     'available' => $groupedStaff['available']->count(),
                     'busy' => $groupedStaff['busy']->count(),
                     'other' => $groupedStaff['other']->count(),
+                    'at_capacity' => $groupedStaff['at_capacity']->count(),
                 ],
             ],
             'meta' => [
@@ -873,56 +894,44 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
 }
 
 /**
- * Helper method to determine staff availability based on presence and workload.
- * 
- * @param string $presenceStatus
- * @param int $currentPatientCount
- * @param int $maxConcurrentPatients
- * @return array
- */
-private function determineStaffAvailability(string $presenceStatus, int $currentPatientCount, int $maxConcurrentPatients): array
+ * Determine if a staff member is available for patient assignment
+ */private function determineStaffAvailability($presenceStatus, $currentPatientCount, $maxConcurrentPatients): array
 {
-    // If staff is not on duty or busy, they're not available
+    // Staff is not on duty or busy
     if (!in_array($presenceStatus, ['on_duty', 'busy'])) {
         return [
             'is_available' => false,
-            'reason' => 'Staff is not on duty',
+            'reason' => 'Staff is not currently on duty',
+            'can_receive_patients' => false,
         ];
     }
-
-    // If staff is busy, they might still be available for high-priority cases
-    if ($presenceStatus === 'busy') {
-        return [
-            'is_available' => true, // Busy staff can still accept patients in emergency
-            'reason' => 'Staff is busy but can accept urgent cases',
-        ];
-    }
-
-    // Check workload capacity
-    if ($maxConcurrentPatients > 0 && $currentPatientCount >= $maxConcurrentPatients) {
+    
+    // Check capacity
+    $hasCapacity = !($maxConcurrentPatients && $currentPatientCount >= $maxConcurrentPatients);
+    
+    if (!$hasCapacity) {
         return [
             'is_available' => false,
-            'reason' => 'Staff has reached maximum patient capacity',
+            'reason' => 'Staff has reached maximum patient capacity (' . $currentPatientCount . '/' . $maxConcurrentPatients . ')',
+            'can_receive_patients' => false,
         ];
     }
-
-    // Calculate workload percentage
-    $workloadPercentage = $maxConcurrentPatients > 0 
-        ? ($currentPatientCount / $maxConcurrentPatients) * 100 
-        : 0;
-
-    // If workload is high (over 80%), mark as less available
-    if ($workloadPercentage > 80) {
+    
+    // Staff has capacity, now check status
+    if ($presenceStatus === 'busy') {
         return [
             'is_available' => true,
-            'reason' => 'Staff has high workload',
+            'reason' => 'Staff is currently busy but can accept more patients',
+            'can_receive_patients' => true,
+            'warning' => 'This staff member is currently busy',
         ];
     }
-
-    // Default: available
+    
+    // Staff is on duty and available
     return [
         'is_available' => true,
-        'reason' => 'Available for assignment',
+        'reason' => 'Staff is available to take new patients',
+        'can_receive_patients' => true,
     ];
 }
 

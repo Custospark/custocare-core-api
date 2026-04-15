@@ -26,19 +26,60 @@ class PlatformAdminService
     int $page = 1
 ): array {
     $query = Facility::query()
-        ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
-        ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
-        ->when($status, fn($q) => $q->where('status', $status))
-        ->when($operationalStatus, fn($q) => $q->where('operational_status', $operationalStatus))
-        ->when($search, function ($q) use ($search) {
-            $q->where(function ($sub) use ($search) {
-                $sub->where('facility_name', 'like', "%{$search}%")
-                    ->orWhere('facility_code', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%")
-                    ->orWhere('main_phone', 'like', "%{$search}%");
-            });
-        })
-        ->orderBy('created_at', 'desc');
+    ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
+    ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
+    ->when($status, fn($q) => $q->where('status', $status))
+    ->when($operationalStatus, fn($q) => $q->where('operational_status', $operationalStatus))
+    ->when($search, function ($q) use ($search) {
+        $searchTerm = trim($search);
+        
+        $q->where(function ($sub) use ($searchTerm) {
+            // Search by name and code (plain text)
+            $sub->where('facility_name', 'like', "%{$searchTerm}%")
+                ->orWhere('facility_code', 'like', "%{$searchTerm}%");
+            
+            // Search by email (using hash since it's encrypted)
+            if (filter_var($searchTerm, FILTER_VALIDATE_EMAIL)) {
+                $emailHash = hash('sha256', strtolower($searchTerm));
+                $sub->orWhere('email', $emailHash);
+            }
+            
+            // Search by phone number (using hash since it's encrypted)
+            $digitsOnly = preg_replace('/\D/', '', $searchTerm);
+            
+            if (preg_match('/^\+\d{8,15}$/', $searchTerm)) {
+                // Phone with + prefix
+                $phoneHash = hash('sha256', $searchTerm);
+                $sub->orWhere('main_phone', $phoneHash);
+            } elseif (preg_match('/^\d{9,15}$/', $searchTerm)) {
+                // Phone without + prefix
+                $phoneHash = hash('sha256', '+' . $searchTerm);
+                $sub->orWhere('main_phone', $phoneHash);
+            } elseif (strlen($digitsOnly) >= 4 && strlen($digitsOnly) <= 6 && ctype_digit($searchTerm)) {
+                // Partial phone search (last digits) - fallback on encrypted field
+                $sub->orWhere('main_phone', 'like', "%{$digitsOnly}");
+            } elseif (strlen($digitsOnly) >= 9 && strlen($digitsOnly) <= 15) {
+                // Try phone hash with + prefix
+                $sub->orWhere('main_phone', hash('sha256', '+' . $digitsOnly));
+                // Try without country code (last 9 digits for Uganda)
+                if (strlen($digitsOnly) >= 12) {
+                    $withoutCountry = substr($digitsOnly, -9);
+                    $sub->orWhere('main_phone', hash('sha256', '+' . $withoutCountry));
+                }
+            }
+            
+            // Search by Facility ID
+            if (is_numeric($searchTerm)) {
+                $sub->orWhere('id', (int) $searchTerm);
+            }
+            
+            // Search by Facility UUID
+            if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $searchTerm)) {
+                $sub->orWhere('facility_uuid', $searchTerm);
+            }
+        });
+    })
+    ->orderBy('created_at', 'desc');
 
     $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 

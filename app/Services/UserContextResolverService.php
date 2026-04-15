@@ -273,7 +273,12 @@ class UserContextResolverService
             if (!in_array('account', $moduleCodes)) {
                 $moduleCodes[] = 'account';
             }
+
             $facility=$role->facility;
+              if (!$facility || in_array($facility->status, ['suspended', 'banned'])) {
+            continue;
+        }
+
            $facilities[] = [
             'facility_id' => $role->facility_id,
             'facility_name' => $facility->facility_name ?? null,
@@ -403,34 +408,33 @@ class UserContextResolverService
     /**
      * Resolve facility roles (legacy support)
      */
-   protected function resolveFacilityRoles(int $userId): array
-{
-    $staff = Staff::where('user_id', $userId)->first();
-    if (!$staff) return [];
+    protected function resolveFacilityRoles(int $userId): array
+    {
+        $staff = Staff::where('user_id', $userId)->first();
+        if (!$staff) return [];
 
-    $roles = FacilityStaffRole::with('facility')
-        ->where('staff_id', $staff->id)
-        ->where('assignment_status', 'active')
-        ->where(function($query) {
-            $query->whereNull('effective_to')
-                  ->orWhere('effective_to', '>=', now());
-        })
-        ->whereHas('facility', function($query) {
-            // Only include facilities that are NOT suspended or banned
-            $query->whereNotIn('status', ['suspended', 'banned']);
-        })
-        ->get();
+        $roles = FacilityStaffRole::with('facility')
+            ->where('staff_id', $staff->id)
+            ->where('assignment_status', 'active')
+            ->where(function($query) {
+                $query->whereNull('effective_to')
+                    ->orWhere('effective_to', '>=', now());
+            })
+            ->get();
 
-    return $roles->map(function ($role) {
-        return [
-            'facility_id' => $role->facility_id,
-            'facility_name' => $role->facility->facility_name ?? null,
-            'facility_code' => $role->facility->facility_code ?? null,
-            'role_code' => $role->role_code,
-            'is_primary_facility' => $role->is_primary_facility,
-        ];
-    })->toArray();
-}
+        return $roles->filter(function ($role) {
+            $facility = $role->facility;
+            return $facility && !in_array($facility->status, ['suspended', 'banned']);
+        })->map(function ($role) {
+            return [
+                'facility_id' => $role->facility_id,
+                'facility_name' => $role->facility->facility_name ?? null,
+                'facility_code' => $role->facility->facility_code ?? null,
+                'role_code' => $role->role_code,
+                'is_primary_facility' => $role->is_primary_facility,
+            ];
+        })->values()->toArray();
+    }
 
     /**
      * Check if user can access a module in a specific capability

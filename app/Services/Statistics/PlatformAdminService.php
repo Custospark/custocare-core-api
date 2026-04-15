@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Events\FacilityStatusChanged;
 use App\Events\UserStatusChanged;
+use App\Models\AuditLog;
 use Illuminate\Support\Facades\Event;
 
 class PlatformAdminService
@@ -158,6 +159,9 @@ class PlatformAdminService
         ];
     }
 
+    /**
+     * Update facility status with audit logging
+     */
     public function updateFacilityStatus(int $facilityId, string $status, ?string $reason, int $adminUserId): bool
     {
         $facility = Facility::find($facilityId);
@@ -167,13 +171,40 @@ class PlatformAdminService
         
         // Only proceed if status is actually changing
         if ($oldStatus === $status) {
-            return true; // No change needed
+            return true;
         }
 
-        $facility->status         = $status;
-        $facility->status_reason  = $reason;
-        $facility->status_set_at  = now();
-        $facility->status_set_by  = $adminUserId;
+        // Get admin name for audit
+        $adminName = $this->getAdminName($adminUserId);
+
+        // Create audit log before update
+        AuditLog::create([
+            'audit_uuid' => \Illuminate\Support\Str::uuid()->toString(),
+            'operation' => 'update',
+            'entity_type' => 'facility',
+            'entity_id' => $facility->id,
+            'entity_identifier' => $facility->facility_code,
+            'previous_values' => ['status' => $oldStatus],
+            'new_values' => ['status' => $status],
+            'changed_fields' => ['status', 'status_reason', 'status_set_at', 'status_set_by'],
+            'performed_by_type' => 'staff',
+            'performed_by_id' => $adminUserId,
+            'performed_by_identifier' => $adminName,
+            'performed_by_role' => 'platform_admin',
+            'request_id' => request()->header('X-Request-ID') ?? \Illuminate\Support\Str::uuid()->toString(),
+            'user_ip' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'compliance_reason' => 'audit',
+            'justification' => $reason ?? "Status changed from {$oldStatus} to {$status}",
+            'facility_id' => $facility->id,
+            'result' => 'success',
+        ]);
+
+        // Update facility
+        $facility->status = $status;
+        $facility->status_reason = $reason;
+        $facility->status_set_at = now();
+        $facility->status_set_by = $adminUserId;
 
         $saved = $facility->save();
         
@@ -189,6 +220,118 @@ class PlatformAdminService
         }
 
         return $saved;
+    }
+
+    /**
+     * Update user status with audit logging
+     */
+    public function updateUserStatus(int $userId, string $status, ?string $reason, int $adminUserId): bool
+    {
+        $user = User::find($userId);
+        if (!$user) return false;
+
+        $oldStatus = $user->status;
+        
+        // Only proceed if status is actually changing
+        if ($oldStatus === $status) {
+            return true;
+        }
+
+        // Get admin name for audit
+        $adminName = $this->getAdminName($adminUserId);
+
+        // Get user identifier (email or phone)
+        $userIdentifier = $this->getUserIdentifier($user);
+
+        // Create audit log before update
+        AuditLog::create([
+            'audit_uuid' => \Illuminate\Support\Str::uuid()->toString(),
+            'operation' => 'update',
+            'entity_type' => 'user',
+            'entity_id' => $user->id,
+            'entity_identifier' => $userIdentifier,
+            'previous_values' => ['status' => $oldStatus],
+            'new_values' => ['status' => $status],
+            'changed_fields' => ['status', 'status_reason', 'status_set_at', 'status_set_by'],
+            'performed_by_type' => 'staff',
+            'performed_by_id' => $adminUserId,
+            'performed_by_identifier' => $adminName,
+            'performed_by_role' => 'platform_admin',
+            'request_id' => request()->header('X-Request-ID') ?? \Illuminate\Support\Str::uuid()->toString(),
+            'user_ip' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'compliance_reason' => 'audit',
+            'justification' => $reason ?? "Status changed from {$oldStatus} to {$status}",
+            'result' => 'success',
+        ]);
+
+        // Update user
+        $user->status = $status;
+        $user->status_reason = $reason;
+        $user->status_set_at = now();
+        $user->status_set_by = $adminUserId;
+
+        $saved = $user->save();
+        
+        if ($saved) {
+            // Dispatch event for email notification
+            Event::dispatch(new UserStatusChanged(
+                $user,
+                $oldStatus,
+                $status,
+                $reason,
+                $adminUserId
+            ));
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Get admin name for audit logging
+     */
+    private function getAdminName(int $adminUserId): string
+    {
+        try {
+            $admin = DB::table('users')
+                ->where('id', $adminUserId)
+                ->select('first_name', 'last_name', 'display_name')
+                ->first();
+
+            if ($admin) {
+                return $admin->display_name ?? trim($admin->first_name . ' ' . $admin->last_name);
+            }
+        } catch (\Exception $e) {
+            Log::warning('Failed to get admin name', ['error' => $e->getMessage()]);
+        }
+        
+        return "Admin #{$adminUserId}";
+    }
+
+    /**
+     * Get user identifier for audit logging
+     */
+    private function getUserIdentifier(User $user): string
+    {
+        try {
+            if ($user->email_encrypted) {
+                $email = decrypt($user->email_encrypted);
+                if ($email && !str_contains($email, 'placeholder')) {
+                    return $email;
+                }
+            }
+            
+            if ($user->phone_encrypted) {
+                $phone = decrypt($user->phone_encrypted);
+                if ($phone) {
+                    return $phone;
+                }
+            }
+        } catch (\Exception $e) {
+            // Fall back to UUID
+        }
+        
+        return $user->global_user_uuid ?? "user_{$user->id}";
     }
 
     protected function getFacilityOwners(array $facilityIds): Collection
@@ -461,38 +604,7 @@ class PlatformAdminService
         ];
     }
 
-  public function updateUserStatus(int $userId, string $status, ?string $reason, int $adminUserId): bool
-{
-    $user = User::find($userId);
-    if (!$user) return false;
 
-    $oldStatus = $user->status;
-    
-    // Only proceed if status is actually changing
-    if ($oldStatus === $status) {
-        return true; // No change needed
-    }
-
-    $user->status         = $status;
-    $user->status_reason  = $reason;
-    $user->status_set_at  = now();
-    $user->status_set_by  = $adminUserId;
-
-    $saved = $user->save();
-    
-    if ($saved) {
-        // Dispatch event for email notification
-        Event::dispatch(new UserStatusChanged(
-            $user,
-            $oldStatus,
-            $status,
-            $reason,
-            $adminUserId
-        ));
-    }
-
-    return $saved;
-}
 
     // -------------------------------------------------------------------------
     // PATIENTS

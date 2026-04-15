@@ -366,7 +366,11 @@ protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $a
             'timezone' => $facility->timezone ?? null,
             'data_residency_region' => $facility->data_residency_region ?? null,
             'role_code' => $role->role_code,
-            'is_restricted' => $isFacilityRestricted, // Add flag to indicate restricted access
+            'is_restricted' => $isFacilityRestricted ?? false, // Add flag to indicate restricted access
+            'status' => $facility->status ?? null, 
+            'status_reason' => $facility->status_reason ?? null, 
+            'status_set_at' => $facility->status_set_at ?? null, 
+            'status_set_by' => $facility->status_set_by ?? null, 
             'modules' => $this->buildModuleList($allModules, $moduleCodes),
         ];
     }
@@ -440,8 +444,11 @@ protected function resolveFacilityRoles(int $userId): array
             'facility_code' => $facility->facility_code ?? null,
             'role_code' => $role->role_code,
             'is_primary_facility' => $role->is_primary_facility,
-            'is_restricted' => $isRestricted,
-            'status' => $facility->status ?? null,
+            'is_restricted' => $isRestricted ?? false, // Add flag to indicate restricted access
+            'status' => $facility->status ?? null, 
+            'status_reason' => $facility->status_reason ?? null, 
+            'status_set_at' => $facility->status_set_at ?? null, 
+            'status_set_by' => $facility->status_set_by ?? null,
         ];
     })->values()->toArray();
 }

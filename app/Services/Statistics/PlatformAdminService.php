@@ -5,6 +5,7 @@ namespace App\Services\Statistics;
 use App\Models\Facility;
 use App\Models\User;
 use App\Models\Patient;
+use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -16,81 +17,97 @@ class PlatformAdminService
     // FACILITIES
     // -------------------------------------------------------------------------
 
-    public function getFacilitiesList(
-        array $dateRange,
-        ?string $status = null,
-        ?string $operationalStatus = null,  // new parameter
-        ?string $search = null,
-        int $perPage = 15,
-        int $page = 1
-    ): array {
-        $query = Facility::query()
-            ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
-            ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
-            ->when($status, fn($q) => $q->where('status', $status))
-            ->when($operationalStatus, fn($q) => $q->where('operational_status', $operationalStatus))  // new filter
-            ->when($search, function ($q) use ($search) {
-                $q->where(function ($sub) use ($search) {
-                    $sub->where('facility_name', 'like', "%{$search}%")
-                        ->orWhere('facility_code', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%")
-                        ->orWhere('main_phone', 'like', "%{$search}%");
-                });
-            })
-            ->orderBy('created_at', 'desc');
+   public function getFacilitiesList(
+    array $dateRange,
+    ?string $status = null,
+    ?string $operationalStatus = null,
+    ?string $search = null,
+    int $perPage = 15,
+    int $page = 1
+): array {
+    $query = Facility::query()
+        ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
+        ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
+        ->when($status, fn($q) => $q->where('status', $status))
+        ->when($operationalStatus, fn($q) => $q->where('operational_status', $operationalStatus))
+        ->when($search, function ($q) use ($search) {
+            $q->where(function ($sub) use ($search) {
+                $sub->where('facility_name', 'like', "%{$search}%")
+                    ->orWhere('facility_code', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('main_phone', 'like', "%{$search}%");
+            });
+        })
+        ->orderBy('created_at', 'desc');
 
-        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+    $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
-        $facilityIds = $paginator->getCollection()->pluck('id')->all();
-        $ownersMap   = $this->getFacilityOwners($facilityIds);
-        $staffMap    = $this->getFacilityStaff($facilityIds);
-        $billingMap  = $this->getFacilityBillingTotals($facilityIds);
-
-        $transformed = $paginator->getCollection()->map(function ($facility) use ($ownersMap, $staffMap, $billingMap) {
-            return [
-                'id'                 => $facility->id,
-                'facility_uuid'      => $facility->facility_uuid,
-                'facility_code'      => $facility->facility_code,
-                'name'               => $facility->facility_name,
-                'location'           => [
-                    'address_line1'  => $facility->address_line1,
-                    'address_line2'  => $facility->address_line2,
-                    'city'           => $facility->city,
-                    'state_province' => $facility->state_province,
-                    'postal_code'    => $facility->postal_code,
-                    'country_code'   => $facility->country_code,
-                ],
-                'phone'              => $facility->main_phone,
-                'email'              => $facility->email,
-                'status'             => $facility->status,
-                'operational_status' => $facility->operational_status,  // include in response
-                'status_reason'      => $facility->status_reason,
-                'status_set_at'      => $facility->status_set_at?->toIso8601String(),
-                'created_at'         => $facility->created_at?->toIso8601String(),
-                'owner'              => $ownersMap->get($facility->id),
-                'staff'              => $staffMap->get($facility->id, collect())->values()->all(),
-                'staff_count'        => $staffMap->get($facility->id, collect())->count(),
-                'billing'            => $billingMap->get($facility->id, ['total_paid' => 0, 'balance' => 0]),
-            ];
-        });
-
+    $facilityIds = $paginator->getCollection()->pluck('id')->all();
+    $ownersMap   = $this->getFacilityOwners($facilityIds);
+    $staffMap    = $this->getFacilityStaff($facilityIds);
+    $billingMap  = $this->getFacilityBillingTotals($facilityIds, $dateRange);
+    $transformed = $paginator->getCollection()->map(function ($facility) use ($ownersMap, $staffMap, $billingMap) {
         return [
-            'data'         => $transformed->all(),
-            'current_page' => $paginator->currentPage(),
-            'per_page'     => $paginator->perPage(),
-            'total'        => $paginator->total(),
-            'last_page'    => $paginator->lastPage(),
+            'id'                 => $facility->id,
+            'facility_uuid'      => $facility->facility_uuid,
+            'facility_code'      => $facility->facility_code,
+            'facility_currency'  => $facility->currency,
+            'facility_website'   => $facility->facility_website,
+            'name'               => $facility->facility_name,
+            'location'           => [
+                'address_line1'  => $facility->address_line1,
+                'address_line2'  => $facility->address_line2,
+                'city'           => $facility->city,
+                'state_province' => $facility->state_province,
+                'postal_code'    => $facility->postal_code,
+                'country_code'   => $facility->country_code,
+            ],
+            'phone'              => $facility->main_phone,
+            'email'              => $facility->email,
+            'status'             => $facility->status,
+            'operational_status' => $facility->operational_status,
+            'status_reason'      => $facility->status_reason,
+            'status_set_at'      => $this->formatTimestamp($facility->status_set_at),
+            'created_at'         => $this->formatTimestamp($facility->created_at),
+            'owner'              => $ownersMap->get($facility->id),
+            'staff'              => $staffMap->get($facility->id, collect())->values()->all(),
+            'staff_count'        => $staffMap->get($facility->id, collect())->count(),
+            'billing'            => $billingMap->get($facility->id, ['total_paid' => 0, 'balance' => 0]),
         ];
-    }
+    });
 
-    public function getFacilityCountsByDateRanges(): array
+    return [
+        'data'         => $transformed->all(),
+        'current_page' => $paginator->currentPage(),
+        'per_page'     => $paginator->perPage(),
+        'total'        => $paginator->total(),
+        'last_page'    => $paginator->lastPage(),
+    ];
+}
+
+    /**
+     * Get facility counts for dashboard summary.
+     * 
+     * @param Carbon|null $referenceDate  Date to use for "today", "this_week", "this_month" (defaults to now)
+     */
+    public function getFacilityCountsByDateRanges(?Carbon $referenceDate = null): array
     {
-        $now = now();
+        $ref = $referenceDate ?? now();
+        
+        $todayStart = $ref->copy()->startOfDay();
+        $todayEnd   = $ref->copy()->endOfDay();
+        
+        $weekStart = $ref->copy()->startOfWeek();
+        $weekEnd   = $ref->copy()->endOfWeek();
+        
+        $monthStart = $ref->copy()->startOfMonth();
+        $monthEnd   = $ref->copy()->endOfMonth();
+
         return [
             'total'      => Facility::count(),
-            'today'      => Facility::whereDate('created_at', $now->toDateString())->count(),
-            'this_week'  => Facility::whereBetween('created_at', [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()])->count(),
-            'this_month' => Facility::whereBetween('created_at', [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()])->count(),
+            'today'      => Facility::whereBetween('created_at', [$todayStart, $todayEnd])->count(),
+            'this_week'  => Facility::whereBetween('created_at', [$weekStart, $weekEnd])->count(),
+            'this_month' => Facility::whereBetween('created_at', [$monthStart, $monthEnd])->count(),
             'active'     => Facility::where('status', 'active')->count(),
             'suspended'  => Facility::where('status', 'suspended')->count(),
             'banned'     => Facility::where('status', 'banned')->count(),
@@ -118,7 +135,6 @@ class PlatformAdminService
             ->join('staff', 'facility_owners.staff_id', '=', 'staff.id')
             ->join('users', 'staff.user_id', '=', 'users.id')
             ->whereIn('facility_owners.facility_id', $facilityIds)
-            // ->where('facility_owners.is_primary_owner', true)
             ->select('facility_owners.facility_id', 'users.first_name', 'users.last_name', 'users.display_name',
                      'users.email_encrypted', 'users.phone_encrypted')
             ->get();
@@ -126,7 +142,7 @@ class PlatformAdminService
         return $owners->groupBy('facility_id')->map(function ($group) {
             $owner = $group->first();
             return [
-                'name'  => trim($owner->first_name . ' ' . $owner->last_name) ?? $owner->display_name ?? null ,
+                'name'  => trim($owner->first_name . ' ' . $owner->last_name) ?? $owner->display_name ?? null,
                 'email' => $this->decryptValue($owner->email_encrypted),
                 'phone' => $this->decryptValue($owner->phone_encrypted),
             ];
@@ -159,23 +175,32 @@ class PlatformAdminService
         });
     }
 
-    protected function getFacilityBillingTotals(array $facilityIds): Collection
-    {
-        if (empty($facilityIds)) return collect();
+    protected function getFacilityBillingTotals(array $facilityIds, ?array $dateRange = null): Collection
+{
+    if (empty($facilityIds)) return collect();
 
-        $totals = DB::table('billing_cycles')
-            ->whereIn('facility_id', $facilityIds)
-            ->groupBy('facility_id')
-            ->select('facility_id',
-                DB::raw('SUM(total_paid_amount) as total_paid'),
-                DB::raw('SUM(balance_amount) as balance'))
-            ->get();
-
-        return $totals->keyBy('facility_id')->map(fn($item) => [
-            'total_paid' => (float) $item->total_paid,
-            'balance'    => (float) $item->balance,
-        ]);
+    $query = DB::table('billing_cycles')
+        ->whereIn('facility_id', $facilityIds);
+    
+    // Apply date range filter to billing cycles if provided
+    if ($dateRange && !empty($dateRange['from'])) {
+        $query->where('created_at', '>=', $dateRange['from']);
     }
+    if ($dateRange && !empty($dateRange['to'])) {
+        $query->where('created_at', '<=', $dateRange['to']);
+    }
+    
+    $totals = $query->groupBy('facility_id')
+        ->select('facility_id',
+            DB::raw('SUM(total_paid_amount) as total_paid'),
+            DB::raw('SUM(balance_amount) as balance'))
+        ->get();
+
+    return $totals->keyBy('facility_id')->map(fn($item) => [
+        'total_paid' => (float) $item->total_paid,
+        'balance'    => (float) $item->balance,
+    ]);
+}
 
     // -------------------------------------------------------------------------
     // USERS
@@ -197,7 +222,7 @@ class PlatformAdminService
                     $sub->where('first_name', 'like', "%{$search}%")
                         ->orWhere('last_name', 'like', "%{$search}%")
                         ->orWhere('display_name', 'like', "%{$search}%")
-                        ->orWhere('email_encrypted', 'like', "%{$search}%") // crude, but decryption happens later
+                        ->orWhere('email_encrypted', 'like', "%{$search}%")
                         ->orWhere('phone_encrypted', 'like', "%{$search}%");
                 });
             })
@@ -205,7 +230,7 @@ class PlatformAdminService
 
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
-       $transformed = $paginator->getCollection()->map(function ($user) {
+        $transformed = $paginator->getCollection()->map(function ($user) {
             return [
                 'id'                => $user->id,
                 'global_user_uuid'  => $user->global_user_uuid,
@@ -233,34 +258,28 @@ class PlatformAdminService
     }
 
     /**
-     * Safely format a timestamp to ISO 8601 string.
+     * Get user counts for dashboard summary.
+     * 
+     * @param Carbon|null $referenceDate  Date to use for "today", "this_week", "this_month" (defaults to now)
      */
-    protected function formatTimestamp($value): ?string
+    public function getUserCountsByDateRanges(?Carbon $referenceDate = null): array
     {
-        if (empty($value)) {
-            return null;
-        }
+        $ref = $referenceDate ?? now();
+        
+        $todayStart = $ref->copy()->startOfDay();
+        $todayEnd   = $ref->copy()->endOfDay();
+        
+        $weekStart = $ref->copy()->startOfWeek();
+        $weekEnd   = $ref->copy()->endOfWeek();
+        
+        $monthStart = $ref->copy()->startOfMonth();
+        $monthEnd   = $ref->copy()->endOfMonth();
 
-        if ($value instanceof \Carbon\CarbonInterface) {
-            return $value->toIso8601String();
-        }
-
-        try {
-            return \Carbon\Carbon::parse($value)->toIso8601String();
-        } catch (\Throwable $e) {
-            Log::warning('Failed to parse timestamp.', ['value' => $value, 'error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    public function getUserCountsByDateRanges(): array
-    {
-        $now = now();
         return [
             'total'      => User::count(),
-            'today'      => User::whereDate('created_at', $now->toDateString())->count(),
-            'this_week'  => User::whereBetween('created_at', [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()])->count(),
-            'this_month' => User::whereBetween('created_at', [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()])->count(),
+            'today'      => User::whereBetween('created_at', [$todayStart, $todayEnd])->count(),
+            'this_week'  => User::whereBetween('created_at', [$weekStart, $weekEnd])->count(),
+            'this_month' => User::whereBetween('created_at', [$monthStart, $monthEnd])->count(),
             'active'     => User::where('status', 'active')->count(),
             'suspended'  => User::where('status', 'suspended')->count(),
             'banned'     => User::where('status', 'banned')->count(),
@@ -292,7 +311,7 @@ class PlatformAdminService
         int $page = 1
     ): array {
         $query = Patient::query()
-            ->with('user') // eager load user for name/email
+            ->with('user')
             ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
             ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
             ->when($status, fn($q) => $q->where('status', $status))
@@ -321,7 +340,7 @@ class PlatformAdminService
                 'biological_sex'           => $patient->biological_sex,
                 'status'                   => $patient->status,
                 'primary_insurance_provider' => $patient->primary_insurance_provider,
-                'created_at'               => $patient->created_at?->toIso8601String(),
+                'created_at'               => $this->formatTimestamp($patient->created_at),
             ];
         });
 
@@ -334,21 +353,14 @@ class PlatformAdminService
         ];
     }
 
-    /**
-     * Get total number of distinct active staff members across all facilities,
-     * optionally filtered by staff creation date range.
-     */
-   
     public function getTotalStaffCount(?array $dateRange = null): array
     {
-        // Base query for all staff within date range
         $staffQuery = DB::table('staff')
             ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
             ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']));
 
         $totalStaff = $staffQuery->count();
 
-        // Distinct active staff assigned to any facility
         $assignedQuery = DB::table('facility_staff_roles')
             ->join('staff', 'facility_staff_roles.staff_id', '=', 'staff.id')
             ->where('facility_staff_roles.assignment_status', 'active')
@@ -365,44 +377,79 @@ class PlatformAdminService
         ];
     }
 
-    public function getPatientCountsByDateRanges(): array
+    /**
+     * Get patient counts for dashboard summary.
+     * 
+     * @param Carbon|null $referenceDate  Date to use for "today", "this_week", "this_month" (defaults to now)
+     */
+    public function getPatientCountsByDateRanges(?Carbon $referenceDate = null): array
     {
-        $now = now();
+        $ref = $referenceDate ?? now();
+        
+        $todayStart = $ref->copy()->startOfDay();
+        $todayEnd   = $ref->copy()->endOfDay();
+        
+        $weekStart = $ref->copy()->startOfWeek();
+        $weekEnd   = $ref->copy()->endOfWeek();
+        
+        $monthStart = $ref->copy()->startOfMonth();
+        $monthEnd   = $ref->copy()->endOfMonth();
+
         return [
             'total'      => Patient::count(),
-            'today'      => Patient::whereDate('created_at', $now->toDateString())->count(),
-            'this_week'  => Patient::whereBetween('created_at', [$now->copy()->startOfWeek(), $now->copy()->endOfWeek()])->count(),
-            'this_month' => Patient::whereBetween('created_at', [$now->copy()->startOfMonth(), $now->copy()->endOfMonth()])->count(),
+            'today'      => Patient::whereBetween('created_at', [$todayStart, $todayEnd])->count(),
+            'this_week'  => Patient::whereBetween('created_at', [$weekStart, $weekEnd])->count(),
+            'this_month' => Patient::whereBetween('created_at', [$monthStart, $monthEnd])->count(),
             'active'     => Patient::where('status', 'active')->count(),
             'inactive'   => Patient::where('status', 'inactive')->count(),
             'deceased'   => Patient::where('status', 'deceased')->count(),
         ];
     }
-/**
- * Safely decrypt a value, falling back to plain text if decryption fails
- * and the value appears to be a valid email address.
- */
-protected function decryptValue(?string $encrypted): ?string
-{
-    if (empty($encrypted)) {
-        return null;
-    }
 
-    try {
-        return decrypt($encrypted);
-    } catch (\Throwable $e) {
-        // If it's already a valid email, return it as‑is (e.g., seeded data)
-        if (filter_var($encrypted, FILTER_VALIDATE_EMAIL)) {
-            return $encrypted;
+    /**
+     * Safely format a timestamp to ISO 8601 string.
+     */
+    protected function formatTimestamp($value): ?string
+    {
+        if (empty($value)) {
+            return null;
         }
 
-        // Log only if it's truly unexpected (optional, adjust verbosity as needed)
-        Log::debug('Failed to decrypt value – returning placeholder.', [
-            'error'        => $e->getMessage(),
-            'value_length' => strlen($encrypted),
-        ]);
+        if ($value instanceof \Carbon\CarbonInterface) {
+            return $value->toIso8601String();
+        }
 
-        return '[encrypted]';
+        try {
+            return \Carbon\Carbon::parse($value)->toIso8601String();
+        } catch (\Throwable $e) {
+            Log::warning('Failed to parse timestamp.', ['value' => $value, 'error' => $e->getMessage()]);
+            return null;
+        }
     }
-}
+
+    /**
+     * Safely decrypt a value, falling back to plain text if decryption fails
+     * and the value appears to be a valid email address.
+     */
+    protected function decryptValue(?string $encrypted): ?string
+    {
+        if (empty($encrypted)) {
+            return null;
+        }
+
+        try {
+            return decrypt($encrypted);
+        } catch (\Throwable $e) {
+            if (filter_var($encrypted, FILTER_VALIDATE_EMAIL)) {
+                return $encrypted;
+            }
+
+            Log::debug('Failed to decrypt value – returning placeholder.', [
+                'error'        => $e->getMessage(),
+                'value_length' => strlen($encrypted),
+            ]);
+
+            return '[encrypted]';
+        }
+    }
 }

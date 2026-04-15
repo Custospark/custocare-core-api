@@ -141,8 +141,7 @@ class UserService implements UserServiceInterface
      *
      * @param  array<string, mixed> $credentials
      * @return array{success: bool, code: string, message: string, requires_mfa: bool, user: User|null, token: string|null}
-     */
-public function login(array $credentials, string $ip, string $userAgent): array
+     */public function login(array $credentials, string $ip, string $userAgent): array
 {
     $emailHash = hash('sha256', strtolower(trim($credentials['email'])));
     $user      = $this->userRepository->findByEmailHash($emailHash);
@@ -152,7 +151,34 @@ public function login(array $credentials, string $ip, string $userAgent): array
         return $this->loginFailure('INVALID_CREDENTIALS', 'Invalid credentials.');
     }
 
-    // ── Account locked ─────────────────────────────────────────────────
+    // ── Account status check (active/suspended/banned) ─────────────────
+    if ($user->status === 'suspended') {
+        return [
+            'success'      => false,
+            'code'         => 'ACCOUNT_SUSPENDED',
+            'message'      => $user->status_reason 
+                ? "Your account has been suspended. Reason: {$user->status_reason}.Please contact support for assistance." 
+                : 'Your account has been suspended. Please contact support for assistance.',
+            'requires_mfa' => false,
+            'user'         => null,
+            'token'        => null,
+        ];
+    }
+
+    if ($user->status === 'banned') {
+        return [
+            'success'      => false,
+            'code'         => 'ACCOUNT_BANNED',
+            'message'      => $user->status_reason 
+                ? "Your account has been permanently banned. Reason: {$user->status_reason}" 
+                : 'Your account has been permanently banned. Please contact support for more information.',
+            'requires_mfa' => false,
+            'user'         => null,
+            'token'        => null,
+        ];
+    }
+
+    // ── Account locked (due to failed attempts) ─────────────────────────
     if ($user->isAccountLocked()) {
         return $this->loginFailure('ACCOUNT_LOCKED', 'Account is temporarily locked. Please try again later.');
     }
@@ -206,7 +232,7 @@ public function login(array $credentials, string $ip, string $userAgent): array
             return [
                 'success'       => true,
                 'code'          => 'MFA_REQUIRED',
-                'message' => 'Please check your email for an authentication code.',
+                'message'       => 'Please check your email for an authentication code.',
                 'requires_mfa'  => true,
                 'mfa_type'      => 'email_otp',
                 'user'          => $user,
@@ -226,13 +252,12 @@ public function login(array $credentials, string $ip, string $userAgent): array
     return [
         'success'      => true,
         'code'         => 'LOGIN_SUCCESS',
-        'message' => 'Authentication complete. Access granted.',
+        'message'      => 'Authentication complete. Access granted.',
         'requires_mfa' => false,
         'user'         => $user,
         'token'        => $token,
     ];
 }
-
 /**
  * Create an MFA token and OTP for the user.
  */

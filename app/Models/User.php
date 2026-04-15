@@ -194,6 +194,8 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
     public function markEmailAsVerified(): void
     {
         $this->email_verified_at = now();
+        $this->identity_verified_at = now();
+        $this->identity_verification_method = 'email';
         $this->save();
     }
 

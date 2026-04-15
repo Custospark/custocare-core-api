@@ -10,6 +10,9 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Events\FacilityStatusChanged;
+use App\Events\UserStatusChanged;
+use Illuminate\Support\Facades\Event;
 
 class PlatformAdminService
 {
@@ -160,12 +163,32 @@ class PlatformAdminService
         $facility = Facility::find($facilityId);
         if (!$facility) return false;
 
+        $oldStatus = $facility->status;
+        
+        // Only proceed if status is actually changing
+        if ($oldStatus === $status) {
+            return true; // No change needed
+        }
+
         $facility->status         = $status;
         $facility->status_reason  = $reason;
         $facility->status_set_at  = now();
         $facility->status_set_by  = $adminUserId;
 
-        return $facility->save();
+        $saved = $facility->save();
+        
+        if ($saved) {
+            // Dispatch event for email notification
+            Event::dispatch(new FacilityStatusChanged(
+                $facility,
+                $oldStatus,
+                $status,
+                $reason,
+                $adminUserId
+            ));
+        }
+
+        return $saved;
     }
 
     protected function getFacilityOwners(array $facilityIds): Collection
@@ -438,18 +461,38 @@ class PlatformAdminService
         ];
     }
 
-    public function updateUserStatus(int $userId, string $status, ?string $reason, int $adminUserId): bool
-    {
-        $user = User::find($userId);
-        if (!$user) return false;
+  public function updateUserStatus(int $userId, string $status, ?string $reason, int $adminUserId): bool
+{
+    $user = User::find($userId);
+    if (!$user) return false;
 
-        $user->status         = $status;
-        $user->status_reason  = $reason;
-        $user->status_set_at  = now();
-        $user->status_set_by  = $adminUserId;
-
-        return $user->save();
+    $oldStatus = $user->status;
+    
+    // Only proceed if status is actually changing
+    if ($oldStatus === $status) {
+        return true; // No change needed
     }
+
+    $user->status         = $status;
+    $user->status_reason  = $reason;
+    $user->status_set_at  = now();
+    $user->status_set_by  = $adminUserId;
+
+    $saved = $user->save();
+    
+    if ($saved) {
+        // Dispatch event for email notification
+        Event::dispatch(new UserStatusChanged(
+            $user,
+            $oldStatus,
+            $status,
+            $reason,
+            $adminUserId
+        ));
+    }
+
+    return $saved;
+}
 
     // -------------------------------------------------------------------------
     // PATIENTS

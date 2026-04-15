@@ -39,6 +39,13 @@ class EventServiceProvider extends ServiceProvider
         MfaRequired::class => [
             SendMfaRequiredNotification::class,
         ],
+            \App\Events\UserStatusChanged::class => [
+            \App\Listeners\SendUserStatusChangeNotification::class,
+        ],
+        
+        \App\Events\FacilityStatusChanged::class => [
+            \App\Listeners\SendFacilityStatusChangeNotification::class,
+        ],
 
         // ── Laravel built-in (keep if using standard email verification) ───
         // Registered::class => [

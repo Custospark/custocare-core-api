@@ -206,6 +206,9 @@ class PlatformAdminService
     // USERS
     // -------------------------------------------------------------------------
 
+    /**
+     * Get paginated list of platform users with filters
+     */
     public function getUsersList(
         array $dateRange,
         ?string $status = null,
@@ -213,23 +216,132 @@ class PlatformAdminService
         int $perPage = 15,
         int $page = 1
     ): array {
-        $query = User::query()
+        $query = $this->buildBaseUserQuery($dateRange, $status);
+        
+        if ($search) {
+            $this->applyUserSearchConditions($query, $search);
+        }
+        
+        $query->orderBy('created_at', 'desc');
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+        
+        return $this->transformUserPaginator($paginator);
+    }
+
+    /**
+     * Build base query with date range and status filters
+     */
+    private function buildBaseUserQuery(array $dateRange, ?string $status): \Illuminate\Database\Eloquent\Builder
+    {
+        return User::query()
             ->when($dateRange['from'] ?? null, fn($q) => $q->where('created_at', '>=', $dateRange['from']))
             ->when($dateRange['to'] ?? null,   fn($q) => $q->where('created_at', '<=', $dateRange['to']))
-            ->when($status, fn($q) => $q->where('status', $status))
-            ->when($search, function ($q) use ($search) {
-                $q->where(function ($sub) use ($search) {
-                    $sub->where('first_name', 'like', "%{$search}%")
-                        ->orWhere('last_name', 'like', "%{$search}%")
-                        ->orWhere('display_name', 'like', "%{$search}%")
-                        ->orWhere('email_encrypted', 'like', "%{$search}%")
-                        ->orWhere('phone_encrypted', 'like', "%{$search}%");
-                });
-            })
-            ->orderBy('created_at', 'desc');
+            ->when($status, fn($q) => $q->where('status', $status));
+    }
 
-        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+    /**
+     * Apply search conditions to user query with optimized field matching
+     */
+    private function applyUserSearchConditions($query, string $search): void
+    {
+        $searchTerm = trim($search);
+        
+        $query->where(function ($sub) use ($searchTerm) {
+            // Priority 1: Search by exact identifiers (fastest - uses indexes)
+            $matched = $this->applyExactMatchSearch($sub, $searchTerm);
+            
+            // Priority 2: Search by name fields (fast - uses indexes)
+            $this->applyNameSearch($sub, $searchTerm);
+            
+            // Priority 3: Search by partial/pattern matching (slowest - fallback)
+            if (!$matched) {
+                $this->applyPatternMatchSearch($sub, $searchTerm);
+            }
+        });
+    }
 
+    /**
+     * Apply exact match search on indexed fields (fastest)
+     * Returns true if an exact match condition was applied
+     */
+    private function applyExactMatchSearch($sub, string $searchTerm): bool
+    {
+        $matched = false;
+        
+        // Search by User ID
+        if (is_numeric($searchTerm)) {
+            $sub->orWhere('id', (int) $searchTerm);
+            $matched = true;
+        }
+        
+        // Search by UUID
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $searchTerm)) {
+            $sub->orWhere('global_user_uuid', $searchTerm);
+            $matched = true;
+        }
+        
+        // Search by email (exact match using hash)
+        if (filter_var($searchTerm, FILTER_VALIDATE_EMAIL)) {
+            $emailHash = hash('sha256', strtolower($searchTerm));
+            $sub->orWhere('email_hash', $emailHash);
+            $matched = true;
+        }
+        
+        // Search by phone number with + prefix
+        if (preg_match('/^\+\d{8,15}$/', $searchTerm)) {
+            $sub->orWhere('phone_hash', hash('sha256', $searchTerm));
+            $matched = true;
+        }
+        
+        // Search by phone number without + prefix
+        elseif (preg_match('/^\d{9,15}$/', $searchTerm)) {
+            $sub->orWhere('phone_hash', hash('sha256', '+' . $searchTerm));
+            $matched = true;
+        }
+        
+        return $matched;
+    }
+
+    /**
+     * Apply name-based search (uses indexes if available)
+     */
+    private function applyNameSearch($sub, string $searchTerm): void
+    {
+        $sub->orWhere('first_name', 'like', "%{$searchTerm}%")
+            ->orWhere('last_name', 'like', "%{$searchTerm}%")
+            ->orWhere('display_name', 'like', "%{$searchTerm}%");
+    }
+
+    /**
+     * Apply pattern matching for partial searches (slowest, used as fallback)
+     */
+    private function applyPatternMatchSearch($sub, string $searchTerm): void
+    {
+        $digitsOnly = preg_replace('/\D/', '', $searchTerm);
+        
+        // Phone number variations without exact format
+        if (strlen($digitsOnly) >= 9 && strlen($digitsOnly) <= 15) {
+            // Try with + prefix
+            $sub->orWhere('phone_hash', hash('sha256', '+' . $digitsOnly));
+            
+            // Try without country code (last 9 digits for Uganda)
+            if (strlen($digitsOnly) >= 12) {
+                $withoutCountry = substr($digitsOnly, -9);
+                $sub->orWhere('phone_hash', hash('sha256', '+' . $withoutCountry));
+            }
+        }
+        
+        // Partial phone search (last 4-6 digits) - performance heavy
+        if (strlen($digitsOnly) >= 4 && strlen($digitsOnly) <= 6) {
+            $sub->orWhere('phone_encrypted', 'like', "%{$digitsOnly}");
+        }
+    }
+
+    /**
+     * Transform paginated user results into formatted array
+     */
+    private function transformUserPaginator($paginator): array
+    {
         $transformed = $paginator->getCollection()->map(function ($user) {
             return [
                 'id'                => $user->id,
@@ -247,7 +359,7 @@ class PlatformAdminService
                 'created_at'        => $this->formatTimestamp($user->created_at),
             ];
         });
-
+        
         return [
             'data'         => $transformed->all(),
             'current_page' => $paginator->currentPage(),
@@ -256,7 +368,6 @@ class PlatformAdminService
             'last_page'    => $paginator->lastPage(),
         ];
     }
-
     /**
      * Get user counts for dashboard summary.
      * 

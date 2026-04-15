@@ -275,94 +275,104 @@ class UserContextResolverService
      * Resolve staff facilities with their modules
      * Filters out suspended/banned facilities and ensures account module is active
      */
-    protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $allModules): array
-    {
-        $facilityRoles = FacilityStaffRole::with('facility')
-            ->where('staff_id', $staffId)
-            ->where('assignment_status', 'active')
-            ->where(function($query) {
-                $query->whereNull('effective_to')
-                      ->orWhere('effective_to', '>=', now());
-            })
-            ->get();
+   /**
+ * Resolve staff facilities with their modules
+ * Filters out suspended/banned facilities but ensures account module is available
+ */
+protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $allModules): array
+{
+    $facilityRoles = FacilityStaffRole::with('facility')
+        ->where('staff_id', $staffId)
+        ->where('assignment_status', 'active')
+        ->where(function($query) {
+            $query->whereNull('effective_to')
+                  ->orWhere('effective_to', '>=', now());
+        })
+        ->get();
 
-        $facilities = [];
+    $facilities = [];
+    $hasActiveFacility = false;
 
-        foreach ($facilityRoles as $role) {
-            $facility = $role->facility;
-            
-            // Skip suspended or banned facilities
-            if (!$facility || in_array($facility->status, ['suspended', 'banned'])) {
-                continue;
-            }
-            
-            $moduleCodes = $this->extractModuleCodes($role->module_code);
-            
-            // Ensure account is always in the module codes for staff facilities
+    foreach ($facilityRoles as $role) {
+        $facility = $role->facility;
+        
+        // Check if facility is suspended or banned
+        $isFacilityRestricted = !$facility || in_array($facility->status, ['suspended', 'banned']);
+        
+        $moduleCodes = $this->extractModuleCodes($role->module_code);
+        
+        // For restricted facilities, ONLY give account module
+        if ($isFacilityRestricted) {
+            $moduleCodes = ['account'];
+        } else {
+            $hasActiveFacility = true;
+            // Ensure account is always in module codes for active facilities
             if (!in_array('account', $moduleCodes)) {
                 $moduleCodes[] = 'account';
             }
-            
-            $facilities[] = [
-                'facility_id' => $role->facility_id,
-                'facility_name' => $facility->facility_name ?? null,
-                'facility_code' => $facility->facility_code ?? null,
-                'legal_entity_name' => $facility->legal_entity_name ?? null,
-                'health_system_name' => $facility->health_system_name ?? null,
-                'nature_of_facility' => $facility->nature_of_facility ?? null,
-                'facility_type' => $facility->facility_type ?? null,
-                'facility_tier' => $facility->facility_tier ?? null,
-                'bed_capacity' => $facility->bed_capacity ?? null,
-                'available_services' => $facility->available_services ?? [],
-                'specialty_services' => $facility->specialty_services ?? [],
-                'equipment_inventory_summary' => $facility->equipment_inventory_summary ?? [],
-                'address_line1' => $facility->address_line1 ?? null,
-                'address_line2' => $facility->address_line2 ?? null,
-                'city' => $facility->city ?? null,
-                'state_province' => $facility->state_province ?? null,
-                'postal_code' => $facility->postal_code ?? null,
-                'country_code' => $facility->country_code ?? null,
-                'latitude' => $facility->latitude ?? null,
-                'longitude' => $facility->longitude ?? null,
-                'main_phone' => $facility->main_phone ?? null,
-                'emergency_phone' => $facility->emergency_phone ?? null,
-                'fax' => $facility->fax ?? null,
-                'email' => $facility->email ?? null,
-                'website' => $facility->website ?? null,
-                'operating_hours' => $facility->operating_hours ?? [],
-                'emergency_services_hours' => $facility->emergency_services_hours ?? [],
-                'is_24_7' => $facility->is_24_7 ?? false,
-                'operational_status' => $facility->operational_status ?? null,
-                'average_wait_time_minutes' => $facility->average_wait_time_minutes ?? null,
-                'monthly_patient_volume' => $facility->monthly_patient_volume ?? null,
-                'license_number' => $facility->license_number ?? null,
-                'license_issuing_authority' => $facility->license_issuing_authority ?? null,
-                'license_expiry_date' => $facility->license_expiry_date ?? null,
-                'regulatory_identifiers' => $facility->regulatory_identifiers ?? [],
-                'participates_in_medicare' => $facility->participates_in_medicare ?? false,
-                'participates_in_medicaid' => $facility->participates_in_medicaid ?? false,
-                'has_emergency_department' => $facility->has_emergency_department ?? false,
-                'has_trauma_center' => $facility->has_trauma_center ?? false,
-                'trauma_center_level' => $facility->trauma_center_level ?? null,
-                'has_intensive_care' => $facility->has_intensive_care ?? false,
-                'has_neonatal_icu' => $facility->has_neonatal_icu ?? false,
-                'has_cardiac_cath_lab' => $facility->has_cardiac_cath_lab ?? false,
-                'facility_currency' => $facility->currency ?? null,
-                'tax_enabled' => $facility->tax_enabled ?? false,
-                'tax_name' => $facility->tax_name ?? null,
-                'tax_rate' => $facility->tax_rate ?? null,
-                'facility_logo_path' => $facility->facility_logo_path ? asset('storage/' . $facility->facility_logo_path) : null,
-                'primary_brand_color' => $facility->primary_brand_color ?? null,
-                'secondary_brand_color' => $facility->secondary_brand_color ?? null,
-                'timezone' => $facility->timezone ?? null,
-                'data_residency_region' => $facility->data_residency_region ?? null,
-                'role_code' => $role->role_code,
-                'modules' => $this->buildModuleList($allModules, $moduleCodes),
-            ];
         }
-
-        return $facilities;
+        
+        $facilities[] = [
+            'facility_id' => $role->facility_id,
+            'facility_name' => $facility->facility_name ?? null,
+            'facility_code' => $facility->facility_code ?? null,
+            'legal_entity_name' => $facility->legal_entity_name ?? null,
+            'health_system_name' => $facility->health_system_name ?? null,
+            'nature_of_facility' => $facility->nature_of_facility ?? null,
+            'facility_type' => $facility->facility_type ?? null,
+            'facility_tier' => $facility->facility_tier ?? null,
+            'bed_capacity' => $facility->bed_capacity ?? null,
+            'available_services' => $facility->available_services ?? [],
+            'specialty_services' => $facility->specialty_services ?? [],
+            'equipment_inventory_summary' => $facility->equipment_inventory_summary ?? [],
+            'address_line1' => $facility->address_line1 ?? null,
+            'address_line2' => $facility->address_line2 ?? null,
+            'city' => $facility->city ?? null,
+            'state_province' => $facility->state_province ?? null,
+            'postal_code' => $facility->postal_code ?? null,
+            'country_code' => $facility->country_code ?? null,
+            'latitude' => $facility->latitude ?? null,
+            'longitude' => $facility->longitude ?? null,
+            'main_phone' => $facility->main_phone ?? null,
+            'emergency_phone' => $facility->emergency_phone ?? null,
+            'fax' => $facility->fax ?? null,
+            'email' => $facility->email ?? null,
+            'website' => $facility->website ?? null,
+            'operating_hours' => $facility->operating_hours ?? [],
+            'emergency_services_hours' => $facility->emergency_services_hours ?? [],
+            'is_24_7' => $facility->is_24_7 ?? false,
+            'operational_status' => $facility->operational_status ?? null,
+            'average_wait_time_minutes' => $facility->average_wait_time_minutes ?? null,
+            'monthly_patient_volume' => $facility->monthly_patient_volume ?? null,
+            'license_number' => $facility->license_number ?? null,
+            'license_issuing_authority' => $facility->license_issuing_authority ?? null,
+            'license_expiry_date' => $facility->license_expiry_date ?? null,
+            'regulatory_identifiers' => $facility->regulatory_identifiers ?? [],
+            'participates_in_medicare' => $facility->participates_in_medicare ?? false,
+            'participates_in_medicaid' => $facility->participates_in_medicaid ?? false,
+            'has_emergency_department' => $facility->has_emergency_department ?? false,
+            'has_trauma_center' => $facility->has_trauma_center ?? false,
+            'trauma_center_level' => $facility->trauma_center_level ?? null,
+            'has_intensive_care' => $facility->has_intensive_care ?? false,
+            'has_neonatal_icu' => $facility->has_neonatal_icu ?? false,
+            'has_cardiac_cath_lab' => $facility->has_cardiac_cath_lab ?? false,
+            'facility_currency' => $facility->currency ?? null,
+            'tax_enabled' => $facility->tax_enabled ?? false,
+            'tax_name' => $facility->tax_name ?? null,
+            'tax_rate' => $facility->tax_rate ?? null,
+            'facility_logo_path' => $facility->facility_logo_path ? asset('storage/' . $facility->facility_logo_path) : null,
+            'primary_brand_color' => $facility->primary_brand_color ?? null,
+            'secondary_brand_color' => $facility->secondary_brand_color ?? null,
+            'timezone' => $facility->timezone ?? null,
+            'data_residency_region' => $facility->data_residency_region ?? null,
+            'role_code' => $role->role_code,
+            'is_restricted' => $isFacilityRestricted, // Add flag to indicate restricted access
+            'modules' => $this->buildModuleList($allModules, $moduleCodes),
+        ];
     }
+
+    return $facilities;
+}
 
     /**
      * Extract module codes from JSON column
@@ -403,36 +413,38 @@ class UserContextResolverService
     }
 
     /**
-     * Resolve facility roles (legacy support)
-     * Filters out suspended/banned facilities
-     */
-    protected function resolveFacilityRoles(int $userId): array
-    {
-        $staff = Staff::where('user_id', $userId)->first();
-        if (!$staff) return [];
+ * Resolve facility roles (legacy support)
+ * Returns ALL facilities but marks restricted ones
+ */
+protected function resolveFacilityRoles(int $userId): array
+{
+    $staff = Staff::where('user_id', $userId)->first();
+    if (!$staff) return [];
 
-        $roles = FacilityStaffRole::with('facility')
-            ->where('staff_id', $staff->id)
-            ->where('assignment_status', 'active')
-            ->where(function($query) {
-                $query->whereNull('effective_to')
-                    ->orWhere('effective_to', '>=', now());
-            })
-            ->get();
+    $roles = FacilityStaffRole::with('facility')
+        ->where('staff_id', $staff->id)
+        ->where('assignment_status', 'active')
+        ->where(function($query) {
+            $query->whereNull('effective_to')
+                ->orWhere('effective_to', '>=', now());
+        })
+        ->get();
 
-        return $roles->filter(function ($role) {
-            $facility = $role->facility;
-            return $facility && !in_array($facility->status, ['suspended', 'banned']);
-        })->map(function ($role) {
-            return [
-                'facility_id' => $role->facility_id,
-                'facility_name' => $role->facility->facility_name ?? null,
-                'facility_code' => $role->facility->facility_code ?? null,
-                'role_code' => $role->role_code,
-                'is_primary_facility' => $role->is_primary_facility,
-            ];
-        })->values()->toArray();
-    }
+    return $roles->map(function ($role) {
+        $facility = $role->facility;
+        $isRestricted = !$facility || in_array($facility->status, ['suspended', 'banned']);
+        
+        return [
+            'facility_id' => $role->facility_id,
+            'facility_name' => $facility->facility_name ?? null,
+            'facility_code' => $facility->facility_code ?? null,
+            'role_code' => $role->role_code,
+            'is_primary_facility' => $role->is_primary_facility,
+            'is_restricted' => $isRestricted,
+            'status' => $facility->status ?? null,
+        ];
+    })->values()->toArray();
+}
 
     /**
      * Check if user can access a module in a specific capability

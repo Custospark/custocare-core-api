@@ -353,8 +353,7 @@ class SendEmailVerificationNotification implements ShouldHandleEventsAfterCommit
 
         <p style='margin: 0 0 16px 0;'>
             A sign-in attempt to your <strong>{$appName}</strong> account has been detected.
-            To protect your account, we require you to confirm this request with a
-            one-time authentication code.
+            To protect your account, we require you to confirm this request with a one-time authentication code.
         </p>
 
         <p style='margin: 0 0 8px 0; color: #6b7280; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;'>

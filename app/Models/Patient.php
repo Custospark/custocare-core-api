@@ -201,4 +201,32 @@ class Patient extends Model
     {
         return $this->belongsTo(Facility::class, 'primary_care_facility_id');
     }
+
+        public function allergies()
+        {
+            return $this->hasMany(Allergy::class);
+        }
+
+        public function activeAllergies()
+        {
+            return $this->hasMany(Allergy::class)->where('is_active', true)->whereNull('resolved_at');
+        }
+
+        public function hasAllergyWarning(): bool
+        {
+            return $this->activeAllergies()->exists();
+        }
+
+        public function getAllergyWarningText(): ?string
+        {
+            $allergies = $this->activeAllergies()->get();
+            if ($allergies->isEmpty()) return null;
+            
+            $severe = $allergies->filter(fn($a) => $a->isSevere());
+            if ($severe->isNotEmpty()) {
+                return '⚠️ SEVERE ALLERGY: ' . $severe->pluck('allergen')->implode(', ');
+            }
+            
+            return '⚠️ Allergy: ' . $allergies->pluck('allergen')->implode(', ');
+        }
 }

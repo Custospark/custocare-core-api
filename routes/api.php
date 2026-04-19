@@ -60,3 +60,4 @@ require __DIR__.'/api_v1/facilitySubscriptions/payment_gateways.php';
 require __DIR__.'/api_v1/statistics/user_stat.php';
 require __DIR__.'/api_v1/statistics/facility_stat.php';
 require __DIR__.'/api_v1/platform/_index.php';
+require __DIR__.'/api_v1/allergy/_index.php';

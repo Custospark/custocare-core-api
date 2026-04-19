@@ -2,10 +2,12 @@
 
 return [
     App\Providers\AiAssessmentServiceProvider::class,
+    App\Providers\AllergyServiceProvider::class,
     App\Providers\AppServiceProvider::class,
     App\Providers\AppointmentServiceProvider::class,
     App\Providers\AuditLogServiceProvider::class,
     App\Providers\BillingCycleServiceProvider::class,
+    App\Providers\BillingServiceProvider::class,
     App\Providers\ClinicalDocumentServiceProvider::class,
     App\Providers\ClinicalEncounterServiceProvider::class,
     App\Providers\ConversationParticipantServiceProvider::class,
@@ -36,6 +38,4 @@ return [
     App\Providers\VisitEventServiceProvider::class,
     App\Providers\VisitRouteServiceProvider::class,
     App\Providers\VisitServiceProvider::class,
-    App\Providers\BillingServiceProvider::class,
-
 ];

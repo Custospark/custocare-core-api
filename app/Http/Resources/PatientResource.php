@@ -82,6 +82,8 @@ class PatientResource extends JsonResource
             
             // Relationships
             'user' => new UserResource($this->whenLoaded('user')),
+               'allergies' => AllergyResource::collection($this->whenLoaded('activeAllergies')),
+                'allergy_warning' => $this->getAllergyWarningText(),
         ];
     }
 

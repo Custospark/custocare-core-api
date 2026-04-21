@@ -188,24 +188,34 @@ class PrescriptionRepository implements PrescriptionRepositoryInterface
         return $prescription->save();
     }
 
-    public function generatePrescriptionNumber(int $facilityId): string
-    {
-        $year = now()->format('Y');
-        $month = now()->format('m');
-        
-        $lastPrescription = $this->model
-            ->where('facility_id', $facilityId)
-            ->whereYear('created_at', $year)
-            ->orderBy('id', 'desc')
-            ->first();
-        
-        if ($lastPrescription) {
-            $lastNumber = intval(substr($lastPrescription->prescription_number, -6));
-            $sequence = str_pad((string)($lastNumber + 1), 6, '0', STR_PAD_LEFT);
-        } else {
-            $sequence = '000001';
-        }
-        
-        return "RX-{$year}{$month}-{$sequence}";
+  public function generatePrescriptionNumber(int $facilityId): string
+{
+    $year = now()->format('Y');
+    $month = now()->format('m');
+    
+    // Use database atomic increment
+    $sequence = \App\Models\PrescriptionSequence::where('facility_id', $facilityId)
+        ->where('year', $year)
+        ->where('month', $month)
+        ->lockForUpdate()
+        ->first();
+    
+    if (!$sequence) {
+        $sequence = \App\Models\PrescriptionSequence::create([
+            'facility_id' => $facilityId,
+            'year' => $year,
+            'month' => $month,
+            'last_number' => 0,
+        ]);
+    }
+    
+    // Increment atomically
+    $sequence->increment('last_number');
+    $sequence->refresh();
+    
+    // Cast to string to avoid str_pad type error
+    $sequenceNumber = str_pad((string) $sequence->last_number, 6, '0', STR_PAD_LEFT);
+    
+    return "RX-{$year}{$month}-{$sequenceNumber}";
 }
 }

@@ -112,21 +112,20 @@ return [
     */
 
     'cipher' => 'AES-256-CBC',
-    // config/app.php
-'providers' => ServiceProvider::defaultProviders()->merge([
-    /*
-     * Package Service Providers...
-     */
+    'providers' => ServiceProvider::defaultProviders()->merge([
+        /*
+        * Package Service Providers...
+        */
 
-    /*
-     * Application Service Providers...
-     */
-    App\Providers\AppServiceProvider::class,
-    
-    
-    // Your custom provider should be here:
-    App\Providers\UserServiceProvider::class, // ← Add this line
-])->toArray(),
+        /*
+        * Application Service Providers...
+        */
+        App\Providers\AppServiceProvider::class,
+        
+        
+        // Your custom provider should be here:
+        App\Providers\UserServiceProvider::class, // ← Add this line
+    ])->toArray(),
 
     'key' => env('APP_KEY'),
 

@@ -1,218 +1,128 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Prescription;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Http\Exceptions\HttpResponseException;
-use Illuminate\Contracts\Validation\Validator;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 
 class StorePrescriptionRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     *
-     * @return bool
-     */
     public function authorize(): bool
     {
-        // Check if user has permission to create prescriptions
-        return Auth::check() && Auth::user()->can('create', \App\Models\Prescription::class);
+        return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, mixed>
-     */
     public function rules(): array
     {
         return [
-            'patient_id' => 'required|exists:patients,id',
-            'visit_id' => 'nullable|exists:visits,id',
-            'prescribing_provider_staff_id' => 'required|exists:staff,id',
-            'prescriber_npi' => 'nullable|string|max:20',
-            'prescriber_dea_number' => 'nullable|string|max:20',
-            'inventory_item_id' => 'required|exists:inventory_items,id',
-            'medication_name' => 'required|string|max:300',
-            'generic_name' => 'nullable|string|max:300',
-            'ndc_code' => 'nullable|string|max:20',
-            'controlled_substance_schedule' => 'nullable|in:I,II,III,IV,V,non_controlled',
-            'dosage_strength' => 'required|string|max:100',
-            'dosage_form' => 'required|string|max:100',
-            'route' => 'required|string|max:100',
-            'sig_instructions' => 'required|string',
-            'pharmacist_notes' => 'nullable|string',
-            'quantity_prescribed' => 'required|numeric|min:0.01|max:999999.99',
-            'quantity_unit' => 'required|string|max:50',
-            'refills_allowed' => 'integer|min:0|max:99',
-            'refills_remaining' => 'integer|min:0|max:99',
-            'days_supply' => 'nullable|integer|min:1|max:365',
-            'diagnosis_codes' => 'nullable|array',
-            'diagnosis_codes.*' => 'string|max:20',
-            'clinical_indication' => 'nullable|string|max:1000',
-            'valid_from' => 'required|date|after_or_equal:today',
-            'valid_to' => 'required|date|after:valid_from',
-            'do_not_fill_before' => 'nullable|date|after_or_equal:today|before:valid_to',
-            'requires_prior_authorization' => 'boolean',
-            'prior_authorization_number' => 'nullable|string|max:100',
-            'prior_auth_status' => 'nullable|in:not_required,pending,approved,denied',
-            'is_electronic_prescription' => 'boolean',
-            'transmit_to_pharmacy' => 'nullable|string|max:300',
-            'pharmacy_ncpdp_id' => 'nullable|string|max:20',
-            'is_high_risk_medication' => 'boolean',
-            'safety_monitoring_required' => 'nullable|array',
-            'special_instructions' => 'nullable|string|max:500',
-            'status' => 'nullable|in:active,completed,cancelled,discontinued,expired,on_hold',
-            'status_reason' => 'nullable|string|max:500',
-            'metadata' => 'nullable|array',
+            'facility_id' => ['required', 'exists:facilities,id'],
+            'patient_id' => ['required', 'exists:patients,id'],
+            'visit_id' => ['nullable', 'exists:visits,id'],
+            'clinical_template_id' => ['nullable', 'exists:clinical_templates,id'],
+            'prescription_date' => ['required', 'date'],
+            'valid_until' => ['nullable', 'date', 'after:prescription_date'],
+            'status' => ['required', Rule::in([
+                'Draft - Not Yet Finalized',
+                'Active - Ready for Dispensing',
+                'Partially Dispensed',
+                'Fully Dispensed',
+                'Expired - Past Valid Date',
+                'Cancelled - No Longer Valid',
+                'On Hold - Pending Review'
+            ])],
+            'prescription_type' => ['required', Rule::in([
+                'New Prescription',
+                'Refill Prescription',
+                'Renewal (New Course)',
+                'Emergency Prescription',
+                'Standing Order',
+                'Discharge Prescription',
+                'Transfer Prescription'
+            ])],
+            'priority' => ['required', Rule::in([
+                'Routine - Fill Within 24 Hours',
+                'Urgent - Fill Within 4 Hours',
+                'STAT - Fill Immediately',
+                'Scheduled - Fill on Specific Date'
+            ])],
+            'diagnosis' => ['nullable', 'string'],
+            'clinical_notes' => ['nullable', 'string'],
+            'special_instructions' => ['nullable', 'string'],
+            'allergy_check' => ['nullable', Rule::in([
+                'No Known Allergies',
+                'Allergies Checked - No Conflicts',
+                'Allergy Warning - Overridden',
+                'Allergy Alert - Changed Medication'
+            ])],
+            'allergy_notes' => ['nullable', 'string'],
+            'prescribed_by' => ['nullable', 'exists:users,id'],
+            'prescriber_type' => ['required', Rule::in([
+                'Medical Doctor (MD)',
+                'Doctor of Osteopathy (DO)',
+                'Nurse Practitioner (NP)',
+                'Physician Assistant (PA)',
+                'Clinical Officer',
+                'Dentist (DDS/DMD)',
+                'Podiatrist (DPM)',
+                'Optometrist (OD)',
+                'Pharmacist (PharmD)',
+                'Midwife (CNM/CM)'
+            ])],
+            'prescriber_license' => ['nullable', 'string', 'max:100'],
+            'prescriber_contact' => ['nullable', 'string', 'max:100'],
+            'prescription_format' => ['required', Rule::in([
+                'Electronic (e-Prescription)',
+                'Printed Paper Prescription',
+                'Handwritten Prescription',
+                'Faxed Prescription',
+                'Verbal Order (Telephone)'
+            ])],
+            'patient_education_notes' => ['nullable', 'string'],
+            'follow_up_instructions' => ['nullable', 'string'],
+            'follow_up_date' => ['nullable', 'date'],
+            
+            // Items array
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.medication_name' => ['required', 'string', 'max:255'],
+            'items.*.brand_name' => ['nullable', 'string', 'max:255'],
+            'items.*.strength' => ['nullable', 'string', 'max:100'],
+            'items.*.dosage_form' => ['required', 'string'],
+            'items.*.dosage_quantity' => ['required', 'numeric', 'min:0.01'],
+            'items.*.dosage_unit' => ['required', 'string'],
+            'items.*.frequency' => ['required', 'string'],
+            'items.*.duration_value' => ['required', 'integer', 'min:1'],
+            'items.*.duration_unit' => ['required', Rule::in(['Day(s)', 'Week(s)', 'Month(s)', 'Year(s)'])],
+            'items.*.route' => ['required', 'string'],
+            'items.*.instructions' => ['nullable', 'string'],
+            'items.*.as_needed' => ['boolean'],
+            'items.*.as_needed_reason' => ['nullable', 'string', 'required_if:as_needed,true'],
+            'items.*.administration_instructions' => ['required', 'string'],
+            'items.*.refills' => ['required', 'string'],
+            'items.*.refill_instructions' => ['nullable', 'string'],
+            'items.*.medication_type' => ['nullable', 'string'],
+            'items.*.monitoring_required' => ['nullable', 'string'],
+            'items.*.common_side_effects' => ['nullable', 'string'],
+            'items.*.clinical_reasoning' => ['nullable', 'string'],
+            'items.*.substitution_instructions' => ['nullable', 'string'],
+            'items.*.substitution' => ['required', Rule::in([
+                'Generic substitution allowed',
+                'Brand name only - No substitution',
+                'Therapeutic substitution allowed (same class)',
+                'Dispense as written (DAW)'
+            ])],
         ];
     }
 
-    /**
-     * Get custom messages for validator errors.
-     *
-     * @return array
-     */
     public function messages(): array
     {
         return [
-            'patient_id.required' => 'Patient is required.',
-            'patient_id.exists' => 'Selected patient does not exist.',
-            'prescribing_provider_staff_id.required' => 'Prescribing provider is required.',
-            'prescribing_provider_staff_id.exists' => 'Selected provider does not exist.',
-            'inventory_item_id.required' => 'Medication item is required.',
-            'inventory_item_id.exists' => 'Selected medication item does not exist.',
-            'medication_name.required' => 'Medication name is required.',
-            'dosage_strength.required' => 'Dosage strength is required.',
-            'dosage_form.required' => 'Dosage form is required.',
-            'route.required' => 'Administration route is required.',
-            'sig_instructions.required' => 'Patient instructions are required.',
-            'quantity_prescribed.required' => 'Quantity prescribed is required.',
-            'quantity_prescribed.min' => 'Quantity must be greater than 0.',
-            'quantity_unit.required' => 'Quantity unit is required.',
-            'valid_from.required' => 'Valid from date is required.',
-            'valid_from.after_or_equal' => 'Valid from date cannot be in the past.',
-            'valid_to.required' => 'Valid to date is required.',
-            'valid_to.after' => 'Valid to date must be after valid from date.',
-            'do_not_fill_before.before' => 'Do not fill before date must be before valid to date.',
+            'items.required' => 'At least one medication item is required',
+            'items.*.medication_name.required' => 'Medication name is required for each item',
+            'items.*.dosage_quantity.required' => 'Dosage quantity is required for each medication',
+            'items.*.frequency.required' => 'Frequency is required for each medication',
+            'items.*.duration_value.required' => 'Duration is required for each medication',
         ];
-    }
-
-    /**
-     * Get custom attributes for validator errors.
-     *
-     * @return array
-     */
-    public function attributes(): array
-    {
-        return [
-            'patient_id' => 'patient',
-            'prescribing_provider_staff_id' => 'prescribing provider',
-            'inventory_item_id' => 'medication item',
-            'medication_name' => 'medication name',
-            'dosage_strength' => 'dosage strength',
-            'dosage_form' => 'dosage form',
-            'route' => 'administration route',
-            'sig_instructions' => 'patient instructions',
-            'quantity_prescribed' => 'quantity prescribed',
-            'quantity_unit' => 'quantity unit',
-            'valid_from' => 'valid from date',
-            'valid_to' => 'valid to date',
-        ];
-    }
-
-    /**
-     * Handle a failed validation attempt.
-     *
-     * @param  \Illuminate\Contracts\Validation\Validator  $validator
-     * @return void
-     *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException
-     */
-    protected function failedValidation(Validator $validator): void
-    {
-        throw new HttpResponseException(
-            response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422)
-        );
-    }
-
-    /**
-     * Handle a failed authorization attempt.
-     *
-     * @return void
-     *
-     * @throws \Illuminate\Http\Exceptions\HttpResponseException
-     */
-    protected function failedAuthorization(): void
-    {
-        throw new HttpResponseException(
-            response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to create prescriptions.',
-            ], 403)
-        );
-    }
-
-    /**
-     * Prepare the data for validation.
-     *
-     * @return void
-     */
-    protected function prepareForValidation(): void
-    {
-        // Set default facility ID if not provided
-        if (!$this->has('facility_id') && Auth::check()) {
-            $this->merge([
-                'facility_id' => Auth::user()->facility_id,
-            ]);
-        }
-
-        // Set default values for electronic prescriptions
-        if ($this->has('is_electronic_prescription') && $this->input('is_electronic_prescription')) {
-            if (!$this->has('erx_message_id')) {
-                $this->merge([
-                    'erx_message_id' => 'ERX-' . time() . '-' . rand(1000, 9999),
-                ]);
-            }
-        }
-
-        // Convert comma-separated diagnosis codes to array
-        if ($this->has('diagnosis_codes') && is_string($this->input('diagnosis_codes'))) {
-            $codes = array_map('trim', explode(',', $this->input('diagnosis_codes')));
-            $this->merge([
-                'diagnosis_codes' => array_filter($codes),
-            ]);
-        }
-
-        // Ensure refills_remaining is not greater than refills_allowed
-        if ($this->has('refills_allowed') && $this->has('refills_remaining')) {
-            $refillsAllowed = (int) $this->input('refills_allowed');
-            $refillsRemaining = (int) $this->input('refills_remaining');
-            
-            if ($refillsRemaining > $refillsAllowed) {
-                $this->merge([
-                    'refills_remaining' => $refillsAllowed,
-                ]);
-            }
-        }
-
-        // Set default status if not provided
-        if (!$this->has('status')) {
-            $this->merge([
-                'status' => 'active',
-            ]);
-        }
-
-        // Set default dispense status if not provided
-        if (!$this->has('dispense_status')) {
-            $this->merge([
-                'dispense_status' => 'pending',
-            ]);
-        }
     }
 }

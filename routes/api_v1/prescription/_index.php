@@ -1,68 +1,66 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
+declare(strict_types=1);
+
+use App\Http\Controllers\Api\Billing\PrescriptionBillingController;
+use App\Http\Controllers\Api\ClinicalTemplateController;
 use App\Http\Controllers\Api\PrescriptionController;
+use App\Http\Controllers\Api\PrescriptionItemController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| Prescription API Routes
+| API Routes - Version 1
 |--------------------------------------------------------------------------
-|
-| These routes are for managing prescriptions via RESTful API.
-|
 */
 
-Route::middleware(['auth:api','auth:suntum'])->group(function () {
+Route::middleware(['auth:sanctum'])->group(function () {
     
-    // Prescription Resource Routes
-    Route::apiResource('prescriptions', PrescriptionController::class)
-        ->except(['edit', 'create'])
-        ->parameters(['prescriptions' => 'prescription:prescription_uuid']);
-    
-    // Additional Prescription Endpoints
+    // ─── Prescription Routes ─────────────────────────────────────────────
     Route::prefix('prescriptions')->group(function () {
-        // Refill Management
-        Route::post('/{prescription:prescription_uuid}/refill', [PrescriptionController::class, 'refill'])
-            ->name('prescriptions.refill');
+        Route::get('/', [PrescriptionController::class, 'index']);
+        Route::get('/paginate', [PrescriptionController::class, 'paginate']);
+        Route::post('/', [PrescriptionController::class, 'store']);
+        Route::get('/patient/{patientId}', [PrescriptionController::class, 'patientPrescriptions']);
+        Route::post('/{id}/apply-template', [PrescriptionController::class, 'applyTemplate']);
+        Route::post('/{id}/cancel', [PrescriptionController::class, 'cancel']);
+        Route::post('/{id}/dispense', [PrescriptionController::class, 'markDispensed']);
+        Route::get('/{id}/billing', [PrescriptionController::class, 'getForBilling']);
+        Route::get('/{id}', [PrescriptionController::class, 'show']);
+        Route::put('/{id}', [PrescriptionController::class, 'update']);
+        Route::delete('/{id}', [PrescriptionController::class, 'destroy']);
         
-        Route::get('/{prescription:prescription_uuid}/refill-eligibility', [PrescriptionController::class, 'checkRefillEligibility'])
-            ->name('prescriptions.refill-eligibility');
-        
-        // Dispense Status Management
-        Route::patch('/{prescription:prescription_uuid}/dispense-status', [PrescriptionController::class, 'updateDispenseStatus'])
-            ->name('prescriptions.update-dispense-status');
-        
-        // Discontinue Prescription
-        Route::post('/{prescription:prescription_uuid}/discontinue', [PrescriptionController::class, 'discontinue'])
-            ->name('prescriptions.discontinue');
-        
-        // Transmit Prescription
-        Route::post('/{prescription:prescription_uuid}/transmit', [PrescriptionController::class, 'transmit'])
-            ->name('prescriptions.transmit');
-        
-        // Statistics
-        Route::get('/statistics', [PrescriptionController::class, 'statistics'])
-            ->name('prescriptions.statistics');
-        
-        // Prescriptions needing transmission
-        Route::get('/needs-transmission', [PrescriptionController::class, 'needsTransmission'])
-            ->name('prescriptions.needs-transmission');
-        
-        // Patient-specific prescriptions
-        Route::get('/patient/{patient}', [PrescriptionController::class, 'patientPrescriptions'])
-            ->name('prescriptions.patient');
-        
-        // Provider-specific prescriptions
-        Route::get('/provider/{provider}', [PrescriptionController::class, 'providerPrescriptions'])
-            ->name('prescriptions.provider');
+        // ─── Prescription Items Routes (nested) ───────────────────────────
+        Route::get('/{prescriptionId}/items', [PrescriptionItemController::class, 'index']);
+        Route::post('/{prescriptionId}/items', [PrescriptionItemController::class, 'store']);
+        Route::put('/{prescriptionId}/items/bulk', [PrescriptionItemController::class, 'bulkUpdate']);
     });
     
-    // Batch Operations
-    Route::prefix('batch/prescriptions')->group(function () {
-        Route::post('/transmit', [PrescriptionController::class, 'batchTransmit'])
-            ->name('prescriptions.batch.transmit');
-        
-        Route::post('/update-status', [PrescriptionController::class, 'batchUpdateStatus'])
-            ->name('prescriptions.batch.update-status');
+    // ─── Prescription Item Routes (standalone) ───────────────────────────
+    Route::prefix('prescription-items')->group(function () {
+        Route::put('/{id}', [PrescriptionItemController::class, 'update']);
+        Route::delete('/{id}', [PrescriptionItemController::class, 'destroy']);
     });
+    
+    // ─── Clinical Template Routes ────────────────────────────────────────
+    Route::prefix('clinical-templates')->group(function () {
+        Route::get('/', [ClinicalTemplateController::class, 'index']);
+        Route::get('/categories', [ClinicalTemplateController::class, 'categories']);
+        Route::get('/facility', [ClinicalTemplateController::class, 'facilityTemplates']);
+        Route::get('/category/{category}', [ClinicalTemplateController::class, 'byCategory']);
+        Route::get('/search', [ClinicalTemplateController::class, 'search']);
+        Route::post('/', [ClinicalTemplateController::class, 'store']);
+        Route::post('/{id}/toggle-status', [ClinicalTemplateController::class, 'toggleStatus']);
+        Route::get('/{id}', [ClinicalTemplateController::class, 'show']);
+        Route::put('/{id}', [ClinicalTemplateController::class, 'update']);
+        Route::delete('/{id}', [ClinicalTemplateController::class, 'destroy']);
+    });
+    
+    // ─── Prescription Billing Routes (For billing module import) ─────────
+    Route::prefix('billing/prescriptions')->group(function () {
+        Route::get('/patient/{patientId}', [PrescriptionBillingController::class, 'getForPatient']);
+        Route::post('/multiple', [PrescriptionBillingController::class, 'getMultiple']);
+        Route::get('/{prescriptionId}', [PrescriptionBillingController::class, 'getPrescription']);
+    });
+    
 });

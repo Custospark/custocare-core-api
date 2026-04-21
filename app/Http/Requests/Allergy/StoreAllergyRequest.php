@@ -21,6 +21,7 @@ class StoreAllergyRequest extends FormRequest
             'clinical_notes' => 'nullable|string',
             'diagnosed_at' => 'nullable|date',
             'visit_id' => 'nullable|exists:visits,id',
+            'patient_id' => 'nullable|exists:patients,id',
         ];
     }
 

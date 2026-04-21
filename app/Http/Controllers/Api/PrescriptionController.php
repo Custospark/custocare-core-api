@@ -1,708 +1,226 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Prescription\StorePrescriptionRequest;
 use App\Http\Requests\Prescription\UpdatePrescriptionRequest;
+use App\Http\Requests\Prescription\CancelPrescriptionRequest;
+use App\Http\Requests\PrescriptionItem\AddPrescriptionItemRequest;
 use App\Http\Resources\PrescriptionResource;
-use App\Services\Contracts\PrescriptionServiceInterface;
-use Illuminate\Http\JsonResponse;
+use App\Services\Prescription\PrescriptionService;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 
 class PrescriptionController extends Controller
 {
-    /**
-     * @var PrescriptionServiceInterface
-     */
-    protected $prescriptionService;
+    protected PrescriptionService $prescriptionService;
 
-    /**
-     * Constructor
-     *
-     * @param PrescriptionServiceInterface $prescriptionService
-     */
-    public function __construct(PrescriptionServiceInterface $prescriptionService)
+    public function __construct(PrescriptionService $prescriptionService)
     {
         $this->prescriptionService = $prescriptionService;
-        
-        // Apply middleware
-        // $this->middleware('auth:api');
-        // $this->middleware('permission:view prescriptions')->only(['index', 'show']);
-        // $this->middleware('permission:create prescriptions')->only(['store']);
-        // $this->middleware('permission:edit prescriptions')->only(['update']);
-        // $this->middleware('permission:delete prescriptions')->only(['destroy']);
     }
 
     /**
-     * Display a listing of prescriptions.
-     *
-     * @param Request $request
-     * @return JsonResponse
+     * Get all prescriptions with optional filters
      */
     public function index(Request $request): JsonResponse
     {
-        try {
-            $filters = $request->only([
-                'patient_id', 'provider_id', 'facility_id', 'status',
-                'dispense_status', 'is_high_risk', 'controlled_substance',
-                'date_from', 'date_to'
-            ]);
-            
-            $perPage = $request->input('per_page', 20);
-            
-            $prescriptions = $this->prescriptionService->getAllPrescriptions($filters, $perPage);
-            
-            return response()->json([
-                'success' => true,
-                'data' => PrescriptionResource::collection($prescriptions),
-                'meta' => [
-                    'current_page' => $prescriptions->currentPage(),
-                    'total_pages' => $prescriptions->lastPage(),
-                    'total_items' => $prescriptions->total(),
-                    'per_page' => $prescriptions->perPage(),
-                    'has_more_pages' => $prescriptions->hasMorePages(),
-                ],
-                'links' => [
-                    'first' => $prescriptions->url(1),
-                    'last' => $prescriptions->url($prescriptions->lastPage()),
-                    'prev' => $prescriptions->previousPageUrl(),
-                    'next' => $prescriptions->nextPageUrl(),
-                ],
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve prescriptions list', [
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to retrieve prescriptions. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        $filters = $request->only(['facility_id', 'patient_id', 'status', 'date_from', 'date_to']);
+        $prescriptions = $this->prescriptionService->getAllPrescriptions($filters);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescriptions retrieved successfully',
+            'data' => PrescriptionResource::collection($prescriptions),
+            'meta' => [
+                'total' => $prescriptions->count(),
+                'filters' => $filters
+            ]
+        ]);
     }
 
     /**
-     * Store a newly created prescription.
-     *
-     * @param StorePrescriptionRequest $request
-     * @return JsonResponse
+     * Get paginated prescriptions
+     */
+    public function paginate(Request $request): JsonResponse
+    {
+        $perPage = $request->get('per_page', 15);
+        $filters = $request->only(['facility_id', 'patient_id', 'status']);
+        $prescriptions = $this->prescriptionService->getPrescriptionsPaginated($perPage, $filters);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescriptions retrieved successfully',
+            'data' => PrescriptionResource::collection($prescriptions),
+            'meta' => [
+                'current_page' => $prescriptions->currentPage(),
+                'per_page' => $prescriptions->perPage(),
+                'total' => $prescriptions->total(),
+                'last_page' => $prescriptions->lastPage(),
+            ]
+        ]);
+    }
+
+    /**
+     * Get single prescription with details
+     */
+    public function show(int $id): JsonResponse
+    {
+        $prescription = $this->prescriptionService->getPrescription($id);
+        
+        if (!$prescription) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Prescription not found',
+                'data' => null
+            ], 404);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescription retrieved successfully',
+            'data' => new PrescriptionResource($prescription)
+        ]);
+    }
+
+    /**
+     * Get patient's prescriptions
+     */
+    public function patientPrescriptions(int $patientId, Request $request): JsonResponse
+    {
+        $statuses = $request->get('statuses', []);
+        $prescriptions = $this->prescriptionService->getPatientPrescriptions($patientId, $statuses);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Patient prescriptions retrieved successfully',
+            'data' => PrescriptionResource::collection($prescriptions),
+            'meta' => [
+                'patient_id' => $patientId,
+                'total' => $prescriptions->count()
+            ]
+        ]);
+    }
+
+    /**
+     * Create new prescription
      */
     public function store(StorePrescriptionRequest $request): JsonResponse
     {
-        try {
-            $validatedData = $request->validated();
-            
-            $prescription = $this->prescriptionService->createPrescription($validatedData);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Prescription created successfully.',
-                'data' => new PrescriptionResource($prescription->load([
-                    'patient', 'prescribingProvider', 'inventoryItem', 'visit', 'facility'
-                ])),
-            ], Response::HTTP_CREATED);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\RuntimeException $e) {
-            Log::error('Failed to create prescription', [
-                'user_id' => auth::id()(),
-                'data' => $this->sanitizeRequestData($request->all()),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-            
-        } catch (\Exception $e) {
-            Log::error('Unexpected error creating prescription', [
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'An unexpected error occurred. Please try again.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Display the specified prescription.
-     *
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function show(string $uuid): JsonResponse
-    {
-        try {
-            $prescription = $this->prescriptionService->getPrescriptionByUuid($uuid);
-            
-            return response()->json([
-                'success' => true,
-                'data' => new PrescriptionResource($prescription->load([
-                    'patient', 'prescribingProvider', 'inventoryItem', 'visit', 
-                    'facility', 'createdBy', 'discontinuedBy'
-                ])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve prescription', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to retrieve prescription. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Update the specified prescription.
-     *
-     * @param UpdatePrescriptionRequest $request
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function update(UpdatePrescriptionRequest $request, string $uuid): JsonResponse
-    {
-        try {
-            $validatedData = $request->validated();
-            
-            $prescription = $this->prescriptionService->updatePrescription($uuid, $validatedData);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Prescription updated successfully.',
-                'data' => new PrescriptionResource($prescription->load([
-                    'patient', 'prescribingProvider', 'inventoryItem'
-                ])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to update prescription', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to update prescription. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Remove the specified prescription (soft delete).
-     *
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function destroy(string $uuid): JsonResponse
-    {
-        try {
-            $deleted = $this->prescriptionService->deletePrescription($uuid);
-            
-            if ($deleted) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Prescription deleted successfully.',
-                ]);
-            } else {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unable to delete prescription. It may have been transmitted or dispensed.',
-                ], Response::HTTP_BAD_REQUEST);
-            }
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to delete prescription', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to delete prescription. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Process prescription refill
-     *
-     * @param Request $request
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function refill(Request $request, string $uuid): JsonResponse
-    {
-        try {
-            $this->authorize('refill', \App\Models\Prescription::class);
-            
-            $validated = $request->validate([
-                'pharmacy_ncpdp_id' => 'nullable|string|max:20',
-                'refill_number' => 'nullable|integer|min:1',
-                'notes' => 'nullable|string|max:500',
-            ]);
-            
-            $prescription = $this->prescriptionService->processRefill($uuid, $validated);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Prescription refill processed successfully.',
-                'data' => new PrescriptionResource($prescription->load(['patient', 'prescribingProvider'])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to process prescription refill', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to process refill. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Update dispense status
-     *
-     * @param Request $request
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function updateDispenseStatus(Request $request, string $uuid): JsonResponse
-    {
-        try {
-            $this->authorize('updateDispenseStatus', \App\Models\Prescription::class);
-            
-            $validated = $request->validate([
-                'status' => 'required|in:pending,transmitted,received_by_pharmacy,in_progress,ready_for_pickup,dispensed,not_picked_up,cancelled,discontinued',
-                'metadata' => 'nullable|array',
-                'notes' => 'nullable|string|max:500',
-            ]);
-            
-            $prescription = $this->prescriptionService->updateDispenseStatus(
-                $uuid, 
-                $validated['status'], 
-                $validated['metadata'] ?? []
-            );
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Dispense status updated successfully.',
-                'data' => new PrescriptionResource($prescription->load(['patient', 'prescribingProvider'])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to update dispense status', [
-                'uuid' => $uuid,
-                'status' => $request->input('status'),
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to update dispense status. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Discontinue prescription
-     *
-     * @param Request $request
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function discontinue(Request $request, string $uuid): JsonResponse
-    {
-        try {
-            $this->authorize('discontinue', \App\Models\Prescription::class);
-            
-            $validated = $request->validate([
-                'reason' => 'required|string|min:5|max:500',
-                'discontinued_by_staff_id' => 'nullable|exists:staff,id',
-            ]);
-            
-            $prescription = $this->prescriptionService->discontinuePrescription(
-                $uuid,
-                $validated['reason'],
-                $validated['discontinued_by_staff_id'] ?? null
-            );
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Prescription discontinued successfully.',
-                'data' => new PrescriptionResource($prescription->load(['patient', 'prescribingProvider', 'discontinuedBy'])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to discontinue prescription', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to discontinue prescription. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Check refill eligibility
-     *
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function checkRefillEligibility(string $uuid): JsonResponse
-    {
-        try {
-            $this->authorize('refill', \App\Models\Prescription::class);
-            
-            $eligibility = $this->prescriptionService->checkRefillEligibility($uuid);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $eligibility,
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to check refill eligibility', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to check refill eligibility. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Transmit prescription to pharmacy
-     *
-     * @param Request $request
-     * @param string $uuid
-     * @return JsonResponse
-     */
-    public function transmit(Request $request, string $uuid): JsonResponse
-    {
-        try {
-            $this->authorize('transmit', \App\Models\Prescription::class);
-            
-            $validated = $request->validate([
-                'pharmacy_ncpdp_id' => 'required_without:transmit_to_pharmacy|string|max:20',
-                'transmit_to_pharmacy' => 'required_without:pharmacy_ncpdp_id|string|max:300',
-                'notes' => 'nullable|string|max:500',
-            ]);
-            
-            $prescription = $this->prescriptionService->transmitPrescription($uuid, $validated);
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Prescription transmitted successfully.',
-                'data' => new PrescriptionResource($prescription->load(['patient', 'prescribingProvider'])),
-            ]);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Prescription not found.',
-            ], Response::HTTP_NOT_FOUND);
-            
-        } catch (\InvalidArgumentException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_BAD_REQUEST);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to transmit prescription', [
-                'uuid' => $uuid,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to transmit prescription. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Get prescription statistics
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
-    public function statistics(Request $request): JsonResponse
-    {
-        try {
-            $this->authorize('viewStatistics', \App\Models\Prescription::class);
-            
-            $facilityId = $request->input('facility_id', auth::user()()->facility_id);
-            $dateRange = $request->only(['start_date', 'end_date']);
-            
-            $statistics = $this->prescriptionService->getPrescriptionStatistics($facilityId, $dateRange);
-            
-            return response()->json([
-                'success' => true,
-                'data' => $statistics,
-            ]);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to get prescription statistics', [
-                'facility_id' => $facilityId ?? 'not_provided',
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to retrieve prescription statistics. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Get prescriptions needing transmission
-     *
-     * @param Request $request
-     * @return JsonResponse
-     */
-    public function needsTransmission(Request $request): JsonResponse
-    {
-        try {
-            $this->authorize('viewTransmissions', \App\Models\Prescription::class);
-            
-            $facilityId = $request->input('facility_id', auth::user()()->facility_id);
-            $limit = $request->input('limit', 50);
-            
-            $prescriptions = $this->prescriptionService->getPrescriptionsNeedingTransmission($facilityId, $limit);
-            
-            return response()->json([
-                'success' => true,
-                'data' => PrescriptionResource::collection($prescriptions),
-                'meta' => [
-                    'count' => $prescriptions->count(),
-                    'facility_id' => $facilityId,
-                ],
-            ]);
-            
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], Response::HTTP_FORBIDDEN);
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to get prescriptions needing transmission', [
-                'facility_id' => $facilityId,
-                'user_id' => auth::id()(),
-                'error' => $e->getMessage()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Unable to retrieve prescriptions for transmission. Please try again later.',
-                'error' => config('app.debug') ? $e->getMessage() : null
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    /**
-     * Sanitize request data for logging
-     *
-     * @param array $data
-     * @return array
-     */
-    private function sanitizeRequestData(array $data): array
-    {
-        $sensitiveFields = [
-            'prescriber_dea_number',
-            'prescriber_dea_number_encrypted',
-            'drug_allergy_check_results',
-            'drug_interaction_check_results',
-            'clinical_indication',
-            'status_reason',
-            'special_instructions',
-        ];
+        $userId = Auth::id();
         
-        foreach ($sensitiveFields as $field) {
-            if (isset($data[$field])) {
-                $data[$field] = '[REDACTED]';
-            }
-        }
+        $result = $this->prescriptionService->createPrescription(
+            $request->except(['items']),
+            $request->input('items', []),
+            $userId
+        );
         
-        return $data;
+        $statusCode = $result['success'] ? 201 : 400;
+        
+        return response()->json($result, $statusCode);
+    }
+
+
+   
+    
+    /**
+     * Update prescription
+     */
+    public function update(UpdatePrescriptionRequest $request, int $id): JsonResponse
+    {
+        $userId = Auth::id();
+        
+        $result = $this->prescriptionService->updatePrescription(
+            $id,
+            $request->except(['items']),
+            $request->input('items'),
+            $userId
+        );
+        
+        $statusCode = $result['success'] ? 200 : ($result['data'] === null ? 404 : 400);
+        
+        return response()->json($result, $statusCode);
+    }
+
+    /**
+     * Delete prescription
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $result = $this->prescriptionService->deletePrescription($id);
+        
+        $statusCode = $result['success'] ? 200 : 404;
+        
+        return response()->json($result, $statusCode);
+    }
+
+    /**
+     * Cancel prescription
+     */
+    public function cancel(CancelPrescriptionRequest $request, int $id): JsonResponse
+    {
+        $userId = Auth::id();
+        
+        $result = $this->prescriptionService->cancelPrescription(
+            $id,
+            $request->input('cancellation_reason'),
+            $userId,
+            $request->input('cancellation_notes')
+        );
+        
+        $statusCode = $result['success'] ? 200 : 404;
+        
+        return response()->json($result, $statusCode);
+    }
+
+    /**
+     * Mark prescription as dispensed
+     */
+    public function markDispensed(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'pharmacy_name' => ['nullable', 'string', 'max:255'],
+            'dispensed_by_name' => ['nullable', 'string', 'max:255'],
+        ]);
+        
+        $result = $this->prescriptionService->markAsDispensed($id, $request->only(['pharmacy_name', 'dispensed_by_name']));
+        
+        $statusCode = $result['success'] ? 200 : 404;
+        
+        return response()->json($result, $statusCode);
+    }
+
+    /**
+     * Apply template to prescription
+     */
+    public function applyTemplate(Request $request, int $id): JsonResponse
+    {
+        $request->validate([
+            'template_id' => ['required', 'exists:clinical_templates,id']
+        ]);
+        
+        $userId = Auth::id();
+        
+        $result = $this->prescriptionService->applyTemplate($id, $request->input('template_id'), $userId);
+        
+        $statusCode = $result['success'] ? 200 : 400;
+        
+        return response()->json($result, $statusCode);
+    }
+
+    /**
+     * Get prescription for billing import
+     */
+    public function getForBilling(int $id): JsonResponse
+    {
+        $result = $this->prescriptionService->getPrescriptionForBilling($id);
+        
+        $statusCode = $result['success'] ? 200 : 404;
+        
+        return response()->json($result, $statusCode);
     }
 }

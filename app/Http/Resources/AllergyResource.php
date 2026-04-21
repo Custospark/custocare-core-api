@@ -36,6 +36,9 @@ class AllergyResource extends JsonResource
                 return [
                     'id' => $this->visit->id,
                     'visit_date' => $this->visit->visit_date_time?->toISOString(),
+                    'facility_name' => $this->visit->facility?->facility_name, // Add facility name
+                    'facility_main_phone' => $this->visit->facility?->main_phone, // Add facility name
+                    'facility_id' => $this->visit->facility_id, // Optional: include facility ID
                 ];
             }),
         ];

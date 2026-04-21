@@ -1,300 +1,274 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Casts\Attribute;
-use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * Prescription Model
+ * 
+ * @property int $id
+ * @property int $facility_id
+ * @property int $patient_id
+ * @property int|null $visit_id
+ * @property int|null $clinical_template_id
+ * @property string $prescription_number
+ * @property string $prescription_date
+ * @property string|null $valid_until
+ * @property string $status
+ * @property string $prescription_type
+ * @property string $priority
+ * @property string|null $diagnosis
+ * @property string|null $clinical_notes
+ * @property string|null $special_instructions
+ * @property string|null $allergy_check
+ * @property string|null $allergy_notes
+ * @property int $prescribed_by
+ * @property string $prescriber_type
+ * @property string|null $prescriber_license
+ * @property string|null $prescriber_contact
+ * @property string $prescription_format
+ * @property string|null $dispensed_at
+ * @property string|null $dispensed_by_name
+ * @property string|null $dispensed_pharmacy
+ * @property string $dispensing_location
+ * @property string|null $cancelled_at
+ * @property int|null $cancelled_by
+ * @property string|null $cancellation_reason
+ * @property string|null $cancellation_notes
+ * @property string|null $patient_education_notes
+ * @property string|null $follow_up_instructions
+ * @property string|null $follow_up_date
+ * @property int|null $created_by
+ * @property int|null $updated_by
+ * @property \Carbon\Carbon $created_at
+ * @property \Carbon\Carbon $updated_at
+ * @property \Carbon\Carbon|null $deleted_at
+ */
 class Prescription extends Model
 {
-    use HasFactory, SoftDeletes;
+    use SoftDeletes;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
+    protected $table = 'prescriptions';
+
     protected $fillable = [
-        'prescription_uuid',
         'facility_id',
-        'visit_id',
         'patient_id',
-        'prescribing_provider_staff_id',
-        'prescriber_npi',
-        'prescriber_dea_number_encrypted',
-        'inventory_item_id',
-        'medication_name',
-        'generic_name',
-        'ndc_code',
-        'controlled_substance_schedule',
-        'dosage_strength',
-        'dosage_form',
-        'route',
-        'sig_instructions',
-        'pharmacist_notes',
-        'quantity_prescribed',
-        'quantity_unit',
-        'refills_allowed',
-        'refills_remaining',
-        'days_supply',
-        'diagnosis_codes',
-        'clinical_indication',
-        'drug_allergy_check_results',
-        'drug_interaction_check_results',
-        'prescribed_at',
-        'valid_from',
-        'valid_to',
-        'do_not_fill_before',
-        'requires_prior_authorization',
-        'prior_authorization_number',
-        'prior_auth_status',
-        'is_electronic_prescription',
-        'erx_message_id',
-        'transmitted_at',
-        'transmit_to_pharmacy',
-        'pharmacy_ncpdp_id',
-        'dispense_status',
-        'is_high_risk_medication',
-        'safety_monitoring_required',
-        'special_instructions',
+        'visit_id',
+        'clinical_template_id',
+        'prescription_number',
+        'prescription_date',
+        'valid_until',
         'status',
-        'status_reason',
-        'discontinued_at',
-        'discontinued_by_staff_id',
-        'created_by_staff_id',
-        'metadata',
+        'prescription_type',
+        'priority',
+        'diagnosis',
+        'clinical_notes',
+        'special_instructions',
+        'allergy_check',
+        'allergy_notes',
+        'prescribed_by',
+        'prescriber_type',
+        'prescriber_license',
+        'prescriber_contact',
+        'prescription_format',
+        'dispensed_at',
+        'dispensed_by_name',
+        'dispensed_pharmacy',
+        'dispensing_location',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
+        'cancellation_notes',
+        'patient_education_notes',
+        'follow_up_instructions',
+        'follow_up_date',
+        'created_by',
+        'updated_by',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
-        'prescribed_at' => 'datetime',
-        'valid_from' => 'date',
-        'valid_to' => 'date',
-        'do_not_fill_before' => 'date',
-        'transmitted_at' => 'datetime',
-        'discontinued_at' => 'datetime',
-        'requires_prior_authorization' => 'boolean',
-        'is_electronic_prescription' => 'boolean',
-        'is_high_risk_medication' => 'boolean',
-        'quantity_prescribed' => 'decimal:2',
-        'refills_allowed' => 'integer',
-        'refills_remaining' => 'integer',
-        'days_supply' => 'integer',
-        'diagnosis_codes' => 'array',
-        'drug_allergy_check_results' => 'array',
-        'drug_interaction_check_results' => 'array',
-        'safety_monitoring_required' => 'array',
-        'metadata' => 'array',
+        'prescription_date' => 'date',
+        'valid_until' => 'date',
+        'dispensed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'follow_up_date' => 'date',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var array<int, string>
-     */
-    protected $hidden = [
-        'prescriber_dea_number_encrypted',
-        'deleted_at',
-    ];
+    // ─── Relationships ────────────────────────────────────────────────
 
-    /**
-     * Get the route key for the model.
-     *
-     * @return string
-     */
-    public function getRouteKeyName(): string
-    {
-        return 'prescription_uuid';
-    }
-
-    /**
-     * Boot the model.
-     */
-    protected static function boot(): void
-    {
-        parent::boot();
-
-        static::creating(function ($prescription) {
-            if (empty($prescription->prescription_uuid)) {
-                $prescription->prescription_uuid = (string) \Illuminate\Support\Str::uuid();
-            }
-            
-            if (empty($prescription->prescribed_at)) {
-                $prescription->prescribed_at = now();
-            }
-            
-            if (empty($prescription->created_by_staff_id) && auth::check()) {
-                $prescription->created_by_staff_id = auth::id();
-            }
-        });
-    }
-
-    /**
-     * Relationship with Patient
-     *
-     * @return BelongsTo
-     */
-    public function patient(): BelongsTo
-    {
-        return $this->belongsTo(Patient::class);
-    }
-
-    /**
-     * Relationship with Visit
-     *
-     * @return BelongsTo
-     */
-    public function visit(): BelongsTo
-    {
-        return $this->belongsTo(Visit::class);
-    }
-
-    /**
-     * Relationship with prescribing provider (Staff)
-     *
-     * @return BelongsTo
-     */
-    public function prescribingProvider(): BelongsTo
-    {
-        return $this->belongsTo(Staff::class, 'prescribing_provider_staff_id');
-    }
-
-    /**
-     * Relationship with staff who discontinued the prescription
-     *
-     * @return BelongsTo
-     */
-    public function discontinuedBy(): BelongsTo
-    {
-        return $this->belongsTo(Staff::class, 'discontinued_by_staff_id');
-    }
-
-    /**
-     * Relationship with inventory item
-     *
-     * @return BelongsTo
-     */
-    public function inventoryItem(): BelongsTo
-    {
-        return $this->belongsTo(InventoryItem::class);
-    }
-
-    /**
-     * Relationship with creator staff
-     *
-     * @return BelongsTo
-     */
-    public function createdBy(): BelongsTo
-    {
-        return $this->belongsTo(Staff::class, 'created_by_staff_id');
-    }
-
-    /**
-     * Relationship with Facility
-     *
-     * @return BelongsTo
-     */
     public function facility(): BelongsTo
     {
-        return $this->belongsTo(Facility::class);
+        return $this->belongsTo(Facility::class, 'facility_id');
     }
 
-    /**
-     * Accessor for decrypted DEA number (with proper authorization checks in service layer)
-     *
-     * @return Attribute
-     */
-    protected function prescriberDeaNumber(): Attribute
+    public function patient(): BelongsTo
     {
-        return Attribute::make(
-            get: fn ($value, $attributes) => !empty($attributes['prescriber_dea_number_encrypted']) 
-                ? Crypt::decryptString($attributes['prescriber_dea_number_encrypted']) 
-                : null,
-            set: fn ($value) => [
-                'prescriber_dea_number_encrypted' => !empty($value) ? Crypt::encryptString($value) : null,
-            ],
-        );
+        return $this->belongsTo(Patient::class, 'patient_id');
     }
 
-    /**
-     * Check if prescription is active
-     *
-     * @return bool
-     */
+    public function visit(): BelongsTo
+    {
+        return $this->belongsTo(Visit::class, 'visit_id');
+    }
+
+    public function clinicalTemplate(): BelongsTo
+    {
+        return $this->belongsTo(ClinicalTemplate::class, 'clinical_template_id');
+    }
+
+    public function prescribedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'prescribed_by');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(PrescriptionItem::class, 'prescription_id');
+    }
+
+    // ─── Accessors ────────────────────────────────────────────────────
+
+    public function getTotalItemsCountAttribute(): int
+    {
+        return $this->items()->count();
+    }
+
+    public function getTotalQuantityAttribute(): float
+    {
+        return $this->items()->sum('total_quantity');
+    }
+
     public function isActive(): bool
     {
-        return $this->status === 'active' && 
-               $this->valid_from <= now() && 
-               $this->valid_to >= now();
+        return $this->status === 'Active - Ready for Dispensing';
     }
 
-    /**
-     * Check if prescription is refillable
-     *
-     * @return bool
-     */
-    public function isRefillable(): bool
+    public function isExpired(): bool
     {
-        return $this->refills_remaining > 0 && 
-               $this->isActive() && 
-               $this->status !== 'discontinued' &&
-               $this->status !== 'cancelled';
+        if (!$this->valid_until) {
+            return false;
+        }
+        
+        return now()->gt($this->valid_until);
     }
 
-    /**
-     * Check if prescription is a controlled substance
-     *
-     * @return bool
-     */
-    public function isControlledSubstance(): bool
+    public function canBeDispensed(): bool
     {
-        return in_array($this->controlled_substance_schedule, ['I', 'II', 'III', 'IV', 'V']);
+        return $this->isActive() && !$this->isExpired();
     }
 
-    /**
-     * Scope for active prescriptions
-     *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
+    // ─── Helper Methods ───────────────────────────────────────────────
+
+    public function getBillingItems(): array
+    {
+        return $this->items->map(function ($item) {
+            return [
+                'prescription_item_id' => $item->id,
+                'medication_name' => $item->medication_name,
+                'brand_name' => $item->brand_name,
+                'strength' => $item->strength,
+                'dosage_form' => $item->dosage_form,
+                'total_quantity' => $item->total_quantity,
+                'dosage_quantity' => $item->dosage_quantity,
+                'dosage_unit' => $item->dosage_unit,
+                'frequency' => $item->frequency,
+                'duration' => "{$item->duration_value} {$item->duration_unit}",
+                'instructions' => $item->instructions,
+                'route' => $item->route,
+            ];
+        })->toArray();
+    }
+
+    public function applyTemplate(ClinicalTemplate $template, int $userId): void
+    {
+        $this->diagnosis = $template->default_diagnosis;
+        $this->clinical_notes = $template->default_notes;
+        $this->patient_education_notes = $template->patient_instructions;
+        $this->clinical_template_id = $template->id;
+        $this->updated_by = $userId;
+        
+        $template->incrementUsage();
+    }
+
+    public function markAsDispensed(?string $pharmacyName = null, ?string $dispensedByName = null): void
+    {
+        $this->status = 'Fully Dispensed';
+        $this->dispensed_at = now();
+        $this->dispensed_pharmacy = $pharmacyName;
+        $this->dispensed_by_name = $dispensedByName;
+        $this->dispensing_location = $pharmacyName ? 'Dispensed at External Pharmacy' : 'Dispensed at Our Facility';
+        $this->save();
+    }
+
+    public function cancel(string $reason, int $cancelledByUserId, ?string $notes = null): void
+    {
+        $this->status = 'Cancelled - No Longer Valid';
+        $this->cancelled_at = now();
+        $this->cancelled_by = $cancelledByUserId;
+        $this->cancellation_reason = $reason;
+        $this->cancellation_notes = $notes;
+        $this->save();
+    }
+
+    // ─── Scopes ───────────────────────────────────────────────────────
+
     public function scopeActive($query)
     {
-        return $query->where('status', 'active')
-                    ->where('valid_from', '<=', now())
-                    ->where('valid_to', '>=', now());
+        return $query->where('status', 'Active - Ready for Dispensing');
     }
 
-    /**
-     * Scope for prescriptions needing transmission
-     *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeNeedsTransmission($query)
+    public function scopeByPatient($query, int $patientId)
     {
-        return $query->where('is_electronic_prescription', true)
-                    ->whereNull('transmitted_at')
-                    ->where('status', 'active')
-                    ->where('dispense_status', 'pending');
+        return $query->where('patient_id', $patientId);
     }
 
-    /**
-     * Scope for high-risk medications
-     *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeHighRisk($query)
+    public function scopeByFacility($query, int $facilityId)
     {
-        return $query->where('is_high_risk_medication', true);
+        return $query->where('facility_id', $facilityId);
+    }
+
+    public function scopeByDateRange($query, string $startDate, string $endDate)
+    {
+        return $query->whereBetween('prescription_date', [$startDate, $endDate]);
+    }
+
+    public function scopeReadyForBilling($query)
+    {
+        return $query->whereIn('status', ['Active - Ready for Dispensing', 'Partially Dispensed'])
+                     ->where(function ($q) {
+                         $q->whereNull('valid_until')
+                           ->orWhere('valid_until', '>=', now());
+                     });
+    }
+
+    public function scopeExpired($query)
+    {
+        return $query->whereNotNull('valid_until')
+                     ->where('valid_until', '<', now())
+                     ->where('status', '!=', 'Expired - Past Valid Date');
     }
 }

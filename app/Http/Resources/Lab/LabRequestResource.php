@@ -105,12 +105,12 @@ class LabRequestResource extends JsonResource
             'all_items_completed' => $this->areAllItemsCompleted(),
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-requests.show', $this->request_uuid),
-                'items' => route('api.lab-requests.items.index', $this->request_uuid),
-                'patient' => route('api.patients.show', $this->patient_id),
-                'visit' => route('api.visits.show', $this->visit_id),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-requests.show', $this->request_uuid),
+            //     'items' => route('api.lab-requests.items.index', $this->request_uuid),
+            //     'patient' => route('api.patients.show', $this->patient_id),
+            //     'visit' => route('api.visits.show', $this->visit_id),
+            // ],
         ];
     }
 }

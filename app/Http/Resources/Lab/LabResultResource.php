@@ -76,11 +76,11 @@ class LabResultResource extends JsonResource
             'is_within_reference_range' => $this->isValueInReferenceRange($this->value),
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-results.show', $this->result_uuid),
-                'item' => route('api.lab-request-items.show', $this->labRequestItem->item_uuid ?? ''),
-                'field' => route('api.lab-template-fields.show', $this->templateField->field_uuid ?? ''),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-results.show', $this->result_uuid),
+            //     'item' => route('api.lab-request-items.show', $this->labRequestItem->item_uuid ?? ''),
+            //     'field' => route('api.lab-template-fields.show', $this->templateField->field_uuid ?? ''),
+            // ],
         ];
     }
 }

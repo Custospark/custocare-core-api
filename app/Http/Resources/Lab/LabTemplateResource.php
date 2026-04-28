@@ -52,11 +52,11 @@ class LabTemplateResource extends JsonResource
             'structure_type_label' => ucfirst($this->structure_type),
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-templates.show', $this->template_uuid),
-                'tests' => route('api.lab-templates.tests.index', $this->template_uuid),
-                'fields' => route('api.lab-templates.fields.index', $this->template_uuid),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-templates.show', $this->template_uuid),
+            //     'tests' => route('api.lab-templates.tests.index', $this->template_uuid),
+            //     'fields' => route('api.lab-templates.fields.index', $this->template_uuid),
+            // ],
         ];
     }
 }

@@ -9,3 +9,4 @@ Route::get('/', function () {
 Route::get('/login', function () {
     return "Not Authenticated";
 })->name('login');
+

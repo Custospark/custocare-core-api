@@ -48,10 +48,10 @@ class LabTemplateFieldResource extends JsonResource
             'has_reference_range' => $this->reference_min !== null || $this->reference_max !== null,
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-template-fields.show', $this->field_uuid),
-                'template' => route('api.lab-templates.show', $this->template->template_uuid ?? ''),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-template-fields.show', $this->field_uuid),
+            //     'template' => route('api.lab-templates.show', $this->template->template_uuid ?? ''),
+            // ],
         ];
     }
 }

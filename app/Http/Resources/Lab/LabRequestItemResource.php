@@ -79,12 +79,12 @@ class LabRequestItemResource extends JsonResource
             'all_results_verified' => $this->areAllResultsVerified(),
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-request-items.show', $this->item_uuid),
-                'request' => route('api.lab-requests.show', $this->labRequest->request_uuid ?? ''),
-                'test' => route('api.lab-tests.show', $this->labTest->test_uuid ?? ''),
-                'results' => route('api.lab-request-items.results.index', $this->item_uuid),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-request-items.show', $this->item_uuid),
+            //     'request' => route('api.lab-requests.show', $this->labRequest->request_uuid ?? ''),
+            //     'test' => route('api.lab-tests.show', $this->labTest->test_uuid ?? ''),
+            //     'results' => route('api.lab-request-items.results.index', $this->item_uuid),
+            // ],
         ];
     }
 }

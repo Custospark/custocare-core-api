@@ -52,10 +52,10 @@ class LabTestResource extends JsonResource
             'fasting_instruction' => $this->requires_fasting ? 'Fasting required for this test' : 'No fasting required',
             
             // URLs
-            'urls' => [
-                'self' => route('api.lab-tests.show', $this->test_uuid),
-                'template' => route('api.lab-templates.show', $this->template->template_uuid ?? ''),
-            ],
+            // 'urls' => [
+            //     'self' => route('api.lab-tests.show', $this->test_uuid),
+            //     'template' => route('api.lab-templates.show', $this->template->template_uuid ?? ''),
+            // ],
         ];
     }
 }

@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Builder;
+
 
 class LabTest extends Model
 {
@@ -158,7 +160,8 @@ class LabTest extends Model
     /**
      * Scope a query to only include tests that require fasting.
      */
-    public function scopeRequiresFasting($query)
+
+    public function requiresFastingFlag(Builder $query): Builder
     {
         return $query->where('requires_fasting', true);
     }
@@ -212,6 +215,7 @@ class LabTest extends Model
         $this->is_active = false;
         return $this->save();
     }
+
 
     /**
      * Get formatted turnaround time.

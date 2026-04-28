@@ -1,0 +1,353 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories\Lab;
+
+use App\Models\LabRequestItem;
+use App\Repositories\Lab\Contracts\LabRequestItemRepositoryInterface;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+
+class LabRequestItemRepository implements LabRequestItemRepositoryInterface
+{
+    /**
+     * @var LabRequestItem
+     */
+    protected LabRequestItem $model;
+
+    /**
+     * Constructor.
+     *
+     * @param LabRequestItem $model
+     */
+    public function __construct(LabRequestItem $model)
+    {
+        $this->model = $model;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function findById(int $id): ?LabRequestItem
+    {
+        return $this->model->find($id);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function findByUuid(string $uuid): ?LabRequestItem
+    {
+        return $this->model->where('item_uuid', $uuid)->first();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function findBySampleIdentifier(string $sampleIdentifier): ?LabRequestItem
+    {
+        return $this->model->where('sample_identifier', $sampleIdentifier)->first();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getAllPaginated(array $filters = [], int $perPage = 20): LengthAwarePaginator
+    {
+        $query = $this->model->query();
+
+        if (!empty($filters['lab_request_id'])) {
+            $query->where('lab_request_id', $filters['lab_request_id']);
+        }
+
+        if (!empty($filters['lab_test_id'])) {
+            $query->where('lab_test_id', $filters['lab_test_id']);
+        }
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['result_flag'])) {
+            $query->withResultFlag($filters['result_flag']);
+        }
+
+        if (isset($filters['has_abnormal_results']) && $filters['has_abnormal_results']) {
+            $query->abnormalOrCritical();
+        }
+
+        if (!empty($filters['date_from'])) {
+            $query->whereDate('created_at', '>=', $filters['date_from']);
+        }
+
+        if (!empty($filters['date_to'])) {
+            $query->whereDate('created_at', '<=', $filters['date_to']);
+        }
+
+        $orderBy = $filters['order_by'] ?? 'created_at';
+        $orderDirection = $filters['order_direction'] ?? 'desc';
+        $query->orderBy($orderBy, $orderDirection);
+
+        return $query->paginate($perPage);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getByLabRequest(int $labRequestId, array $filters = []): Collection
+    {
+        $query = $this->model->where('lab_request_id', $labRequestId);
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getByLabTest(int $labTestId, array $filters = []): Collection
+    {
+        $query = $this->model->where('lab_test_id', $labTestId);
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getByStatus(string $status, ?int $labRequestId = null): Collection
+    {
+        $query = $this->model->where('status', $status);
+        
+        if ($labRequestId) {
+            $query->where('lab_request_id', $labRequestId);
+        }
+        
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getPendingItems(?int $facilityId = null): Collection
+    {
+        $query = $this->model->pending();
+        
+        if ($facilityId) {
+            $query->whereHas('labRequest', function ($q) use ($facilityId) {
+                $q->byFacility($facilityId);
+            });
+        }
+        
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getAbnormalOrCriticalItems(?int $facilityId = null): Collection
+    {
+        $query = $this->model->abnormalOrCritical();
+        
+        if ($facilityId) {
+            $query->whereHas('labRequest', function ($q) use ($facilityId) {
+                $q->byFacility($facilityId);
+            });
+        }
+        
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getItemsAwaitingVerification(?int $facilityId = null): Collection
+    {
+        $query = $this->model->completed()->whereNull('verified_at');
+        
+        if ($facilityId) {
+            $query->whereHas('labRequest', function ($q) use ($facilityId) {
+                $q->byFacility($facilityId);
+            });
+        }
+        
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function create(array $data): LabRequestItem
+    {
+        return DB::transaction(function () use ($data) {
+            return $this->model->create($data);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function bulkCreate(int $labRequestId, array $items): Collection
+    {
+        return DB::transaction(function () use ($labRequestId, $items) {
+            $createdItems = [];
+            
+            foreach ($items as $itemData) {
+                $itemData['lab_request_id'] = $labRequestId;
+                $createdItems[] = $this->model->create($itemData);
+            }
+            
+            return new Collection($createdItems);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function update(LabRequestItem $item, array $data): bool
+    {
+        return DB::transaction(function () use ($item, $data) {
+            return $item->update($data);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function delete(LabRequestItem $item): bool
+    {
+        return DB::transaction(function () use ($item) {
+            return $item->delete();
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function restore(int $id): bool
+    {
+        return DB::transaction(function () use ($id) {
+            return $this->model->withTrashed()->find($id)?->restore() ?? false;
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function updateStatus(LabRequestItem $item, string $status): bool
+    {
+        return DB::transaction(function () use ($item, $status) {
+            $item->status = $status;
+            return $item->save();
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function markSampleCollected(LabRequestItem $item, int $collectedByStaffId, ?string $sampleIdentifier = null): bool
+    {
+        return DB::transaction(function () use ($item, $collectedByStaffId, $sampleIdentifier) {
+            return $item->markSampleCollected($collectedByStaffId, $sampleIdentifier);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function markVerified(LabRequestItem $item, int $verifiedByStaffId): bool
+    {
+        return DB::transaction(function () use ($item, $verifiedByStaffId) {
+            return $item->markVerified($verifiedByStaffId);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function cancel(LabRequestItem $item, string $reason, ?int $cancelledByStaffId = null): bool
+    {
+        return DB::transaction(function () use ($item, $reason, $cancelledByStaffId) {
+            return $item->cancel($reason, $cancelledByStaffId);
+        });
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getWithResults(int $id): ?LabRequestItem
+    {
+        return $this->model->with('results')->find($id);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getWithFullDetails(int $id): ?LabRequestItem
+    {
+        return $this->model->with([
+            'labRequest',
+            'labTest',
+            'results.templateField',
+            'collectedBy',
+            'verifiedBy'
+        ])->find($id);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getByDateRange(string $startDate, string $endDate, ?int $facilityId = null): Collection
+    {
+        $query = $this->model->whereBetween('created_at', [$startDate, $endDate]);
+        
+        if ($facilityId) {
+            $query->whereHas('labRequest', function ($q) use ($facilityId) {
+                $q->byFacility($facilityId);
+            });
+        }
+        
+        return $query->get();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getTurnaroundTimeStatistics(int $labTestId, string $startDate, string $endDate): array
+    {
+        $items = $this->model->where('lab_test_id', $labTestId)
+            ->whereNotNull('collected_at')
+            ->whereNotNull('completed_at')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->get();
+
+        if ($items->isEmpty()) {
+            return [
+                'average_minutes' => 0,
+                'min_minutes' => 0,
+                'max_minutes' => 0,
+                'total_samples' => 0,
+            ];
+        }
+
+        $turnaroundTimes = $items->map(function ($item) {
+            return $item->getCollectionToCompletionMinutesAttribute();
+        })->filter();
+
+        return [
+            'average_minutes' => round($turnaroundTimes->avg(), 2),
+            'min_minutes' => $turnaroundTimes->min(),
+            'max_minutes' => $turnaroundTimes->max(),
+            'total_samples' => $items->count(),
+        ];
+    }
+}

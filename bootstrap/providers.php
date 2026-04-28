@@ -39,5 +39,6 @@ return [
     App\Providers\VisitRouteServiceProvider::class,
     App\Providers\VisitServiceProvider::class,
     App\Providers\RepositoryServiceProvider::class,
+    App\Providers\LabServiceProvider::class,
 
 ];

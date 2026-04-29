@@ -250,4 +250,19 @@ class LabTemplateRepository implements LabTemplateRepositoryInterface
 
         return $query->get();
     }
+
+    public function findByNameAndFacility(string $name, ?int $facilityId = null): ?LabTemplate
+{
+    return $this->model
+        ->where('name', $name)
+        ->when($facilityId, function ($query, $facilityId) {
+            return $query->where(function ($q) use ($facilityId) {
+                $q->where('facility_id', $facilityId)
+                  ->orWhereNull('facility_id');
+            });
+        }, function ($query) {
+            return $query->whereNull('facility_id');
+        })
+        ->first();
+}
 }

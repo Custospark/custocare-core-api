@@ -141,41 +141,76 @@ class LabTemplateService implements LabTemplateServiceInterface
      * {@inheritdoc}
      */
     public function createTemplate(array $data): array
-    {
-        try {
-            // Validate name uniqueness
-            if ($this->templateRepository->existsByName($data['name'], $data['facility_id'] ?? null)) {
+{
+    try {
+        // Check if template already exists (including inactive ones)
+        $existingTemplate = $this->templateRepository->findByNameAndFacility(
+            $data['name'], 
+            $data['facility_id'] ?? null
+        );
+        
+        if ($existingTemplate) {
+            // If template exists but is inactive, reactivate it
+            if (!$existingTemplate->is_active) {
+                $existingTemplate->is_active = true;
+                $existingTemplate->save();
+                
+                Log::info('Reactivated existing template', [
+                    'template_id' => $existingTemplate->id,
+                    'name' => $existingTemplate->name,
+                    'facility_id' => $existingTemplate->facility_id,
+                ]);
+                
                 return [
-                    'success' => false,
-                    'message' => 'Template name already exists',
-                    'error' => 'A template with this name already exists for this facility',
-                    'data' => [],
+                    'success' => true,
+                    'message' => 'Template reactivated successfully',
+                    'data' => [
+                        'template' => $existingTemplate,
+                        'was_reactivated' => true,
+                    ],
                 ];
             }
             
-            $template = $this->templateRepository->create($data);
-            
-            return [
-                'success' => true,
-                'message' => 'Template created successfully',
-                'data' => [
-                    'template' => $template,
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to create template', [
-                'data' => $data,
-                'error' => $e->getMessage(),
-            ]);
-            
+            // If template exists and is active, return error
             return [
                 'success' => false,
-                'message' => 'Failed to create template',
-                'error' => 'An internal server error occurred',
+                'message' => 'Template name already exists',
+                'error' => 'An active template with this name already exists for this facility',
                 'data' => [],
             ];
         }
+        
+        // Create new template
+        $template = $this->templateRepository->create($data);
+        
+        Log::info('Created new template', [
+            'template_id' => $template->id,
+            'name' => $template->name,
+            'facility_id' => $template->facility_id,
+        ]);
+        
+        return [
+            'success' => true,
+            'message' => 'Template created successfully',
+            'data' => [
+                'template' => $template,
+                'was_reactivated' => false,
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to create or reactivate template', [
+            'data' => $data,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to process template',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}

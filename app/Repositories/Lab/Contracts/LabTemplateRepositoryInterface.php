@@ -142,4 +142,8 @@ interface LabTemplateRepositoryInterface
      * @return Collection
      */
     public function getByStructureType(string $structureType, ?int $facilityId = null): Collection;
+
+
+        public function findByNameAndFacility(string $name, ?int $facilityId = null): ?LabTemplate;
+
 }

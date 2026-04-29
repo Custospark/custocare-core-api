@@ -518,7 +518,6 @@ class LabTemplateFieldController extends Controller
      */
     public function bulkUpdateOrders(Request $request): JsonResponse
     {
-        Log::info($request);
         try {
             $request->validate([
                 'orders' => 'required|array|min:1',

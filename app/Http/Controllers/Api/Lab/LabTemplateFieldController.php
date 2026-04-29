@@ -314,7 +314,8 @@ class LabTemplateFieldController extends Controller
             
             $fields = LabTemplateFieldResource::collection($result['data']['fields']);
             $result['data']['fields'] = $fields;
-            
+            Log::info("Here");
+            Log::info($result);
             return response()->json($result);
         } catch (\Exception $e) {
             Log::error('Failed to retrieve fields by template', [

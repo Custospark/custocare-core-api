@@ -38,11 +38,24 @@ class LabRequestRepository implements LabRequestRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function findByUuid(string $uuid): ?LabRequest
-    {
-        return $this->model->where('request_uuid', $uuid)->first();
-    }
 
+    public function findByUuid(string $uuid): ?LabRequest
+{
+    return $this->model
+        ->where('request_uuid', $uuid)
+        ->with([
+            'items.labTest',           // Load lab test for each item
+            'items.results',           // Load results for each item
+            'items.collectedBy',       // Load collector
+            'items.verifiedBy',        // Load verifier
+            'patient.user',            // Load patient with user
+            'visit',                   // Load visit
+            'facility',                // Load facility
+            'requestedBy.user',        // Load requester
+            'reviewedBy.user'          // Load reviewer
+        ])
+        ->first();
+}
     /**
      * {@inheritdoc}
      */

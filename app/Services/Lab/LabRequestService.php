@@ -634,84 +634,84 @@ class LabRequestService implements LabRequestServiceInterface
     /**
      * {@inheritdoc}
      */
-    public function getRequestWithItems(string $uuid): array
-    {
-        try {
-            $request = $this->requestRepository->findByUuid($uuid);
-            
-            if (!$request) {
-                return [
-                    'success' => false,
-                    'message' => 'Lab request not found',
-                    'error' => 'The requested lab request does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            $requestWithItems = $this->requestRepository->getWithItems($request->id);
-            
-            return [
-                'success' => true,
-                'message' => 'Lab request with items retrieved successfully',
-                'data' => [
-                    'request' => $requestWithItems,
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve request with items', [
-                'uuid' => $uuid,
-                'error' => $e->getMessage(),
-            ]);
-            
+
+public function getRequestWithItems(string $uuid): array
+{
+    try {
+        // Use findByUuid which already loads all relationships including items.labTest
+        $request = $this->requestRepository->findByUuid($uuid);
+        
+        if (!$request) {
             return [
                 'success' => false,
-                'message' => 'Failed to retrieve lab request',
-                'error' => 'An internal server error occurred',
+                'message' => 'Lab request not found',
+                'error' => 'The requested lab request does not exist',
                 'data' => [],
             ];
         }
+        
+        // Just return the request that already has everything loaded
+        return [
+            'success' => true,
+            'message' => 'Lab request with items retrieved successfully',
+            'data' => [
+                'request' => $request,  // Use the already-loaded request
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to retrieve request with items', [
+            'uuid' => $uuid,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to retrieve lab request',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}
      */
     public function getRequestWithFullDetails(string $uuid): array
-    {
-        try {
-            $request = $this->requestRepository->findByUuid($uuid);
-            
-            if (!$request) {
-                return [
-                    'success' => false,
-                    'message' => 'Lab request not found',
-                    'error' => 'The requested lab request does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            $requestWithDetails = $this->requestRepository->getWithFullDetails($request->id);
-            
-            return [
-                'success' => true,
-                'message' => 'Lab request with full details retrieved successfully',
-                'data' => [
-                    'request' => $requestWithDetails,
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to retrieve request with full details', [
-                'uuid' => $uuid,
-                'error' => $e->getMessage(),
-            ]);
-            
+{
+    try {
+        // Use findByUuid or create a dedicated method that loads all nested relationships
+        $request = $this->requestRepository->findByUuid($uuid);
+        
+        if (!$request) {
             return [
                 'success' => false,
-                'message' => 'Failed to retrieve lab request details',
-                'error' => 'An internal server error occurred',
+                'message' => 'Lab request not found',
+                'error' => 'The requested lab request does not exist',
                 'data' => [],
             ];
         }
+        
+        return [
+            'success' => true,
+            'message' => 'Lab request with full details retrieved successfully',
+            'data' => [
+                'request' => $request,
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to retrieve request with full details', [
+            'uuid' => $uuid,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to retrieve lab request details',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}

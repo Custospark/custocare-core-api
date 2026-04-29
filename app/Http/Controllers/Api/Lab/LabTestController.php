@@ -52,8 +52,8 @@ class LabTestController extends Controller
             
             $tests = new LabTestCollection($result['data']['tests']);
             $result['data']['tests'] = $tests;
-            
-            return response()->json($result);
+            $response= response()->json($result);
+            return $response;
         } catch (\Exception $e) {
             Log::error('Failed to retrieve lab tests', [
                 'error' => $e->getMessage(),
@@ -77,6 +77,7 @@ class LabTestController extends Controller
      */
     public function store(StoreLabTestRequest $request): JsonResponse
     {
+        Log::info($request);
         try {
             $validatedData = $request->validated();
             $result = $this->testService->createTest($validatedData);

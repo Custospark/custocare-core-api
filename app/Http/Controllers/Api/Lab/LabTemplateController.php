@@ -310,7 +310,8 @@ class LabTemplateController extends Controller
             $templates = LabTemplateResource::collection($result['data']['templates']);
             $result['data']['templates'] = $templates;
             
-            return response()->json($result);
+            $response= response()->json($result);
+            return $response;
         } catch (\Exception $e) {
             Log::error('Failed to retrieve active templates', [
                 'error' => $e->getMessage(),

@@ -424,7 +424,8 @@ class LabRequestController extends Controller
             $requests = LabRequestResource::collection($result['data']['requests']);
             $result['data']['requests'] = $requests;
             
-            return response()->json($result);
+            $response= response()->json($result);
+            return $response;
         } catch (\Exception $e) {
             Log::error('Failed to retrieve requests by visit', [
                 'visit_id' => $visitId,

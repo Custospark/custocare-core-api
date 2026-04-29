@@ -227,16 +227,22 @@ class LabTemplateFieldRepository implements LabTemplateFieldRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function bulkUpdateDisplayOrders(array $orders): bool
-    {
-        return DB::transaction(function () use ($orders) {
-            foreach ($orders as $fieldId => $displayOrder) {
-                $this->model->where('id', $fieldId)
-                    ->update(['display_order' => $displayOrder]);
+ /**
+ * {@inheritdoc}
+ */
+public function bulkUpdateDisplayOrders(array $orders): bool
+{
+    return DB::transaction(function () use ($orders) {
+        foreach ($orders as $fieldUuid => $displayOrder) {
+            // Find the field by UUID to get its ID
+            $field = $this->model->where('field_uuid', $fieldUuid)->first();
+            if ($field) {
+                $field->update(['display_order' => $displayOrder]);
             }
-            return true;
-        });
-    }
+        }
+        return true;
+    });
+}
 
     /**
      * {@inheritdoc}

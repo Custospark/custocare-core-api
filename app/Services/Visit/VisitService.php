@@ -1191,6 +1191,11 @@ public function createVisit(array $data, int $staffId): array
      */
     private function isStatusTransitionAllowed(string $currentStatus, string $newStatus): bool
     {
+        Log::info("her----------------");
+        Log::info($currentStatus);
+        Log::info($newStatus);
+        Log::info("stopped----------------");
+
         $allowedTransitions = [
             'active' => ['completed', 'cancelled', 'no_show', 'in_progress'],
             'in_progress' => ['active', 'completed', 'cancelled'],

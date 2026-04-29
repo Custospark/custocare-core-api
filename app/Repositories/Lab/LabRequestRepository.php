@@ -9,6 +9,7 @@ use App\Repositories\Lab\Contracts\LabRequestRepositoryInterface;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class LabRequestRepository implements LabRequestRepositoryInterface
 {
@@ -40,22 +41,51 @@ class LabRequestRepository implements LabRequestRepositoryInterface
      */
 
     public function findByUuid(string $uuid): ?LabRequest
-{
-    return $this->model
-        ->where('request_uuid', $uuid)
-        ->with([
-            'items.labTest',           // Load lab test for each item
-            'items.results',           // Load results for each item
-            'items.collectedBy',       // Load collector
-            'items.verifiedBy',        // Load verifier
-            'patient.user',            // Load patient with user
-            'visit',                   // Load visit
-            'facility',                // Load facility
-            'requestedBy.user',        // Load requester
-            'reviewedBy.user'          // Load reviewer
-        ])
-        ->first();
-}
+    {
+        // First, verify the record exists
+        Log::info('🔍 Looking for request with UUID: ' . $uuid);
+        
+        // Get the request with relationships - EXCLUDING cancelled items
+        $labRequest = $this->model
+            ->where('request_uuid', $uuid)
+            ->with([
+                'items' => function ($query) {
+                    // Exclude cancelled items from the relationship
+                    $query->where('status', '!=', 'cancelled')
+                        ->with([
+                            'labTest',
+                            'results' => function ($q) {
+                                $q->orderBy('recorded_at', 'desc');
+                            },
+                            'collectedBy',
+                            'verifiedBy'
+                        ]);
+                },
+                'items.labTest',
+                'items.results',
+                'patient.user',
+                'visit',
+                'facility',
+                'requestedBy.user',
+                'reviewedBy.user'
+            ])
+            ->first();
+        
+        // Also load the count of cancelled items separately if needed
+        if ($labRequest) {
+            $cancelledCount = $this->model
+                ->where('request_uuid', $uuid)
+                ->first()
+                ->items()
+                ->where('status', 'cancelled')
+                ->count();
+            
+            // Attach cancelled count to the request (optional)
+            // $labRequest->cancelled_items_count = $cancelledCount;
+        }
+        
+        return $labRequest;
+    }
     /**
      * {@inheritdoc}
      */
@@ -273,7 +303,12 @@ class LabRequestRepository implements LabRequestRepositoryInterface
      */
     public function getWithItems(int $id): ?LabRequest
     {
-        return $this->model->with('items')->find($id);
+        return $this->model->with([
+            'items' => function ($query) {
+                $query->where('status', '!=', 'cancelled')
+                    ->with(['labTest', 'results']);
+            }
+        ])->find($id);
     }
 
     /**
@@ -283,7 +318,8 @@ class LabRequestRepository implements LabRequestRepositoryInterface
     {
         return $this->model->with([
             'items' => function ($query) {
-                $query->with(['labTest', 'results.templateField']);
+                $query->where('status', '!=', 'cancelled')
+                    ->with(['labTest', 'results.templateField']);
             },
             'patient',
             'visit',

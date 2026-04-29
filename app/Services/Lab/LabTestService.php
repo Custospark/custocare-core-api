@@ -146,14 +146,14 @@ class LabTestService implements LabTestServiceInterface
             ];
         }
     }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function createTest(array $data): array
-    {
-        try {
-            // Validate template exists
+/**
+ * {@inheritdoc}
+ */
+public function createTest(array $data): array
+{
+    try {
+        // Only validate template if template_id is provided and not null
+        if (isset($data['template_id']) && !is_null($data['template_id'])) {
             $template = $this->templateRepository->findById($data['template_id']);
             if (!$template) {
                 return [
@@ -163,73 +163,79 @@ class LabTestService implements LabTestServiceInterface
                     'data' => [],
                 ];
             }
-            
-            // Validate name uniqueness
-            if ($this->testRepository->existsByName($data['name'], $data['facility_id'] ?? null)) {
-                return [
-                    'success' => false,
-                    'message' => 'Test name already exists',
-                    'error' => 'A test with this name already exists for this facility',
-                    'data' => [],
-                ];
-            }
-            
-            // Validate code uniqueness if provided
-            if (!empty($data['code'])) {
-                $existingTest = $this->testRepository->findByCode($data['code'], $data['facility_id'] ?? null);
-                if ($existingTest) {
-                    return [
-                        'success' => false,
-                        'message' => 'Test code already exists',
-                        'error' => 'A test with this code already exists',
-                        'data' => [],
-                    ];
-                }
-            }
-            
-            $test = $this->testRepository->create($data);
-            
-            return [
-                'success' => true,
-                'message' => 'Test created successfully',
-                'data' => [
-                    'test' => $test,
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to create test', [
-                'data' => $data,
-                'error' => $e->getMessage(),
-            ]);
-            
+        } else {
+            // Remove template_id from data if it's null or not set
+            unset($data['template_id']);
+        }
+        
+        // Validate name uniqueness
+        if ($this->testRepository->existsByName($data['name'], $data['facility_id'] ?? null)) {
             return [
                 'success' => false,
-                'message' => 'Failed to create test',
-                'error' => 'An internal server error occurred',
+                'message' => 'Test name already exists',
+                'error' => 'A test with this name already exists for this facility',
                 'data' => [],
             ];
         }
+        
+        // Validate code uniqueness if provided
+        if (!empty($data['code'])) {
+            $existingTest = $this->testRepository->findByCode($data['code'], $data['facility_id'] ?? null);
+            if ($existingTest) {
+                return [
+                    'success' => false,
+                    'message' => 'Test code already exists',
+                    'error' => 'A test with this code already exists',
+                    'data' => [],
+                ];
+            }
+        }
+        
+        $test = $this->testRepository->create($data);
+        
+        return [
+            'success' => true,
+            'message' => 'Test created successfully',
+            'data' => [
+                'test' => $test,
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to create test', [
+            'data' => $data,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to create test',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}
      */
     public function updateTest(string $uuid, array $data): array
-    {
-        try {
-            $test = $this->testRepository->findByUuid($uuid);
-            
-            if (!$test) {
-                return [
-                    'success' => false,
-                    'message' => 'Test not found',
-                    'error' => 'The requested test does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            // Validate template exists if being updated
-            if (isset($data['template_id'])) {
+{
+    try {
+        $test = $this->testRepository->findByUuid($uuid);
+        
+        if (!$test) {
+            return [
+                'success' => false,
+                'message' => 'Test not found',
+                'error' => 'The requested test does not exist',
+                'data' => [],
+            ];
+        }
+        
+        // Validate template exists if being updated and not null
+        if (array_key_exists('template_id', $data)) {
+            // If template_id is explicitly set to null, allow it (removes association)
+            if (!is_null($data['template_id'])) {
                 $template = $this->templateRepository->findById($data['template_id']);
                 if (!$template) {
                     return [
@@ -240,63 +246,64 @@ class LabTestService implements LabTestServiceInterface
                     ];
                 }
             }
-            
-            // Validate name uniqueness
-            if (isset($data['name']) && $this->testRepository->existsByName($data['name'], $test->facility_id, $test->id)) {
-                return [
-                    'success' => false,
-                    'message' => 'Test name already exists',
-                    'error' => 'A test with this name already exists for this facility',
-                    'data' => [],
-                ];
-            }
-            
-            // Validate code uniqueness if provided
-            if (!empty($data['code'])) {
-                $existingTest = $this->testRepository->findByCode($data['code'], $test->facility_id);
-                if ($existingTest && $existingTest->id !== $test->id) {
-                    return [
-                        'success' => false,
-                        'message' => 'Test code already exists',
-                        'error' => 'A test with this code already exists',
-                        'data' => [],
-                    ];
-                }
-            }
-            
-            $updated = $this->testRepository->update($test, $data);
-            
-            if (!$updated) {
-                return [
-                    'success' => false,
-                    'message' => 'Failed to update test',
-                    'error' => 'Unable to update test',
-                    'data' => [],
-                ];
-            }
-            
-            return [
-                'success' => true,
-                'message' => 'Test updated successfully',
-                'data' => [
-                    'test' => $test->fresh(),
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to update test', [
-                'uuid' => $uuid,
-                'data' => $data,
-                'error' => $e->getMessage(),
-            ]);
-            
+        }
+        
+        // Validate name uniqueness
+        if (isset($data['name']) && $this->testRepository->existsByName($data['name'], $test->facility_id, $test->id)) {
             return [
                 'success' => false,
-                'message' => 'Failed to update test',
-                'error' => 'An internal server error occurred',
+                'message' => 'Test name already exists',
+                'error' => 'A test with this name already exists for this facility',
                 'data' => [],
             ];
         }
+        
+        // Validate code uniqueness if provided
+        if (!empty($data['code'])) {
+            $existingTest = $this->testRepository->findByCode($data['code'], $test->facility_id);
+            if ($existingTest && $existingTest->id !== $test->id) {
+                return [
+                    'success' => false,
+                    'message' => 'Test code already exists',
+                    'error' => 'A test with this code already exists',
+                    'data' => [],
+                ];
+            }
+        }
+        
+        $updated = $this->testRepository->update($test, $data);
+        
+        if (!$updated) {
+            return [
+                'success' => false,
+                'message' => 'Failed to update test',
+                'error' => 'Unable to update test',
+                'data' => [],
+            ];
+        }
+        
+        return [
+            'success' => true,
+            'message' => 'Test updated successfully',
+            'data' => [
+                'test' => $test->fresh(),
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to update test', [
+            'uuid' => $uuid,
+            'data' => $data,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to update test',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}

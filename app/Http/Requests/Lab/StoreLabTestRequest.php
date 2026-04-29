@@ -27,7 +27,7 @@ class StoreLabTestRequest extends FormRequest
         return [
             'name' => 'required|string|max:150',
             'code' => 'nullable|string|max:50',
-            'template_id' => 'required|exists:lab_templates,id',
+            'template_id' => 'nullable|exists:lab_templates,id',
             'facility_id' => 'nullable|exists:facilities,id',
             'is_shared' => 'boolean',
             'category' => 'nullable|string|max:100',
@@ -48,7 +48,6 @@ class StoreLabTestRequest extends FormRequest
             'name.required' => 'Test name is required',
             'name.max' => 'Test name must not exceed 150 characters',
             'code.max' => 'Code must not exceed 50 characters',
-            'template_id.required' => 'Template ID is required',
             'template_id.exists' => 'The selected template does not exist',
             'facility_id.exists' => 'The selected facility does not exist',
             'is_shared.boolean' => 'Is shared must be true or false',

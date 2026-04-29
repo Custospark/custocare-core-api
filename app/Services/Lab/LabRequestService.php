@@ -8,6 +8,7 @@ use App\Models\LabRequest;
 use App\Repositories\Lab\Contracts\LabRequestRepositoryInterface;
 use App\Repositories\Lab\Contracts\LabRequestItemRepositoryInterface;
 use App\Services\Lab\Contracts\LabRequestServiceInterface;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -149,18 +150,28 @@ class LabRequestService implements LabRequestServiceInterface
 
     /**
      * {@inheritdoc}
-     */
+        */
     public function createRequest(array $data): array
     {
         try {
-            // Validate required relationships exist
-            if (!$this->validateRelationsExist($data)) {
+            // Automatically set the current staff user as creator
+            $currentStaff = Auth::user()->staff;
+            
+            if (!$currentStaff) {
                 return [
                     'success' => false,
-                    'message' => 'Validation failed',
-                    'error' => 'One or more referenced records (visit, patient, facility, staff) do not exist',
-                    'data' => [],
+                    'message' => 'Staff profile not found',
+                    'error' => 'No staff record associated with authenticated user',
+                    'data' => []
                 ];
+            }
+            
+            // Add audit fields
+            $data['created_by_staff_id'] = $currentStaff->id;
+            
+            // If requested_by_staff_id is not provided, use current staff
+            if (!isset($data['requested_by_staff_id'])) {
+                $data['requested_by_staff_id'] = $currentStaff->id;
             }
             
             $request = $this->requestRepository->create($data);
@@ -168,9 +179,7 @@ class LabRequestService implements LabRequestServiceInterface
             return [
                 'success' => true,
                 'message' => 'Lab request created successfully',
-                'data' => [
-                    'request' => $request,
-                ],
+                'data' => ['request' => $request]
             ];
         } catch (\Exception $e) {
             Log::error('Failed to create lab request', [
@@ -182,7 +191,7 @@ class LabRequestService implements LabRequestServiceInterface
                 'success' => false,
                 'message' => 'Failed to create lab request',
                 'error' => 'An internal server error occurred',
-                'data' => [],
+                'data' => []
             ];
         }
     }
@@ -806,7 +815,7 @@ public function getRequestWithItems(string $uuid): array
     /**
      * {@inheritdoc}
      */
-    public function addItemsToRequest(string $requestUuid, array $itemsData): array
+        public function addItemsToRequest(string $requestUuid, array $itemsData): array
     {
         try {
             $request = $this->requestRepository->findByUuid($requestUuid);
@@ -815,44 +824,50 @@ public function getRequestWithItems(string $uuid): array
                 return [
                     'success' => false,
                     'message' => 'Lab request not found',
-                    'error' => 'The requested lab request does not exist',
-                    'data' => [],
+                    'data' => []
                 ];
             }
             
-            // Cannot add items to cancelled or completed requests
+            // Can't add items to cancelled or completed requests
             if (in_array($request->status, ['cancelled', 'completed', 'reviewed'])) {
                 return [
                     'success' => false,
                     'message' => 'Cannot add items to request',
-                    'error' => 'This request is already ' . $request->status . ' and cannot be modified',
-                    'data' => [],
+                    'error' => 'This request is already ' . $request->status,
+                    'data' => []
                 ];
+            }
+            
+            // Get current staff for audit
+            $currentStaff = Auth::user()->staff;
+            
+            // Add audit fields to each item
+            foreach ($itemsData as &$item) {
+                $item['created_by_staff_id'] = $currentStaff?->id;
+                $item['updated_by_staff_id'] = $currentStaff?->id;
             }
             
             $items = $this->itemRepository->bulkCreate($request->id, $itemsData);
             
             return [
                 'success' => true,
-                'message' => count($items) . ' items added to request successfully',
+                'message' => count($items) . ' items added to request',
                 'data' => [
                     'request' => $request->fresh(),
                     'items' => $items,
-                    'items_added' => count($items),
-                ],
+                    'items_added' => count($items)
+                ]
             ];
         } catch (\Exception $e) {
             Log::error('Failed to add items to request', [
                 'request_uuid' => $requestUuid,
-                'items_count' => count($itemsData),
-                'error' => $e->getMessage(),
+                'error' => $e->getMessage()
             ]);
             
             return [
                 'success' => false,
                 'message' => 'Failed to add items to request',
-                'error' => 'An internal server error occurred',
-                'data' => [],
+                'data' => []
             ];
         }
     }

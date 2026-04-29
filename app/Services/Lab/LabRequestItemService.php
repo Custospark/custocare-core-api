@@ -731,7 +731,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             
             return [
                 'success' => true,
-                'message' => 'Item cancelled successfully',
+                'message' => 'Lab test cancelled successfully',
                 'data' => [
                     'item' => $item->fresh(),
                 ],

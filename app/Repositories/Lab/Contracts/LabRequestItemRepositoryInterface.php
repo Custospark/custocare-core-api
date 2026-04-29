@@ -109,7 +109,7 @@ interface LabRequestItemRepositoryInterface
      * @param array $items
      * @return Collection
      */
-    public function bulkCreate(int $labRequestId, array $items): Collection;
+    public function bulkCreate(int $labRequestId, array $items): array;
 
     /**
      * Update an existing item.

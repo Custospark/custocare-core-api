@@ -90,7 +90,7 @@ class LabTest extends Model
             'test_uuid' => 'nullable|uuid|unique:lab_tests,test_uuid',
             'name' => 'required|string|max:150',
             'code' => 'nullable|string|max:50',
-            'template_id' => 'required|exists:lab_templates,id',
+            'template_id' => 'nullable|exists:lab_templates,id',
             'facility_id' => 'nullable|exists:facilities,id',
             'is_shared' => 'boolean',
             'category' => 'nullable|string|max:100',

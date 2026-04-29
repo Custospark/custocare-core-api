@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace App\Repositories\Lab;
 
 use App\Models\LabRequestItem;
+use App\Models\Staff;
 use App\Repositories\Lab\Contracts\LabRequestItemRepositoryInterface;
+use Illuminate\Container\Attributes\Auth;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Facades\DB;
 
 class LabRequestItemRepository implements LabRequestItemRepositoryInterface
@@ -196,17 +199,29 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function bulkCreate(int $labRequestId, array $items): Collection
+    public function bulkCreate(int $labRequestId, array $itemsData): array
     {
-        return DB::transaction(function () use ($labRequestId, $items) {
+        return DB::transaction(function () use ($labRequestId, $itemsData) {
             $createdItems = [];
             
-            foreach ($items as $itemData) {
-                $itemData['lab_request_id'] = $labRequestId;
-                $createdItems[] = $this->model->create($itemData);
+            foreach ($itemsData as $itemData) {
+                // Prepare item data with proper defaults
+                $item = [
+                    'lab_request_id' => $labRequestId,
+                    'lab_test_id' => $itemData['lab_test_id'],
+                    'status' => 'pending',
+                    'result_flag' => 'pending',
+                    'sample_type' => $itemData['sample_type'] ?? null,
+                    'notes' => $itemData['notes'] ?? null,
+                    'created_by_staff_id' => $itemData['created_by_staff_id'] ?? null,
+                    'updated_by_staff_id' => $itemData['updated_by_staff_id'] ?? null,
+                    'metadata' => $itemData['metadata'] ?? null,
+                ];
+                
+                $createdItems[] = $this->model->create($item);
             }
             
-            return new Collection($createdItems);
+            return $createdItems;
         });
     }
 
@@ -274,12 +289,13 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function cancel(LabRequestItem $item, string $reason, ?int $cancelledByStaffId = null): bool
-    {
-        return DB::transaction(function () use ($item, $reason, $cancelledByStaffId) {
-            return $item->cancel($reason, $cancelledByStaffId);
-        });
-    }
+ public function cancel(LabRequestItem $item, string $reason, ?int $cancelledByStaffId = null): bool
+{
+    return DB::transaction(function () use ($item, $reason, $cancelledByStaffId) {
+        $staffId = $cancelledByStaffId ?? FacadesAuth::user()->staff->id;
+        return $item->cancel($reason, $staffId);
+    });
+}
 
     /**
      * {@inheritdoc}

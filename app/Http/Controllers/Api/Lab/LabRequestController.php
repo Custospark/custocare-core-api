@@ -79,6 +79,8 @@ class LabRequestController extends Controller
      */
     public function store(StoreLabRequestRequest $request): JsonResponse
     {
+        Log::info($request);
+        dd("Wait");
         try {
             $validatedData = $request->validated();
             $result = $this->requestService->createRequest($validatedData);

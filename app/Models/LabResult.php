@@ -122,7 +122,7 @@ class LabResult extends Model
         return [
             'result_uuid' => 'nullable|uuid|unique:lab_results,result_uuid',
             'lab_request_item_id' => 'required|exists:lab_request_items,id',
-            'template_field_id' => 'required|exists:lab_template_fields,id',
+            'template_field_id' => 'nullable|exists:lab_template_fields,id',
             'value' => 'nullable|string',
             'unit' => 'nullable|string|max:50',
             'numeric_value' => 'nullable|numeric',

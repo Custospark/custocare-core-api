@@ -162,9 +162,12 @@ class LabRequestRepository implements LabRequestRepositoryInterface
     /**
      * {@inheritdoc}
      */
+  
     public function getByVisit(int $visitId): Collection
     {
-        return $this->model->where('visit_id', $visitId)->get();
+        return $this->model->where('visit_id', $visitId)
+            ->whereNotIn('status', ['cancelled']) // Add other statuses if needed
+            ->get();
     }
 
     /**

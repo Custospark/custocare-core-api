@@ -393,62 +393,88 @@ class LabRequestService implements LabRequestServiceInterface
      * {@inheritdoc}
      */
     public function cancelRequest(string $uuid, string $reason, ?int $cancelledByStaffId = null): array
-    {
-        try {
-            $request = $this->requestRepository->findByUuid($uuid);
-            
-            if (!$request) {
-                return [
-                    'success' => false,
-                    'message' => 'Lab request not found',
-                    'error' => 'The requested lab request does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            // Cannot cancel already cancelled or completed requests
-            if (in_array($request->status, ['cancelled', 'completed', 'reviewed'])) {
-                return [
-                    'success' => false,
-                    'message' => 'Cannot cancel request',
-                    'error' => 'This request is already ' . $request->status . ' and cannot be cancelled',
-                    'data' => [],
-                ];
-            }
-            
-            $cancelled = $this->requestRepository->cancel($request, $reason, $cancelledByStaffId);
-            
-            if (!$cancelled) {
-                return [
-                    'success' => false,
-                    'message' => 'Failed to cancel request',
-                    'error' => 'Unable to cancel request',
-                    'data' => [],
-                ];
-            }
-            
-            return [
-                'success' => true,
-                'message' => 'Request cancelled successfully',
-                'data' => [
-                    'request' => $request->fresh(),
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to cancel request', [
-                'uuid' => $uuid,
-                'reason' => $reason,
-                'error' => $e->getMessage(),
-            ]);
-            
+{
+    try {
+        // Validate reason
+        if (empty(trim($reason))) {
             return [
                 'success' => false,
-                'message' => 'Failed to cancel request',
-                'error' => 'An internal server error occurred',
+                'message' => 'Cancellation reason is required',
+                'error' => 'Please provide a reason for cancellation',
                 'data' => [],
             ];
         }
+        
+        $request = $this->requestRepository->findByUuid($uuid);
+        
+        if (!$request) {
+            return [
+                'success' => false,
+                'message' => 'Lab request not found',
+                'error' => 'The requested lab request does not exist',
+                'data' => [],
+            ];
+        }
+        
+        // Cannot cancel already finalised requests
+        if (in_array($request->status, ['completed', 'reviewed', 'cancelled'])) {
+            return [
+                'success' => false,
+                'message' => 'Cannot cancel request',
+                'error' => 'This request is already ' . $request->status . ' and cannot be cancelled',
+                'data' => [],
+            ];
+        }
+        
+        // Log in_progress cancellations for audit trail
+        if ($request->status === 'in_progress') {
+            Log::warning('Lab request cancelled while in progress', [
+                'uuid' => $uuid,
+                'reason' => $reason,
+                'cancelled_by' => $cancelledByStaffId,
+                'original_status' => $request->status
+            ]);
+        }
+        
+        $cancelled = $this->requestRepository->cancel($request, $reason, $cancelledByStaffId);
+        
+        if (!$cancelled) {
+            return [
+                'success' => false,
+                'message' => 'Failed to cancel request',
+                'error' => 'Unable to cancel request. Please try again.',
+                'data' => [],
+            ];
+        }
+        
+        // Set appropriate message based on status
+        $message = $request->status === 'in_progress' 
+            ? 'Request cancelled successfully. Note: This request was already in progress.'
+            : 'Request cancelled successfully';
+        
+        return [
+            'success' => true,
+            'message' => $message,
+            'data' => [
+                'request' => $request->fresh(),
+            ],
+        ];
+        
+    } catch (\Exception $e) {
+        Log::error('Failed to cancel request', [
+            'uuid' => $uuid,
+            'reason' => $reason,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to cancel request',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}
@@ -851,7 +877,7 @@ public function getRequestWithItems(string $uuid): array
             
             return [
                 'success' => true,
-                'message' => count($items) . ' items added to request',
+                'message' => count($items) . ' Lab Tests added to the current Lab request.',
                 'data' => [
                     'request' => $request->fresh(),
                     'items' => $items,

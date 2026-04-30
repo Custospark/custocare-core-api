@@ -97,7 +97,7 @@ class LabTest extends Model
             'description' => 'nullable|string',
             'is_active' => 'boolean',
             'requires_fasting' => 'boolean',
-            'turnaround_time_hours' => 'nullable|integer|min:0|max:65535',
+            'turnaround_time_hours' => 'nullable|numeric|min:0|max:65535',
             'metadata' => 'nullable|array',
         ];
     }

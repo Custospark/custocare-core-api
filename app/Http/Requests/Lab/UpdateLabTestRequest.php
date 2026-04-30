@@ -34,7 +34,7 @@ class UpdateLabTestRequest extends FormRequest
             'description' => 'nullable|string',
             'is_active' => 'boolean',
             'requires_fasting' => 'boolean',
-            'turnaround_time_hours' => 'nullable|integer|min:0|max:65535',
+            'turnaround_time_hours' => 'nullable|numeric|min:0|max:65535',
             'metadata' => 'nullable|array',
         ];
     }
@@ -53,7 +53,7 @@ class UpdateLabTestRequest extends FormRequest
             'facility_id.exists' => 'The selected facility does not exist',
             'is_shared.boolean' => 'Is shared must be true or false',
             'category.max' => 'Category must not exceed 100 characters',
-            'turnaround_time_hours.integer' => 'Turnaround time must be an integer',
+            'turnaround_time_hours.integer' => 'Turnaround time must be a number',
         ];
     }
 

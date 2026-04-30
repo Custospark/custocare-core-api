@@ -34,7 +34,7 @@ class StoreLabTestRequest extends FormRequest
             'description' => 'nullable|string',
             'is_active' => 'boolean',
             'requires_fasting' => 'boolean',
-            'turnaround_time_hours' => 'nullable|integer|min:0|max:65535',
+            'turnaround_time_hours' => 'nullable|numeric|min:0|max:65535',
             'metadata' => 'nullable|array',
         ];
     }
@@ -54,7 +54,7 @@ class StoreLabTestRequest extends FormRequest
             'category.max' => 'Category must not exceed 100 characters',
             'is_active.boolean' => 'Is active must be true or false',
             'requires_fasting.boolean' => 'Requires fasting must be true or false',
-            'turnaround_time_hours.integer' => 'Turnaround time must be an integer',
+            'turnaround_time_hours.integer' => 'Turnaround time must be a number',
             'turnaround_time_hours.min' => 'Turnaround time cannot be negative',
         ];
     }

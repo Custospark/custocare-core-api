@@ -162,7 +162,9 @@ class LabRequestRepository implements LabRequestRepositoryInterface
     /**
      * {@inheritdoc}
      */
-  
+   /**
+ * {@inheritdoc}
+ */
     public function getByVisit(int $visitId): Collection
     {
         return $this->model->where('visit_id', $visitId)

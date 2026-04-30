@@ -51,7 +51,7 @@ class LabTest extends Model
         'is_shared' => 'boolean',
         'is_active' => 'boolean',
         'requires_fasting' => 'boolean',
-        'turnaround_time_hours' => 'integer',
+        'turnaround_time_hours' => 'float',  
         'metadata' => 'array',
         'deleted_at' => 'datetime',
     ];

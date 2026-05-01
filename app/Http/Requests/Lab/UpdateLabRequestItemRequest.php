@@ -33,13 +33,16 @@ class UpdateLabRequestItemRequest extends FormRequest
             'collected_at' => 'nullable|date',
             'collected_by_staff_id' => 'nullable|exists:staff,id',
             'started_at' => 'nullable|date',
+            'started_by_staff_id' => 'nullable|exists:staff,id',
             'completed_at' => 'nullable|date',
+            'completed_by_staff_id' => 'nullable|exists:staff,id',
             'verified_by_staff_id' => 'nullable|exists:staff,id',
             'verified_at' => 'nullable|date',
+            'cancelled_by_staff_id' => 'nullable|exists:staff,id',
+            'cancelled_at' => 'nullable|date',
             'result_flag' => 'sometimes|required|in:normal,abnormal,critical,pending',
             'notes' => 'nullable|string',
             'cancellation_reason' => 'nullable|string',
-            'cancelled_at' => 'nullable|date',
             'metadata' => 'nullable|array',
         ];
     }
@@ -50,13 +53,34 @@ class UpdateLabRequestItemRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'lab_request_id.required' => 'Lab request ID is required',
             'lab_request_id.exists' => 'The selected lab request does not exist',
-            'lab_test_id.required' => 'Lab test ID is required',
             'lab_test_id.exists' => 'The selected lab test does not exist',
             'status.in' => 'Invalid status',
-            'result_flag.in' => 'Invalid result flag',
+            'sample_type.max' => 'Sample type must not exceed 100 characters',
+            'sample_identifier.max' => 'Sample identifier must not exceed 100 characters',
+            'collected_by_staff_id.exists' => 'The selected staff does not exist',
+            'started_by_staff_id.exists' => 'The selected staff does not exist',
+            'completed_by_staff_id.exists' => 'The selected staff does not exist',
+            'verified_by_staff_id.exists' => 'The selected staff does not exist',
+            'cancelled_by_staff_id.exists' => 'The selected staff does not exist',
+            'result_flag.in' => 'Invalid result flag. Must be normal, abnormal, critical, or pending',
         ];
+    }
+
+    /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        // If status is being updated, ensure result_flag is also updated appropriately
+        if ($this->has('status') && !$this->has('result_flag')) {
+            $status = $this->input('status');
+            if (in_array($status, ['completed', 'verified'])) {
+                $this->merge([
+                    'result_flag' => 'pending',
+                ]);
+            }
+        }
     }
 
     /**

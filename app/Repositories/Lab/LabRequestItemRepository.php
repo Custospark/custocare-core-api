@@ -7,10 +7,9 @@ namespace App\Repositories\Lab;
 use App\Models\LabRequestItem;
 use App\Models\Staff;
 use App\Repositories\Lab\Contracts\LabRequestItemRepositoryInterface;
-use Illuminate\Container\Attributes\Auth;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\Auth as FacadesAuth;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -193,6 +192,8 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
     public function create(array $data): LabRequestItem
     {
         return DB::transaction(function () use ($data) {
+            $data['created_by_staff_id']=Staff::where('user_id', Auth::id())->value('id');
+            $data['updated_by_staff_id'] =Staff::where('user_id', Auth::id())->value('id');
             return $this->model->create($data);
         });
     }
@@ -214,8 +215,8 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
                     'result_flag' => 'pending',
                     'sample_type' => $itemData['sample_type'] ?? null,
                     'notes' => $itemData['notes'] ?? null,
-                    'created_by_staff_id' => $itemData['created_by_staff_id'] ?? null,
-                    'updated_by_staff_id' => $itemData['updated_by_staff_id'] ?? null,
+                    'created_by_staff_id' => $itemData['created_by_staff_id'] ?? Staff::where('user_id', Auth::id())->value('id'),
+                    'updated_by_staff_id' => $itemData['updated_by_staff_id'] ??  Staff::where('user_id', Auth::id())->value('id'),
                     'metadata' => $itemData['metadata'] ?? null,
                 ];
                 
@@ -258,10 +259,29 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
 
     /**
      * {@inheritdoc}
-     */public function updateStatus(LabRequestItem $item, string $status): bool
+     *//**
+ * Update the status of a lab request item with proper audit tracking.
+ * This method automatically sets timestamps and staff IDs based on the status transition.
+ *
+ * @param LabRequestItem $item
+ * @param string $status
+ * @return bool
+ */
+public function updateStatus(LabRequestItem $item, string $status): bool
 {
     return DB::transaction(function () use ($item, $status) {
         $oldStatus = $item->status;
+        $currentStaffId = $this->getCurrentStaffId();
+        
+        // Log the status change for audit purposes
+        Log::info('Lab Request Item Status Update', [
+            'item_uuid' => $item->item_uuid,
+            'old_status' => $oldStatus,
+            'new_status' => $status,
+            'staff_id' => $currentStaffId,
+            'timestamp' => now()->toIso8601String()
+        ]);
+        
         $item->status = $status;
         
         // Mark relevant fields based on the new status
@@ -271,7 +291,7 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
                     $item->collected_at = now();
                 }
                 if (is_null($item->collected_by_staff_id)) {
-                    $item->collected_by_staff_id = $this->getCurrentStaffId();
+                    $item->collected_by_staff_id = $currentStaffId;
                 }
                 break;
                 
@@ -279,11 +299,17 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
                 if (is_null($item->started_at)) {
                     $item->started_at = now();
                 }
+                if (is_null($item->started_by_staff_id)) {
+                    $item->started_by_staff_id = $currentStaffId;
+                }
                 break;
                 
             case 'completed':
                 if (is_null($item->completed_at)) {
                     $item->completed_at = now();
+                }
+                if (is_null($item->completed_by_staff_id)) {
+                    $item->completed_by_staff_id = $currentStaffId;
                 }
                 break;
                 
@@ -292,7 +318,7 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
                     $item->verified_at = now();
                 }
                 if (is_null($item->verified_by_staff_id)) {
-                    $item->verified_by_staff_id = $this->getCurrentStaffId();
+                    $item->verified_by_staff_id = $currentStaffId;
                 }
                 break;
                 
@@ -300,21 +326,26 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
                 if (is_null($item->cancelled_at)) {
                     $item->cancelled_at = now();
                 }
+                if (is_null($item->cancelled_by_staff_id)) {
+                    $item->cancelled_by_staff_id = $currentStaffId;
+                }
                 break;
         }
         
-        // Update audit trail
-        $item->updated_by_staff_id = $this->getCurrentStaffId();
+        // Always update the updated_by_staff_id for audit trail
+        $item->updated_by_staff_id = $currentStaffId;
         
-        Log::info('Lab Request Item Status Updated', [
-            'item_uuid' => $item->item_uuid,
-            'old_status' => $oldStatus,
-            'new_status' => $status,
-            'staff_id' => $this->getCurrentStaffId(),
-            'timestamp' => now()->toIso8601String(),
-        ]);
+        $saved = $item->save();
         
-        return $item->save();
+        if ($saved) {
+            Log::info('Lab Request Item Status Updated Successfully', [
+                'item_uuid' => $item->item_uuid,
+                'new_status' => $status,
+                'staff_id' => $currentStaffId
+            ]);
+        }
+        
+        return $saved;
     });
 }
 
@@ -347,15 +378,28 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
  * @param int $verifiedByStaffId
  * @return bool
  */
-    public function markVerified(LabRequestItem $item, int $verifiedByStaffId): bool
-    {
-        return DB::transaction(function () use ($item, $verifiedByStaffId) {
-            $item->status = 'verified';
-            $item->verified_at = now();
-            $item->verified_by_staff_id = $verifiedByStaffId ?? Staff::where('user_id',\Illuminate\Support\Facades\Auth::id())->id; 
-            return $item->save();
-        });
-    }
+   public function markVerified(LabRequestItem $item, int $verifiedByStaffId): bool
+{
+    return DB::transaction(function () use ($item, $verifiedByStaffId) {
+        $item->status = 'verified';
+        $item->verified_at = now();
+        
+        // Use provided staff ID, otherwise get from authenticated user
+        if ($verifiedByStaffId) {
+            $item->verified_by_staff_id = $verifiedByStaffId;
+        } else {
+            $item->verified_by_staff_id = Staff::where('user_id', Auth::id())->value('id');
+        }
+        
+        // Also update the updated_by_staff_id for audit trail
+        $item->updated_by_staff_id = $item->verified_by_staff_id;
+        
+        // Update the result_flag based on all results
+        $item->updateResultFlagFromResults();
+        
+        return $item->save();
+    });
+}
 
     /**
      * {@inheritdoc}
@@ -363,7 +407,7 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
  public function cancel(LabRequestItem $item, string $reason, ?int $cancelledByStaffId = null): bool
 {
     return DB::transaction(function () use ($item, $reason, $cancelledByStaffId) {
-        $staffId = $cancelledByStaffId ?? FacadesAuth::user()->staff->id;
+        $staffId = $cancelledByStaffId ?? Auth::user()->staff->id;
         return $item->cancel($reason, $staffId);
     });
 }
@@ -383,10 +427,14 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
     {
         return $this->model->with([
             'labRequest',
-            'labTest',
-            'results.templateField',
+           'labTest',
             'collectedBy',
-            'verifiedBy'
+            'startedBy',
+            'completedBy',
+            'verifiedBy',
+            'cancelledBy',
+            'createdBy',  // ← Make sure this is included
+            'results'
         ])->find($id);
     }
 

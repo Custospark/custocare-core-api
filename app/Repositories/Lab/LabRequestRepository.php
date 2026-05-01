@@ -40,52 +40,56 @@ class LabRequestRepository implements LabRequestRepositoryInterface
      * {@inheritdoc}
      */
 
-    public function findByUuid(string $uuid): ?LabRequest
-    {
-        // First, verify the record exists
-        Log::info('🔍 Looking for request with UUID: ' . $uuid);
-        
-        // Get the request with relationships - EXCLUDING cancelled items
-        $labRequest = $this->model
+   public function findByUuid(string $uuid): ?LabRequest
+{
+    // First, verify the record exists
+    Log::info('🔍 Looking for request with UUID: ' . $uuid);
+    
+    // Get the request with relationships - EXCLUDING cancelled items
+    $labRequest = $this->model
+        ->where('request_uuid', $uuid)
+        ->with([
+            'items' => function ($query) {
+                // Exclude cancelled items from the relationship
+                $query->where('status', '!=', 'cancelled')
+                    ->with([
+                        'labTest',
+                        'results' => function ($q) {
+                            $q->orderBy('recorded_at', 'desc');
+                        },
+                        'collectedBy',
+                        'startedBy',      // ← Add this
+                        'completedBy',    // ← Add this
+                        'verifiedBy',
+                        'cancelledBy',    // ← Add this
+                        'createdBy'       // ← Add this (for pending/created tracking)
+                    ]);
+            },
+            'items.labTest',
+            'items.results',
+            'patient.user',
+            'visit',
+            'facility',
+            'requestedBy.user',
+            'reviewedBy.user'
+        ])
+        ->first();
+    
+    // Also load the count of cancelled items separately if needed
+    if ($labRequest) {
+        $cancelledCount = $this->model
             ->where('request_uuid', $uuid)
-            ->with([
-                'items' => function ($query) {
-                    // Exclude cancelled items from the relationship
-                    $query->where('status', '!=', 'cancelled')
-                        ->with([
-                            'labTest',
-                            'results' => function ($q) {
-                                $q->orderBy('recorded_at', 'desc');
-                            },
-                            'collectedBy',
-                            'verifiedBy'
-                        ]);
-                },
-                'items.labTest',
-                'items.results',
-                'patient.user',
-                'visit',
-                'facility',
-                'requestedBy.user',
-                'reviewedBy.user'
-            ])
-            ->first();
+            ->first()
+            ->items()
+            ->where('status', 'cancelled')
+            ->count();
         
-        // Also load the count of cancelled items separately if needed
-        if ($labRequest) {
-            $cancelledCount = $this->model
-                ->where('request_uuid', $uuid)
-                ->first()
-                ->items()
-                ->where('status', 'cancelled')
-                ->count();
-            
-            // Attach cancelled count to the request (optional)
-            // $labRequest->cancelled_items_count = $cancelledCount;
-        }
-        
-        return $labRequest;
+        // Attach cancelled count to the request (optional)
+        // $labRequest->cancelled_items_count = $cancelledCount;
     }
+    
+    return $labRequest;
+}
     /**
      * {@inheritdoc}
      */

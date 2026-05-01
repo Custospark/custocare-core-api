@@ -480,12 +480,6 @@ public function updateResult(string $uuid, array $data): array
                 ];
             }
             
-            // Update parent item's status if all results are verified
-            $item = $this->itemRepository->findById($result->lab_request_item_id);
-            if ($item && $item->areAllResultsVerified() && $item->isCompleted()) {
-                $this->itemRepository->markVerified($item, $verifiedByStaffId);
-            }
-            
             return [
                 'success' => true,
                 'message' => 'Result verified successfully',

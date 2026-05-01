@@ -35,13 +35,16 @@ class LabRequestItem extends Model
         'collected_at',
         'collected_by_staff_id',
         'started_at',
+        'started_by_staff_id',
         'completed_at',
+        'completed_by_staff_id',
         'verified_by_staff_id',
         'verified_at',
         'result_flag',
         'notes',
         'cancellation_reason',
         'cancelled_at',
+        'cancelled_by_staff_id',
         'created_by_staff_id',
         'updated_by_staff_id',
         'metadata',
@@ -108,7 +111,6 @@ class LabRequestItem extends Model
                 $model->item_uuid = (string) \Illuminate\Support\Str::uuid();
             }
         });
-        
     }
 
     /**
@@ -128,13 +130,16 @@ class LabRequestItem extends Model
             'collected_at' => 'nullable|date',
             'collected_by_staff_id' => 'nullable|exists:staff,id',
             'started_at' => 'nullable|date',
+            'started_by_staff_id' => 'nullable|exists:staff,id',
             'completed_at' => 'nullable|date',
+            'completed_by_staff_id' => 'nullable|exists:staff,id',
             'verified_by_staff_id' => 'nullable|exists:staff,id',
             'verified_at' => 'nullable|date',
             'result_flag' => 'required|in:' . implode(',', self::RESULT_FLAGS),
             'notes' => 'nullable|string',
             'cancellation_reason' => 'nullable|string',
             'cancelled_at' => 'nullable|date',
+            'cancelled_by_staff_id' => 'nullable|exists:staff,id',
             'created_by_staff_id' => 'nullable|exists:staff,id',
             'updated_by_staff_id' => 'nullable|exists:staff,id',
             'metadata' => 'nullable|array',
@@ -166,11 +171,35 @@ class LabRequestItem extends Model
     }
 
     /**
+     * Get the staff who started processing.
+     */
+    public function startedBy(): BelongsTo
+    {
+        return $this->belongsTo(Staff::class, 'started_by_staff_id');
+    }
+
+    /**
+     * Get the staff who completed the test.
+     */
+    public function completedBy(): BelongsTo
+    {
+        return $this->belongsTo(Staff::class, 'completed_by_staff_id');
+    }
+
+    /**
      * Get the staff who verified the results.
      */
     public function verifiedBy(): BelongsTo
     {
         return $this->belongsTo(Staff::class, 'verified_by_staff_id');
+    }
+
+    /**
+     * Get the staff who cancelled the test.
+     */
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(Staff::class, 'cancelled_by_staff_id');
     }
 
     /**
@@ -361,20 +390,24 @@ class LabRequestItem extends Model
     /**
      * Mark item as in progress.
      */
-    public function markInProgress(): bool
+    public function markInProgress(int $startedByStaffId): bool
     {
         $this->status = 'in_progress';
         $this->started_at = now();
+        $this->started_by_staff_id = $startedByStaffId;
+        $this->updated_by_staff_id = $startedByStaffId;
         return $this->save();
     }
 
     /**
      * Mark item as completed.
      */
-    public function markCompleted(): bool
+    public function markCompleted(int $completedByStaffId): bool
     {
         $this->status = 'completed';
         $this->completed_at = now();
+        $this->completed_by_staff_id = $completedByStaffId;
+        $this->updated_by_staff_id = $completedByStaffId;
         return $this->save();
     }
 
@@ -386,22 +419,20 @@ class LabRequestItem extends Model
         $this->status = 'verified';
         $this->verified_at = now();
         $this->verified_by_staff_id = $verifiedByStaffId;
+        $this->updated_by_staff_id = $verifiedByStaffId;
         return $this->save();
     }
 
     /**
      * Cancel the item.
      */
-    public function cancel(string $reason, ?int $cancelledByStaffId = null): bool
+    public function cancel(string $reason, int $cancelledByStaffId): bool
     {
         $this->status = 'cancelled';
         $this->cancellation_reason = $reason;
         $this->cancelled_at = now();
-        
-        if ($cancelledByStaffId) {
-            $this->updated_by_staff_id = $cancelledByStaffId;
-        }
-        
+        $this->cancelled_by_staff_id = $cancelledByStaffId;
+        $this->updated_by_staff_id = $cancelledByStaffId;
         return $this->save();
     }
 

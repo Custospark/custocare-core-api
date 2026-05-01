@@ -412,8 +412,8 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ];
             }
             
-            // Update parent request status if needed
-            $this->updateParentRequestStatus($item->lab_request_id);
+            // Update parent request status if needed(Not needed at the moment)
+            // $this->updateParentRequestStatus($item->lab_request_id);
             
             return [
                 'success' => true,
@@ -712,8 +712,8 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ];
             }
             
-            // Update parent request status
-            $this->updateParentRequestStatus($item->lab_request_id);
+            // Update parent request status(Not needed at the moment)
+            // $this->updateParentRequestStatus($item->lab_request_id);
             
             return [
                 'success' => true,

@@ -417,7 +417,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             
             return [
                 'success' => true,
-                'message' => 'Item status updated successfully',
+                'message' => ' Status updated successfully',
                 'data' => [
                     'item' => $item->fresh(),
                 ],
@@ -616,8 +616,15 @@ class LabRequestItemService implements LabRequestItemServiceInterface
         }
     }
 
+        /**
+         * {@inheritdoc}
+         */
     /**
-     * {@inheritdoc}
+     * Mark item as verified (called when all results are verified).
+     *
+     * @param string $uuid
+     * @param int $verifiedByStaffId
+     * @return array
      */
     public function markItemVerified(string $uuid, int $verifiedByStaffId): array
     {
@@ -633,24 +640,6 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ];
             }
             
-            if (!$item->isCompleted()) {
-                return [
-                    'success' => false,
-                    'message' => 'Cannot verify item',
-                    'error' => 'Item must be completed before verification',
-                    'data' => [],
-                ];
-            }
-            
-            // Check if all results are verified
-            if (!$item->areAllResultsVerified()) {
-                return [
-                    'success' => false,
-                    'message' => 'Cannot verify item',
-                    'error' => 'All results must be verified before marking item as verified',
-                    'data' => [],
-                ];
-            }
             
             $verified = $this->itemRepository->markVerified($item, $verifiedByStaffId);
             
@@ -662,10 +651,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                     'data' => [],
                 ];
             }
-            
-            // Update parent request status
-            $this->updateParentRequestStatus($item->lab_request_id);
-            
+                        
             return [
                 'success' => true,
                 'message' => 'Item verified successfully',

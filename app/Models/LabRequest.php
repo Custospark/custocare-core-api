@@ -412,18 +412,21 @@ class LabRequest extends Model
         return $this->items()->whereNotIn('status', ['completed', 'verified', 'cancelled'])->count() === 0;
     }
 
-    /**
-     * Get progress percentage.
+   
+   /**
+     * Get progress percentage (excluding cancelled items).
      */
     public function getProgressPercentageAttribute(): int
     {
-        $totalItems = $this->items()->count();
+        $totalItems = $this->items()->where('status', '!=', 'cancelled')->count();
+        
         if ($totalItems === 0) {
             return 0;
         }
         
         $completedItems = $this->items()
             ->whereIn('status', ['completed', 'verified'])
+            ->where('status', '!=', 'cancelled')
             ->count();
         
         return (int) round(($completedItems / $totalItems) * 100);

@@ -340,10 +340,20 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
     /**
      * {@inheritdoc}
      */
+   /**
+ * Mark item as verified.
+ *
+ * @param LabRequestItem $item
+ * @param int $verifiedByStaffId
+ * @return bool
+ */
     public function markVerified(LabRequestItem $item, int $verifiedByStaffId): bool
     {
         return DB::transaction(function () use ($item, $verifiedByStaffId) {
-            return $item->markVerified($verifiedByStaffId);
+            $item->status = 'verified';
+            $item->verified_at = now();
+            $item->verified_by_staff_id = $verifiedByStaffId ?? Staff::where('user_id',\Illuminate\Support\Facades\Auth::id())->id; 
+            return $item->save();
         });
     }
 

@@ -63,6 +63,7 @@ class PrescriptionService
             $data['created_by'] = $userId;
             $data['prescribed_by'] = $userId;
             $data['updated_by'] = $userId;
+            $data['status'] = 'Active - Ready for Dispensing';
 
             // Create prescription
             $prescription = $this->prescriptionRepository->create($data);

@@ -154,6 +154,7 @@ class LabResultController extends Controller
      */
     public function update(UpdateLabResultRequest $request, string $uuid): JsonResponse
     {
+        Log::info($request);
         try {
             $validatedData = $request->validated();
             $result = $this->resultService->updateResult($uuid, $validatedData);
@@ -586,6 +587,12 @@ class LabResultController extends Controller
      */
     public function bulkStore(BulkCreateLabResultsRequest $request, string $itemUuid): JsonResponse
     {
+        Log::info('Bulk create results request payload', [
+            'item_uuid' => $itemUuid,
+            'request_data' => $request->all(),
+            'timestamp' => now()->toDateTimeString(),
+        ]);
+        // dd("wait");
         try {
             $result = $this->resultService->bulkCreateResults($itemUuid, $request->results);
             

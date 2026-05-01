@@ -26,7 +26,7 @@ class BulkCreateLabResultsRequest extends FormRequest
     {
         return [
             'results' => 'required|array|min:1',
-            'results.*.template_field_id' => 'required|exists:lab_template_fields,id',
+            'results.*.template_field_id' => 'nullable|exists:lab_template_fields,id',
             'results.*.value' => 'nullable|string',
             'results.*.unit' => 'nullable|string|max:50',
             'results.*.numeric_value' => 'nullable|numeric',

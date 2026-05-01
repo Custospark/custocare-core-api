@@ -12,6 +12,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class LabRequestItemRepository implements LabRequestItemRepositoryInterface
 {
@@ -257,13 +258,73 @@ class LabRequestItemRepository implements LabRequestItemRepositoryInterface
 
     /**
      * {@inheritdoc}
-     */
-    public function updateStatus(LabRequestItem $item, string $status): bool
+     */public function updateStatus(LabRequestItem $item, string $status): bool
+{
+    return DB::transaction(function () use ($item, $status) {
+        $oldStatus = $item->status;
+        $item->status = $status;
+        
+        // Mark relevant fields based on the new status
+        switch ($status) {
+            case 'sample_collected':
+                if (is_null($item->collected_at)) {
+                    $item->collected_at = now();
+                }
+                if (is_null($item->collected_by_staff_id)) {
+                    $item->collected_by_staff_id = $this->getCurrentStaffId();
+                }
+                break;
+                
+            case 'in_progress':
+                if (is_null($item->started_at)) {
+                    $item->started_at = now();
+                }
+                break;
+                
+            case 'completed':
+                if (is_null($item->completed_at)) {
+                    $item->completed_at = now();
+                }
+                break;
+                
+            case 'verified':
+                if (is_null($item->verified_at)) {
+                    $item->verified_at = now();
+                }
+                if (is_null($item->verified_by_staff_id)) {
+                    $item->verified_by_staff_id = $this->getCurrentStaffId();
+                }
+                break;
+                
+            case 'cancelled':
+                if (is_null($item->cancelled_at)) {
+                    $item->cancelled_at = now();
+                }
+                break;
+        }
+        
+        // Update audit trail
+        $item->updated_by_staff_id = $this->getCurrentStaffId();
+        
+        Log::info('Lab Request Item Status Updated', [
+            'item_uuid' => $item->item_uuid,
+            'old_status' => $oldStatus,
+            'new_status' => $status,
+            'staff_id' => $this->getCurrentStaffId(),
+            'timestamp' => now()->toIso8601String(),
+        ]);
+        
+        return $item->save();
+    });
+}
+
+/**
+ * Get the current authenticated staff ID
+ */
+    protected function getCurrentStaffId(): ?int
     {
-        return DB::transaction(function () use ($item, $status) {
-            $item->status = $status;
-            return $item->save();
-        });
+        $staff = \App\Models\Staff::where('user_id', auth()->id())->first();
+        return $staff?->id;
     }
 
     /**

@@ -263,31 +263,39 @@ class LabResultService implements LabResultServiceInterface
     /**
      * {@inheritdoc}
      */
-    public function updateResult(string $uuid, array $data): array
-    {
-        try {
-            $result = $this->resultRepository->findByUuid($uuid);
-            
-            if (!$result) {
-                return [
-                    'success' => false,
-                    'message' => 'Lab result not found',
-                    'error' => 'The requested lab result does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            // Cannot update verified results
-            if ($result->isVerified()) {
-                return [
-                    'success' => false,
-                    'message' => 'Cannot update verified result',
-                    'error' => 'This result has already been verified and cannot be modified',
-                    'data' => [],
-                ];
-            }
-            
-            // Validate value if being updated
+    /**
+ * {@inheritdoc}
+ */
+   /**
+ * {@inheritdoc}
+ */
+public function updateResult(string $uuid, array $data): array
+{
+    try {
+        $result = $this->resultRepository->findByUuid($uuid);
+        
+        if (!$result) {
+            return [
+                'success' => false,
+                'message' => 'Lab result not found',
+                'error' => 'The requested lab result does not exist',
+                'data' => [],
+            ];
+        }
+        
+        // Cannot update verified results
+        if ($result->isVerified()) {
+            return [
+                'success' => false,
+                'message' => 'Cannot update verified result',
+                'error' => 'This result has already been verified and cannot be modified',
+                'data' => [],
+            ];
+        }
+        
+        // Handle validation based on whether this is a template field result or manual entry
+        if ($result->template_field_id !== null) {
+            // Template field result - validate against field rules
             if (isset($data['value'])) {
                 $field = $this->fieldRepository->findById($result->template_field_id);
                 if ($field) {
@@ -301,61 +309,75 @@ class LabResultService implements LabResultServiceInterface
                         ];
                     }
                     
-                    // Update flag based on new value
+                    // Update flag based on validation
                     if (!isset($data['flag'])) {
                         $data['flag'] = $validationResult['flag'] ?? 'pending';
                     }
                 }
             }
-            
-            $updated = $this->resultRepository->update($result, $data);
-            
-            if (!$updated) {
-                return [
-                    'success' => false,
-                    'message' => 'Failed to update lab result',
-                    'error' => 'Unable to update lab result',
-                    'data' => [],
-                ];
-            }
-            
-            // Update parent item's result flag
-            $item = $this->itemRepository->findById($result->lab_request_item_id);
-            if ($item) {
-                $item->updateResultFlagFromResults();
-            }
-            
-            // Check if critical alert needs to be sent
-            if ($result->isCritical() && !$result->is_critical_alert_sent) {
-                Log::warning('Critical lab result detected after update', [
-                    'result_uuid' => $result->result_uuid,
-                    'lab_request_item_id' => $result->lab_request_item_id,
-                    'value' => $result->value,
-                ]);
-            }
-            
-            return [
-                'success' => true,
-                'message' => 'Lab result updated successfully',
-                'data' => [
-                    'result' => $result->fresh(),
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to update lab result', [
-                'uuid' => $uuid,
-                'data' => $data,
-                'error' => $e->getMessage(),
+        } else {
+            // Manual entry - preserve the flag exactly as sent from frontend
+            Log::info('Updating manual result entry', [
+                'result_uuid' => $uuid,
+                'value' => $data['value'] ?? null,
+                'flag_from_request' => $data['flag'] ?? 'not_provided',
             ]);
             
+            // ✅ IMPORTANT: For manual entries, ALWAYS use the flag from request
+            if (!isset($data['flag'])) {
+                $data['flag'] = 'pending'; // Only default if not provided
+            }
+        }
+        
+        // Update the result
+        $updated = $this->resultRepository->update($result, $data);
+        
+        if (!$updated) {
             return [
                 'success' => false,
                 'message' => 'Failed to update lab result',
-                'error' => 'An internal server error occurred',
+                'error' => 'Unable to update lab result',
                 'data' => [],
             ];
         }
+        
+        // Update parent item's result flag
+        $item = $this->itemRepository->findById($result->lab_request_item_id);
+        if ($item) {
+            $item->updateResultFlagFromResults();
+        }
+        
+        // Check if critical alert needs to be sent (only for non-manual results)
+        if ($result->template_field_id !== null && $result->isCritical() && !$result->is_critical_alert_sent) {
+            Log::warning('Critical lab result detected after update', [
+                'result_uuid' => $result->result_uuid,
+                'lab_request_item_id' => $result->lab_request_item_id,
+                'value' => $result->value,
+            ]);
+        }
+        
+        return [
+            'success' => true,
+            'message' => 'Lab result updated successfully',
+            'data' => [
+                'result' => $result->fresh(),
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to update lab result', [
+            'uuid' => $uuid,
+            'data' => $data,
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to update lab result',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}
@@ -764,21 +786,23 @@ class LabResultService implements LabResultServiceInterface
      * {@inheritdoc}
      */
     public function bulkCreateResults(string $itemUuid, array $results): array
-    {
-        try {
-            $item = $this->itemRepository->findByUuid($itemUuid);
-            
-            if (!$item) {
-                return [
-                    'success' => false,
-                    'message' => 'Lab request item not found',
-                    'error' => 'The requested lab request item does not exist',
-                    'data' => [],
-                ];
-            }
-            
-            // Validate all results before creating
-            foreach ($results as $resultData) {
+{
+    try {
+        $item = $this->itemRepository->findByUuid($itemUuid);
+        
+        if (!$item) {
+            return [
+                'success' => false,
+                'message' => 'Lab request item not found',
+                'error' => 'The requested lab request item does not exist',
+                'data' => [],
+            ];
+        }
+        
+        // Validate all results before creating
+        foreach ($results as $resultData) {
+            // Only validate if template_field_id is provided and not null
+            if (isset($resultData['template_field_id']) && $resultData['template_field_id'] !== null) {
                 $field = $this->fieldRepository->findById($resultData['template_field_id']);
                 if (!$field) {
                     return [
@@ -799,51 +823,67 @@ class LabResultService implements LabResultServiceInterface
                     ];
                 }
             }
-            
-            // Prepare results data
-            foreach ($results as &$resultData) {
+        }
+        
+        // Prepare results data
+        $preparedResults = [];
+        foreach ($results as $resultData) {
+            // If template_field_id is provided and not null, get field defaults
+            if (isset($resultData['template_field_id']) && $resultData['template_field_id'] !== null) {
                 $field = $this->fieldRepository->findById($resultData['template_field_id']);
-                if (!isset($resultData['reference_min']) && $field->reference_min !== null) {
-                    $resultData['reference_min'] = $field->reference_min;
+                
+                if ($field) {
+                    // Apply field defaults only if not already set
+                    if (!isset($resultData['reference_min']) && $field->reference_min !== null) {
+                        $resultData['reference_min'] = $field->reference_min;
+                    }
+                    if (!isset($resultData['reference_max']) && $field->reference_max !== null) {
+                        $resultData['reference_max'] = $field->reference_max;
+                    }
+                    if (!isset($resultData['unit']) && $field->unit !== null) {
+                        $resultData['unit'] = $field->unit;
+                    }
+                    if (!isset($resultData['flag']) && isset($resultData['value'])) {
+                        $validationResult = $this->validateValueAgainstField($field, $resultData['value']);
+                        $resultData['flag'] = $validationResult['flag'] ?? 'pending';
+                    }
                 }
-                if (!isset($resultData['reference_max']) && $field->reference_max !== null) {
-                    $resultData['reference_max'] = $field->reference_max;
-                }
-                if (!isset($resultData['unit']) && $field->unit !== null) {
-                    $resultData['unit'] = $field->unit;
-                }
-                if (!isset($resultData['flag']) && isset($resultData['value'])) {
-                    $validationResult = $this->validateValueAgainstField($field, $resultData['value']);
-                    $resultData['flag'] = $validationResult['flag'] ?? 'pending';
+            } else {
+                // For manual entries without template_field_id, set default flag
+                if (!isset($resultData['flag'])) {
+                    $resultData['flag'] = 'pending';
                 }
             }
             
-            $createdResults = $this->resultRepository->bulkCreate($item->id, $results);
-            
-            return [
-                'success' => true,
-                'message' => count($createdResults) . ' results created successfully',
-                'data' => [
-                    'results' => $createdResults,
-                    'item' => $item,
-                    'total_created' => count($createdResults),
-                ],
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to bulk create results', [
-                'item_uuid' => $itemUuid,
-                'results_count' => count($results),
-                'error' => $e->getMessage(),
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to create results',
-                'error' => 'An internal server error occurred',
-                'data' => [],
-            ];
+            $preparedResults[] = $resultData;
         }
+        
+        $createdResults = $this->resultRepository->bulkCreate($item->id, $preparedResults);
+        
+        return [
+            'success' => true,
+            'message' => count($createdResults) . ' results created successfully',
+            'data' => [
+                'results' => $createdResults,
+                'item' => $item,
+                'total_created' => count($createdResults),
+            ],
+        ];
+    } catch (\Exception $e) {
+        Log::error('Failed to bulk create results', [
+            'item_uuid' => $itemUuid,
+            'results_count' => count($results),
+            'error' => $e->getMessage(),
+        ]);
+        
+        return [
+            'success' => false,
+            'message' => 'Failed to create results',
+            'error' => 'An internal server error occurred',
+            'data' => [],
+        ];
     }
+}
 
     /**
      * {@inheritdoc}

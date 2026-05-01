@@ -9,6 +9,7 @@ use App\Repositories\Lab\Contracts\LabResultRepositoryInterface;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class LabResultRepository implements LabResultRepositoryInterface
 {
@@ -190,13 +191,23 @@ class LabResultRepository implements LabResultRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function create(array $data): LabResult
+   public function create(array $data): LabResult
     {
         return DB::transaction(function () use ($data) {
+            // ✅ Check if flag was provided
+            $flagProvided = isset($data['flag']);
+            
             $result = $this->model->create($data);
             
-            // Update the result flag based on value
-            $result->updateFlagFromValue();
+            // ✅ Only recalculate if NO flag was provided
+            if (!$flagProvided) {
+                $result->updateFlagFromValue();
+            } else {
+                Log::info('Creating result with provided flag', [
+                    'result_uuid' => $result->result_uuid,
+                    'flag' => $data['flag']
+                ]);
+            }
             
             // Update the parent item's result flag
             if ($result->labRequestItem) {
@@ -210,6 +221,7 @@ class LabResultRepository implements LabResultRepositoryInterface
     /**
      * {@inheritdoc}
      */
+ 
     public function bulkCreate(int $labRequestItemId, array $results): Collection
     {
         return DB::transaction(function () use ($labRequestItemId, $results) {
@@ -217,8 +229,17 @@ class LabResultRepository implements LabResultRepositoryInterface
             
             foreach ($results as $resultData) {
                 $resultData['lab_request_item_id'] = $labRequestItemId;
+                
+                // Check if flag was provided for this result
+                $flagProvided = isset($resultData['flag']);
+                
                 $result = $this->model->create($resultData);
-                $result->updateFlagFromValue();
+                
+                // ONLY recalculate if NO flag was provided
+                if (!$flagProvided) {
+                    $result->updateFlagFromValue();
+                }
+                
                 $createdResults[] = $result;
             }
             
@@ -235,23 +256,42 @@ class LabResultRepository implements LabResultRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function update(LabResult $result, array $data): bool
-    {
-        return DB::transaction(function () use ($result, $data) {
-            $updated = $result->update($data);
-            
-            if ($updated && isset($data['value'])) {
-                $result->updateFlagFromValue();
-                
-                // Update the parent item's result flag
-                if ($result->labRequestItem) {
-                    $result->labRequestItem->updateResultFlagFromResults();
-                }
-            }
-            
-            return $updated;
-        });
-    }
+/**
+ * {@inheritdoc}
+ */
+public function update(LabResult $result, array $data): bool
+{
+    return DB::transaction(function () use ($result, $data) {
+        // Check if flag was explicitly provided in the update data
+        $flagProvided = isset($data['flag']);
+        
+        // Log for debugging
+        Log::info('Repository update', [
+            'result_uuid' => $result->result_uuid,
+            'flag_provided' => $flagProvided,
+            'flag_value' => $data['flag'] ?? 'not_provided',
+            'template_field_id' => $result->template_field_id
+        ]);
+        
+        $updated = $result->update($data);
+        
+        // ONLY recalculate flag if:
+        // 1. Update was successful
+        // 2. Value was changed
+        // 3. NO flag was provided in the request
+        if ($updated && isset($data['value']) && !$flagProvided) {
+            Log::info('Recalculating flag from value (no flag provided)');
+            $result->updateFlagFromValue();
+        }
+        
+        // Update the parent item's result flag (aggregates ALL results)
+        if ($result->labRequestItem) {
+            $result->labRequestItem->updateResultFlagFromResults();
+        }
+        
+        return $updated;
+    });
+}
 
     /**
      * {@inheritdoc}

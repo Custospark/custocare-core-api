@@ -57,7 +57,7 @@ class LabResultResource extends JsonResource
                 ];
             }),
             
-            // Helper attributes
+            // Helper attributes - Using model's accessors and methods
             'formatted_value' => $this->formatted_value,
             'reference_range' => $this->reference_range,
             'flag_label' => $this->flag_label,
@@ -73,7 +73,8 @@ class LabResultResource extends JsonResource
             'needs_verification' => $this->needsVerification(),
             'age_in_hours' => $this->age_in_hours,
             'verification_delay_hours' => $this->verification_delay_hours,
-            'is_within_reference_range' => $this->isValueInReferenceRange($this->value),
+            // Fix: The model doesn't have isValueInReferenceRange method, so we'll calculate it here
+            'is_within_reference_range' => $this->calculateIsWithinReferenceRange(),
             
             // URLs
             // 'urls' => [
@@ -82,5 +83,23 @@ class LabResultResource extends JsonResource
             //     'field' => route('api.lab-template-fields.show', $this->templateField->field_uuid ?? ''),
             // ],
         ];
+    }
+    
+    /**
+     * Calculate if the value is within reference range.
+     * This is a helper method since the model doesn't have this method.
+     *
+     * @return bool|null
+     */
+    private function calculateIsWithinReferenceRange(): ?bool
+    {
+        if ($this->numeric_value === null) {
+            return null;
+        }
+        
+        $minCheck = $this->reference_min === null || $this->numeric_value >= $this->reference_min;
+        $maxCheck = $this->reference_max === null || $this->numeric_value <= $this->reference_max;
+        
+        return $minCheck && $maxCheck;
     }
 }

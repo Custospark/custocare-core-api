@@ -8,9 +8,11 @@ use App\Http\Requests\Lab\UpdateLabRequestItemRequest;
 use App\Http\Requests\Lab\BulkUpdateLabRequestItemsStatusRequest;
 use App\Http\Resources\Lab\LabRequestItemResource;
 use App\Http\Resources\Lab\LabRequestItemCollection;
+use App\Models\Staff;
 use App\Services\Lab\Contracts\LabRequestItemServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class LabRequestItemController extends Controller
@@ -287,7 +289,7 @@ class LabRequestItemController extends Controller
             
             $result = $this->itemService->markSampleCollected(
                 $uuid,
-                $request->collected_by_staff_id,
+                $request->collected_by_staff_id ?? Staff::where('user_id',Auth::id())->id,
                 $request->sample_identifier
             );
             

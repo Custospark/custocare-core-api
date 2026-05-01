@@ -108,6 +108,7 @@ class LabRequestItem extends Model
                 $model->item_uuid = (string) \Illuminate\Support\Str::uuid();
             }
         });
+        
     }
 
     /**
@@ -348,6 +349,7 @@ class LabRequestItem extends Model
         $this->status = 'sample_collected';
         $this->collected_at = now();
         $this->collected_by_staff_id = $collectedByStaffId;
+        $this->updated_by_staff_id = $collectedByStaffId;
         
         if ($sampleIdentifier) {
             $this->sample_identifier = $sampleIdentifier;

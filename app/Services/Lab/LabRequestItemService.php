@@ -412,8 +412,8 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ];
             }
             
-            // Update parent request status if needed(Not needed at the moment)
-            // $this->updateParentRequestStatus($item->lab_request_id);
+            // Update parent request status if needed
+            $this->updateParentRequestStatus($item->lab_request_id);
             
             return [
                 'success' => true,
@@ -712,8 +712,8 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ];
             }
             
-            // Update parent request status(Not needed at the moment)
-            // $this->updateParentRequestStatus($item->lab_request_id);
+            // Update parent request status
+            $this->updateParentRequestStatus($item->lab_request_id);
             
             return [
                 'success' => true,
@@ -1116,19 +1116,22 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             return;
         }
         
-        $items = $request->items;
-        $totalItems = $items->count();
-        $verifiedItems = $items->where('status', 'verified')->count();
-        $completedItems = $items->where('status', 'completed')->count();
-        $cancelledItems = $items->where('status', 'cancelled')->count();
-        $inProgressItems = $items->where('status', 'in_progress')->count();
+        // $items = $request->items;
+        // $totalItems = $items->count();
+        // $verifiedItems = $items->where('status', 'verified')->count();
+        // $completedItems = $items->where('status', 'completed')->count();
+        // $cancelledItems = $items->where('status', 'cancelled')->count();
+        // $inProgressItems = $items->where('status', 'in_progress')->count();
         
-        if ($verifiedItems === $totalItems && $totalItems > 0) {
-            $this->requestRepository->updateStatus($request, 'reviewed');
-        } elseif ($completedItems + $cancelledItems === $totalItems) {
-            $this->requestRepository->updateStatus($request, 'completed');
-        } elseif ($inProgressItems > 0 || $completedItems > 0) {
+        // if ($verifiedItems === $totalItems && $totalItems > 0) {
+        //     $this->requestRepository->updateStatus($request, 'reviewed');
+        // } elseif ($completedItems + $cancelledItems === $totalItems) {
+        //     $this->requestRepository->updateStatus($request, 'completed');
+        // } elseif ($inProgressItems > 0 || $completedItems > 0) {
+        //     $this->requestRepository->updateStatus($request, 'in_progress');
+        // }
+
+        //Note: For now we just need to set the status to inprogress,business logic may change in the future.
             $this->requestRepository->updateStatus($request, 'in_progress');
-        }
     }
 }

@@ -21,7 +21,7 @@ class DiagnosisResource extends JsonResource
             'facility_id' => $this->facility_id,
             'visit_id' => $this->visit_id,
             'patient_id' => $this->patient_id,
-            'staff_id' => $this->staff_id,
+            'patient_number' => $this->patient->patient_uuid,
             
             // Diagnosis Data
             'diagnosis_code' => $this->diagnosis_code,
@@ -85,7 +85,7 @@ class DiagnosisResource extends JsonResource
                     'id' => $this->patient->id,
                     'first_name' => $this->patient->user->first_name ?? null,
                     'last_name' => $this->patient->user->last_name ?? null,
-                    'full_name' => ($this->patient->user->first_name ?? '') . ' ' . ($this->patient->last_name ?? ''),
+                    'full_name' => ($this->patient->user->first_name ?? '') . ' ' . ($this->patient->user->last_name ?? ''),
                 ];
             }),
             

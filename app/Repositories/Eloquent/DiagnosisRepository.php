@@ -153,6 +153,7 @@ class DiagnosisRepository implements DiagnosisRepositoryInterface
     public function getByVisit(int $visitId): Collection
     {
         return $this->model->where('visit_id', $visitId)
+            ->with(['facility', 'patient', 'staff', 'verifier'])
             ->orderBy('diagnosis_type', 'asc')
             ->orderBy('created_at', 'desc')
             ->get();

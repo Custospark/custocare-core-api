@@ -40,5 +40,9 @@ return [
     App\Providers\VisitServiceProvider::class,
     App\Providers\RepositoryServiceProvider::class,
     App\Providers\LabServiceProvider::class,
+    App\Providers\ClinicalNoteServiceProvider::class,
+    App\Providers\DiagnosisServiceProvider::class,
+    App\Providers\VitalServiceProvider::class,
+    App\Providers\ConsultationServiceProvider::class,
 
 ];

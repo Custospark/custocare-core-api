@@ -141,12 +141,13 @@ class VitalRepository implements VitalRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function getByVisit(int $visitId): Collection
-    {
-        return $this->model->forVisit($visitId)
-            ->orderBy('measured_at', 'desc')
-            ->get();
-    }
+   public function getByVisit(int $visitId): Collection
+{
+    return $this->model->forVisit($visitId)
+        ->with(['facility', 'patient', 'staff'])
+        ->orderBy('measured_at', 'desc')
+        ->get();
+}
 
     /**
      * {@inheritdoc}

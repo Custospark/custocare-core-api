@@ -22,6 +22,8 @@ class VitalResource extends JsonResource
             'visit_id' => $this->visit_id,
             'patient_id' => $this->patient_id,
             'staff_id' => $this->staff_id,
+            'patient_number' => $this->patient->patient_uuid,
+            'patient_name'=>$this->patient->user->last_name.' '.$this->patient->user->first_name,
             
             // Core Vital Signs
             'temperature' => $this->temperature,

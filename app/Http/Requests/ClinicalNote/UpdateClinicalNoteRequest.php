@@ -34,7 +34,7 @@ class UpdateClinicalNoteRequest extends FormRequest
             'review_of_systems' => 'nullable|string',
             'past_medical_history' => 'nullable|string',
             'note_type' => 'nullable|in:initial,follow_up,progress,discharge,consultation',
-            'note_status' => 'nullable|in:draft,final,amended,cancelled',
+            'note_status' => 'nullable|in:draft,final,amended,cancelled,active',
             'noted_at' => 'nullable|date',
             'signature' => 'nullable|string|max:255',
             'custom_fields' => 'nullable|array',
@@ -49,7 +49,7 @@ class UpdateClinicalNoteRequest extends FormRequest
     {
         return [
             'note_type.in' => 'Invalid note type. Must be: initial, follow_up, progress, discharge, consultation',
-            'note_status.in' => 'Invalid note status. Must be: draft, final, amended, cancelled',
+            'note_status.in' => 'Invalid note status. Must be: draft, final, amended, cancelled,active',
             'noted_at.date' => 'Invalid date format for noted_at',
         ];
     }

@@ -21,8 +21,12 @@ class ClinicalNoteResource extends JsonResource
             'uuid' => $this->uuid ?? null,
             'facility_id' => $this->facility_id,
             'visit_id' => $this->visit_id,
+            //Patient information
             'patient_id' => $this->patient_id,
-            'staff_id' => $this->staff_id,
+            'patient_number' => $this->patient->patient_uuid,
+            'patient_name'=>$this->patient->user->last_name.' '.$this->patient->user->first_name,
+            //staff information
+            'staff_name' =>'Dr. '.$this->staff->user->last_name.' '.$this->staff->user->first_name,
             
             // Clinical Content
             'subjective' => $this->subjective,

@@ -204,6 +204,7 @@ class ClinicalNoteService implements ClinicalNoteServiceInterface
 
             // Add staff_id and set default noted_at if not provided
             $validatedData['staff_id'] = $createdByStaffId;
+            $validatedData['note_status'] = 'active';
             
             if (!isset($validatedData['noted_at'])) {
                 $validatedData['noted_at'] = now();
@@ -258,7 +259,7 @@ class ClinicalNoteService implements ClinicalNoteServiceInterface
         DB::beginTransaction();
 
         try {
-            $note = ClinicalNote::where('facility_uuid', $uuid)->first();
+            $note = ClinicalNote::where('uuid', $uuid)->first();
 
             if (!$note) {
                 return [

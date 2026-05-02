@@ -199,6 +199,8 @@ class ClinicalNoteController extends Controller
      */
     public function update(UpdateClinicalNoteRequest $request, string $uuid): JsonResponse
     {
+        Log::info("Herer");
+        
         try {
             $validatedData = array_filter($request->validated(), fn($value) => !is_null($value));
             $updatedByStaffId = $request->user()?->id ?? 1;

@@ -37,7 +37,7 @@ class StoreClinicalNoteRequest extends FormRequest
             'plan' => 'nullable|string',
             'review_of_systems' => 'nullable|string',
             'past_medical_history' => 'nullable|string',
-            'note_type' => 'nullable|in:initial,follow_up,progress,discharge,consultation',
+            'note_type' => 'nullable|in:initial,follow_up,progress,discharge,consultation,active',
             'note_status' => 'nullable|in:draft,final,amended,cancelled',
             'noted_at' => 'nullable|date',
             'signature' => 'nullable|string|max:255',
@@ -61,7 +61,7 @@ class StoreClinicalNoteRequest extends FormRequest
             'patient_id.exists' => 'The selected patient does not exist',
             'staff_id.exists' => 'The selected staff member does not exist',
             'note_type.in' => 'Invalid note type. Must be: initial, follow_up, progress, discharge, consultation',
-            'note_status.in' => 'Invalid note status. Must be: draft, final, amended, cancelled',
+            'note_status.in' => 'Invalid note status. Must be: draft, final, amended, cancelled,active',
             'noted_at.date' => 'Invalid date format for noted_at',
             'parent_note_id.exists' => 'The parent note does not exist',
         ];

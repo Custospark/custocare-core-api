@@ -18,7 +18,7 @@ class ClinicalNoteResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'uuid' => $this->facility_uuid ?? null,
+            'uuid' => $this->uuid ?? null,
             'facility_id' => $this->facility_id,
             'visit_id' => $this->visit_id,
             'patient_id' => $this->patient_id,

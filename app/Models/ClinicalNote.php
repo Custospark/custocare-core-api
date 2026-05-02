@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;  
+
 
 class ClinicalNote extends Model
 {
@@ -27,6 +29,7 @@ class ClinicalNote extends Model
      */
     protected $fillable = [
         'facility_id',
+         'uuid', 
         'visit_id',
         'patient_id',
         'staff_id',
@@ -66,6 +69,21 @@ class ClinicalNote extends Model
         'note_type' => 'progress',
         'note_status' => 'draft',
     ];
+
+        /**
+     * Boot the model and register event listeners.
+     * Automatically generates UUID when creating a new clinical note.
+     */
+    protected static function boot(): void
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            if (empty($model->uuid)) {
+                $model->uuid = (string) Str::uuid();
+            }
+        });
+    }
 
     // =========================================================================
     // RELATIONSHIPS

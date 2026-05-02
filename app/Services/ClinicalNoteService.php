@@ -270,15 +270,15 @@ class ClinicalNoteService implements ClinicalNoteServiceInterface
                 ];
             }
 
-            // Only draft notes can be edited
-            if (!$note->isDraft()) {
-                return [
-                    'success' => false,
-                    'data' => null,
-                    'message' => 'Only draft notes can be edited',
-                    'error' => 'Note is not in draft status',
-                ];
-            }
+            // Note:Allow editing of notes not in draft states,business rules may chnage in the future.
+            // if (!$note->isDraft()) {
+            //     return [
+            //         'success' => false,
+            //         'data' => null,
+            //         'message' => 'Only draft notes can be edited',
+            //         'error' => 'Note is not in draft status',
+            //     ];
+            // }
 
             $validatedData = $this->validateNoteData($data, $note);
 

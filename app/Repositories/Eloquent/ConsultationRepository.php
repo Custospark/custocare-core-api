@@ -161,12 +161,14 @@ class ConsultationRepository implements ConsultationRepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function getByVisit(int $visitId): Collection
-    {
-        return $this->model->forVisit($visitId)
-            ->orderBy('requested_at', 'desc')
-            ->get();
-    }
+   public function getByVisit(int $visitId): Collection
+{
+    return $this->model->forVisit($visitId)
+        ->with(['facility', 'patient', 'requestingStaff', 'consultantStaff'])
+        ->whereNotIn('request_status', ['cancelled', 'declined'])
+        ->orderBy('requested_at', 'desc')
+        ->get();
+}
 
     /**
      * {@inheritdoc}

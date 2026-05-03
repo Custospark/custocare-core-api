@@ -73,6 +73,8 @@ class Consultation extends Model
         'scheduled_for' => 'datetime',
         'followup_by' => 'datetime',
         'deleted_at' => 'datetime',
+        'requires_followup' => 'boolean', 
+
     ];
 
     /**

@@ -21,6 +21,7 @@ class ConsultationResource extends JsonResource
             'facility_id' => $this->facility_id,
             'visit_id' => $this->visit_id,
             'patient_id' => $this->patient_id,
+            'patient_number' => $this->patient->patient_uuid,
             'requesting_staff_id' => $this->requesting_staff_id,
             'consultant_staff_id' => $this->consultant_staff_id,
             

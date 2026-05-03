@@ -231,13 +231,13 @@ class ConsultationService implements ConsultationServiceInterface
                 ];
             }
 
-            // Only pending consultations can be updated directly
-            if (!$consultation->isPending()) {
+            // Only pending consultations can be updated directly(Allow for now)
+            if ($consultation->isCompleted()) {
                 return [
                     'success' => false,
                     'data' => null,
-                    'message' => 'Only pending consultations can be updated',
-                    'error' => 'Consultation is not pending',
+                    'message' => 'Completed consultations can not be updated',
+                    'error' => 'Consultation already completed.',
                 ];
             }
 

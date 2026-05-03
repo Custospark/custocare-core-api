@@ -29,11 +29,12 @@ class PrescriptionResource extends JsonResource
             // Relationships
             'patient' => [
                 'id' => $this->patient->id,
-                'name' => $this->patient->name ?? 'Unknown',
+                'number' => $this->patient->patient_uuid,
+                'name' => $this->patient->user->first_name . ' ' . $this->patient->user->last_name ?? 'Unknown',
             ],
           'prescribed_by' => [
             'id' => $this->prescribedBy->id,
-            'name' => $this->prescribedBy ? 'Dr. ' . ($this->prescribedBy->first_name . ' ' . $this->prescribedBy->last_name) : 'Unknown',
+            'name' => $this->prescribedBy ? ($this->prescribedBy->first_name . ' ' . $this->prescribedBy->last_name) : 'Unknown',
             'type' => $this->prescriber_type,
         ],
             'clinical_template' => $this->clinical_template_id ? [

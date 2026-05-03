@@ -14,12 +14,12 @@ class AllergyRepository implements AllergyRepositoryInterface
 {
     public function find(int $id): ?Allergy
     {
-        return Allergy::with(['patient', 'recordedBy', 'visit'])->find($id);
+        return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])->find($id);
     }
 
     public function findAllForPatient(int $patientId): Collection
     {
-        return Allergy::with(['recordedBy', 'visit'])
+        return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])
             ->where('patient_id', $patientId)
             ->orderBy('created_at', 'desc')
             ->get();
@@ -27,7 +27,8 @@ class AllergyRepository implements AllergyRepositoryInterface
 
     public function getActiveForPatient(int $patientId): Collection
     {
-        return Allergy::where('patient_id', $patientId)
+        return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])
+            ->where('patient_id', $patientId)
             ->where('is_active', true)
             ->whereNull('resolved_at')
             ->orderBy('severity', 'desc')
@@ -36,7 +37,7 @@ class AllergyRepository implements AllergyRepositoryInterface
 
     public function getAllPaginated(int $perPage = 15): LengthAwarePaginator
     {
-        return Allergy::with(['patient.user', 'recordedBy'])
+        return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
     }

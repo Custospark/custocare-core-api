@@ -26,6 +26,12 @@ class AllergyResource extends JsonResource
             'updated_at' => $this->updated_at?->toISOString(),
             
             // Relationships
+            'patient' => $this->whenLoaded('patient', function () {
+                return [
+                    'patient_number' => $this->patient->patient_uuid,
+                    'name' => $this->patient->user->first_name . ' ' . $this->patient->user->last_name,
+                ];
+            }),
             'recorded_by' => $this->whenLoaded('recordedBy', function () {
                 return [
                     'id' => $this->recordedBy->id,

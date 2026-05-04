@@ -14,6 +14,13 @@ trait BillingHelpers
      *
      * We intentionally keep this rule narrow. A visit with an editable billing
      * cycle is still billable because the cycle may be appended or adjusted.
+     *
+     * We do not gate on {@see Visit::$payment_status} here. That field is
+     * denormalized and can lag behind billing cycles (e.g. saved as paid in full
+     * while a new charge still needs posting, or out of sync when no cycle row
+     * exists). Whether a visit's bill is actually locked is enforced in
+     * {@see self::checkExistingBilling()}; new charges and balances are derived
+     * in {@see self::determineBillingState()}.
      */
     public function canBeBilled(Visit $visit, ?BillingCycle $existingBillingCycle = null): array
     {
@@ -30,14 +37,6 @@ trait BillingHelpers
                 'success' => false,
                 'message' => 'Cannot bill a visit in a terminal phase.',
                 'errors' => ['visit' => ['This visit is already in a terminal phase.']],
-            ];
-        }
-
-        if ($visit->payment_status === 'paid_in_full' && !$existingBillingCycle) {
-            return [
-                'success' => false,
-                'message' => 'Visit payment is already settled.',
-                'errors' => ['visit' => ['This visit has already been paid in full.']],
             ];
         }
 

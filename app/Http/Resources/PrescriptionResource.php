@@ -13,6 +13,9 @@ class PrescriptionResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'facility_id' => $this->facility_id,
+            'patient_id' => $this->patient_id,
+            'visit_id' => $this->visit_id,
             'prescription_number' => $this->prescription_number,
             'prescription_date' => $this->prescription_date->format('Y-m-d'),
             'valid_until' => $this->valid_until?->format('Y-m-d'),
@@ -25,48 +28,68 @@ class PrescriptionResource extends JsonResource
             'patient_education_notes' => $this->patient_education_notes,
             'follow_up_instructions' => $this->follow_up_instructions,
             'follow_up_date' => $this->follow_up_date?->format('Y-m-d'),
-            
-            // Relationships
-            'patient' => [
+
+            'patient' => $this->patient ? [
                 'id' => $this->patient->id,
                 'number' => $this->patient->patient_uuid,
-                'name' => $this->patient->user->first_name . ' ' . $this->patient->user->last_name ?? 'Unknown',
-            ],
-          'prescribed_by' => [
-            'id' => $this->prescribedBy->id,
-            'name' => $this->prescribedBy ? ($this->prescribedBy->first_name . ' ' . $this->prescribedBy->last_name) : 'Unknown',
-            'type' => $this->prescriber_type,
-        ],
-            'clinical_template' => $this->clinical_template_id ? [
+                'name' => $this->fullName(
+                    $this->patient->user?->first_name,
+                    $this->patient->user?->last_name,
+                ),
+            ] : null,
+
+            'prescribed_by' => $this->prescribedBy ? [
+                'id' => $this->prescribedBy->id,
+                'name' => $this->fullName(
+                    $this->prescribedBy->first_name,
+                    $this->prescribedBy->last_name,
+                ),
+                'type' => $this->prescriber_type,
+            ] : null,
+
+            'clinical_template' => $this->clinicalTemplate ? [
                 'id' => $this->clinicalTemplate->id,
                 'name' => $this->clinicalTemplate->name,
             ] : null,
-            
-            // Items
+            'visit' => $this->visit ? [
+                'id' => $this->visit->id,
+                'visit_uuid' => $this->visit->visit_uuid,
+                'visit_date' => $this->visit->arrived_at?->format('Y-m-d H:i:s'),
+                'facility_name' => $this->visit->facility?->name,
+            ] : null,
+
             'items' => PrescriptionItemResource::collection($this->whenLoaded('items')),
-            
-            // Statistics
-            'total_items' => $this->items->count(),
-            'total_quantity' => $this->items->sum('total_quantity'),
-            
-            // Timestamps
+            'total_items' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->count(),
+            ),
+            'total_quantity' => $this->when(
+                $this->relationLoaded('items'),
+                fn () => $this->items->sum('total_quantity'),
+            ),
+
             'created_at' => $this->created_at->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
-            
-            // Dispensing info
+
             'dispensing_info' => [
                 'dispensed_at' => $this->dispensed_at?->format('Y-m-d H:i:s'),
                 'dispensed_by_name' => $this->dispensed_by_name,
                 'dispensed_pharmacy' => $this->dispensed_pharmacy,
                 'dispensing_location' => $this->dispensing_location,
             ],
-            
-            // Cancellation info
+
             'cancellation_info' => $this->cancelled_at ? [
                 'cancelled_at' => $this->cancelled_at->format('Y-m-d H:i:s'),
                 'reason' => $this->cancellation_reason,
                 'notes' => $this->cancellation_notes,
             ] : null,
         ];
+    }
+
+    private function fullName(?string $first, ?string $last): string
+    {
+        $name = trim(implode(' ', array_filter([$first, $last])));
+
+        return $name !== '' ? $name : 'Unknown';
     }
 }

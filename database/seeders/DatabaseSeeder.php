@@ -102,13 +102,16 @@ class DatabaseSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
         $roleToModuleMap = [
-            'medical-doctor' => ['account'],
-            'pharmacist' => ['account'],
-            'registered-nurse' => ['account'],
-            'receptionist' => ['account'],
+            // Clinician-focused defaults: each role lands in its core workspace.
+            'medical-doctor' => ['account', 'clinical'],
+            'pharmacist' => ['account', 'pharmacy'],
+            'registered-nurse' => ['account', 'nursing'],
+            'laboratory-scientist' => ['account', 'laboratory'],
+            'billing-officer' => ['account', 'billing'],
+
+            // Front-desk and admin roles keep broad operational access.
+            'receptionist' => ['account', 'medical_records'],
             'facility-administrator' => ['account','clinical','pharmacy','nursing','medical_records','laboratory','billing','administration'],
-            'laboratory-scientist' => ['account'],
-            'billing-officer' => ['account'],
         ];
 
         foreach ($roleToModuleMap as $roleCode => $moduleCodes) {

@@ -12,6 +12,11 @@ class MedicationDispense extends Model
     use HasFactory, HasUuids;
 
     /**
+     * Underlying table (migrations may not be applied on all environments; use Schema::hasTable before querying).
+     */
+    protected $table = 'medication_dispenses';
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var array<int, string>

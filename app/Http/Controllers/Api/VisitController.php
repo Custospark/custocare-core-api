@@ -1679,6 +1679,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
             $currentAssignment = data_get($visit->metadata, 'nursing_ward_bed');
             $currentWardId = (int) data_get($currentAssignment, 'ward_id');
             $currentBedLabel = trim((string) data_get($currentAssignment, 'bed_label', ''));
+            $currentRoomLabel = trim((string) data_get($currentAssignment, 'room_label', ''));
             $currentBedId = (int) data_get($currentAssignment, 'bed_id');
 
             $wardPayload = $wards->map(function (Ward $ward) use (
@@ -1704,7 +1705,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     ->where('ward_id', $wardId)
                     ->whereIn('status', ['available', 'occupied', 'maintenance'])
                     ->orderBy('bed_label')
-                    ->get(['id', 'bed_label', 'status']);
+                    ->get(['id', 'room_label', 'bed_label', 'status']);
 
                 $occupiedBeds = $beds
                     ->filter(function ($bed) use ($occupiedBedIds, $visit, $currentBedId) {
@@ -1713,7 +1714,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         }
                         return isset($occupiedBedIds[(int) $bed->id]) && $occupiedBedIds[(int) $bed->id] !== $visit->visit_uuid;
                     })
-                    ->map(fn ($bed) => ['id' => $bed->id, 'bed_label' => $bed->bed_label])
+                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $bed->room_label, 'bed_label' => $bed->bed_label])
                     ->values();
 
                 $availableBedList = $beds
@@ -1723,7 +1724,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         }
                         return !isset($occupiedBedIds[(int) $bed->id]) && $bed->status === 'available';
                     })
-                    ->map(fn ($bed) => ['id' => $bed->id, 'bed_label' => $bed->bed_label])
+                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $bed->room_label, 'bed_label' => $bed->bed_label])
                     ->values();
 
                 return [
@@ -1758,6 +1759,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         'ward_id' => $currentWardId ?: null,
                         'ward_name' => $currentWard?->name,
                         'bed_id' => $currentBedId ?: null,
+                        'room_label' => $currentRoomLabel ?: null,
                         'bed_label' => $currentBedLabel ?: null,
                         'admission_action' => data_get($currentAssignment, 'admission_action'),
                         'transfer_reason' => data_get($currentAssignment, 'transfer_reason'),
@@ -1883,11 +1885,18 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
 
             $staffId = Staff::query()->where('user_id', Auth::id())->value('id');
 
-            $metadata = $visit->metadata ?? [];
+            $metadata = $visit->metadata;
+            if (is_string($metadata)) {
+                $decoded = json_decode($metadata, true);
+                $metadata = is_array($decoded) ? $decoded : [];
+            } elseif (!is_array($metadata)) {
+                $metadata = [];
+            }
             $metadata['nursing_ward_bed'] = [
                 'ward_id' => $ward->id,
                 'ward_name' => $ward->name,
                 'bed_id' => $bed->id,
+                'room_label' => $bed->room_label,
                 'bed_label' => $bed->bed_label,
                 'admission_action' => $validated['admission_action'],
                 'transfer_reason' => $validated['admission_action'] === 'transfer'

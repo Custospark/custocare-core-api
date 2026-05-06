@@ -108,6 +108,7 @@ class WardController extends Controller
         $beds = WardBed::query()
             ->where('facility_id', $facilityId)
             ->where('ward_id', $ward->id)
+            ->orderByRaw('COALESCE(room_label, "")')
             ->orderBy('bed_label')
             ->get();
 
@@ -122,6 +123,7 @@ class WardController extends Controller
         try {
             $validated = $request->validate([
                 'facility_id' => ['required', 'integer', 'exists:facilities,id'],
+                'room_label' => ['nullable', 'string', 'max:50'],
                 'bed_label' => ['required', 'string', 'max:50'],
                 'status' => ['nullable', 'in:available,occupied,maintenance,inactive'],
                 'note' => ['nullable', 'string'],
@@ -133,6 +135,7 @@ class WardController extends Controller
             $bed = WardBed::create([
                 'facility_id' => $facilityId,
                 'ward_id' => $ward->id,
+                'room_label' => isset($validated['room_label']) ? trim((string) $validated['room_label']) : null,
                 'bed_label' => trim($validated['bed_label']),
                 'status' => $validated['status'] ?? 'available',
                 'note' => $validated['note'] ?? null,
@@ -162,6 +165,7 @@ class WardController extends Controller
             $validated = $request->validate([
                 'facility_id' => ['required', 'integer', 'exists:facilities,id'],
                 'ward_id' => ['sometimes', 'integer', 'exists:wards,id'],
+                'room_label' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'bed_label' => ['sometimes', 'string', 'max:50'],
                 'status' => ['sometimes', 'in:available,occupied,maintenance,inactive'],
                 'note' => ['sometimes', 'nullable', 'string'],
@@ -176,6 +180,9 @@ class WardController extends Controller
 
             $bed->update([
                 'ward_id' => $validated['ward_id'] ?? $bed->ward_id,
+                'room_label' => array_key_exists('room_label', $validated)
+                    ? trim((string) ($validated['room_label'] ?? '')) ?: null
+                    : $bed->room_label,
                 'bed_label' => isset($validated['bed_label']) ? trim($validated['bed_label']) : $bed->bed_label,
                 'status' => $validated['status'] ?? $bed->status,
                 'note' => array_key_exists('note', $validated) ? $validated['note'] : $bed->note,

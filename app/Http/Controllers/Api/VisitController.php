@@ -1625,12 +1625,22 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
     public function wardBedOptions(Request $request, string $uuid): JsonResponse
     {
         try {
-            $facilityId = (int) $request->header('X-Facility-Id');
+            $requestedFacilityId = (int) (
+                $request->header('X-Facility-Id')
+                ?? $request->query('facility_id')
+                ?? $request->input('facility_id')
+            );
+
+            // Fallback: derive facility from visit UUID when header/context is absent.
+            $baseVisit = Visit::query()->where('visit_uuid', $uuid)->first(['id', 'visit_uuid', 'facility_id']);
+            $facilityId = $requestedFacilityId > 0
+                ? $requestedFacilityId
+                : (int) ($baseVisit?->facility_id ?? 0);
             if (!$facilityId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Missing X-Facility-Id header.',
-                    'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                    'message' => 'Missing facility context.',
+                    'errors' => ['facility_id' => ['Provide X-Facility-Id header or facility_id query/body value.']],
                     'data' => [],
                 ], 422);
             }
@@ -1658,10 +1668,12 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 ->where('facility_id', $facilityId)
                 ->whereIn('status', ['active', 'in_progress'])
                 ->whereNull('deleted_at')
-                ->get(['id', 'visit_uuid', 'metadata']);
+                ->with(['patient.user:id,first_name,last_name,display_name'])
+                ->get(['id', 'visit_uuid', 'patient_id', 'metadata', 'updated_at', 'created_at']);
 
             $occupancyByWard = [];
             $occupiedBedIds = [];
+            $occupiedBedMeta = [];
 
             foreach ($activeVisits as $activeVisit) {
                 $assignment = data_get($activeVisit->metadata, 'nursing_ward_bed');
@@ -1676,6 +1688,18 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
 
                 if ($bedId > 0) {
                     $occupiedBedIds[$bedId] = $activeVisit->visit_uuid;
+                    $patientName = trim((string) (
+                        data_get($activeVisit, 'patient.user.display_name')
+                        ?: ((data_get($activeVisit, 'patient.user.first_name', '') . ' ' . data_get($activeVisit, 'patient.user.last_name', '')))
+                    ));
+                    $occupiedBedMeta[$bedId] = [
+                        'visit_uuid' => $activeVisit->visit_uuid,
+                        'patient_uuid' => data_get($activeVisit, 'patient.patient_uuid'),
+                        'patient_name' => $patientName !== '' ? $patientName : null,
+                        'occupied_at' => data_get($assignment, 'updated_at')
+                            ?: optional($activeVisit->updated_at)?->toISOString()
+                            ?: optional($activeVisit->created_at)?->toISOString(),
+                    ];
                 }
             }
 
@@ -1691,7 +1715,8 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 $visit,
                 $facilityId,
                 $occupiedBedIds,
-                $currentBedId
+                $currentBedId,
+                $occupiedBedMeta
             ) {
                 $wardId = (int) $ward->id;
                 $capacityOperational = (int) ($ward->capacity_operational ?? 0);
@@ -1714,7 +1739,18 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         }
                         return isset($occupiedBedIds[(int) $bed->id]) && $occupiedBedIds[(int) $bed->id] !== $visit->visit_uuid;
                     })
-                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null, 'bed_label' => $bed->bed_label])
+                    ->map(function ($bed) use ($occupiedBedMeta) {
+                        $bedId = (int) $bed->id;
+                        return [
+                            'id' => $bed->id,
+                            'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null,
+                            'bed_label' => $bed->bed_label,
+                            'visit_uuid' => data_get($occupiedBedMeta, "{$bedId}.visit_uuid"),
+                            'patient_uuid' => data_get($occupiedBedMeta, "{$bedId}.patient_uuid"),
+                            'patient_name' => data_get($occupiedBedMeta, "{$bedId}.patient_name"),
+                            'occupied_at' => data_get($occupiedBedMeta, "{$bedId}.occupied_at"),
+                        ];
+                    })
                     ->values();
 
                 $availableBedList = $beds
@@ -1757,6 +1793,15 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 })
                 ->values();
 
+            Log::info('wardBedOptions result summary', [
+                'visit_uuid' => $uuid,
+                'auth_user_id' => Auth::id(),
+                'requested_facility_id' => $requestedFacilityId ?: null,
+                'resolved_facility_id' => $facilityId,
+                'wards_returned' => $wardPayload->count(),
+                'has_current_ward' => $currentWardId > 0,
+            ]);
+
             $wardById = $wards->keyBy('id');
             $currentWard = $currentWardId > 0 ? $wardById->get($currentWardId) : null;
 
@@ -1797,12 +1842,16 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
     public function assignWardBed(Request $request, string $uuid): JsonResponse
     {
         try {
-            $facilityId = (int) $request->header('X-Facility-Id');
+            $facilityId = (int) (
+                $request->header('X-Facility-Id')
+                ?? $request->query('facility_id')
+                ?? $request->input('facility_id')
+            );
             if (!$facilityId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Missing X-Facility-Id header.',
-                    'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                    'message' => 'Missing facility context.',
+                    'errors' => ['facility_id' => ['Provide X-Facility-Id header or facility_id query/body value.']],
                     'data' => [],
                 ], 422);
             }

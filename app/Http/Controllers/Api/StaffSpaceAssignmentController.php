@@ -25,7 +25,11 @@ class StaffSpaceAssignmentController extends Controller
      */
     public function currentOccupancy(Request $request): JsonResponse
     {
-        Log::info('Current occupancy request', ['query' => $request->all()]);
+        Log::info('Current occupancy request', [
+            'query' => $request->all(),
+            'auth_user_id' => Auth::id(),
+            'has_authorization_header' => $request->hasHeader('Authorization'),
+        ]);
 
         $validated = $request->validate([
             'facility_id' => ['required', 'integer', 'min:1', 'exists:facilities,id'],
@@ -51,6 +55,13 @@ class StaffSpaceAssignmentController extends Controller
 
             // Get paginated spaces with their current assignments
             $spaces = $this->service->listCurrentOccupancy($facilityId, $filters, $perPage);
+            Log::info('Current occupancy result summary', [
+                'facility_id' => $facilityId,
+                'total' => $spaces->total(),
+                'returned' => $spaces->count(),
+                'current_page' => $spaces->currentPage(),
+                'auth_user_id' => Auth::id(),
+            ]);
             
             // Load staff resources efficiently for all assignments
             $this->loadStaffResourcesForSpaces($spaces, $facilityId);

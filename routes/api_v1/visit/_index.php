@@ -28,6 +28,8 @@ Route::prefix('visits')->middleware(['auth:sanctum'])->group(function () {
     Route::post('/{visit}/clinical-care/end', [VisitController::class, 'endClinicalCare'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/cancel', [VisitController::class, 'cancel'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/register', [VisitController::class, 'register'])->where('visit', '[a-f0-9-]{36}');
+    Route::get('/{visit}/ward-bed-options', [VisitController::class, 'wardBedOptions'])->where('visit', '[a-f0-9-]{36}');
+    Route::post('/{visit}/ward-bed-assignment', [VisitController::class, 'assignWardBed'])->where('visit', '[a-f0-9-]{36}');
     
     // Filtered routes
     Route::get('/facility/{facilityId}', [VisitController::class, 'byFacility'])->where('facilityId', '[0-9]+');

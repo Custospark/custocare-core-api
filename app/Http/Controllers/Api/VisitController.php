@@ -1815,6 +1815,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         'room_label' => $currentRoomLabel ?: null,
                         'bed_label' => $currentBedLabel ?: null,
                         'admission_action' => data_get($currentAssignment, 'admission_action'),
+                        'transfer_level' => data_get($currentAssignment, 'transfer_level'),
                         'transfer_reason' => data_get($currentAssignment, 'transfer_reason'),
                         'updated_at' => data_get($currentAssignment, 'updated_at'),
                     ],
@@ -1860,6 +1861,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 'ward_id' => ['required', 'integer', 'exists:wards,id'],
                 'bed_id' => ['required', 'integer', 'exists:ward_beds,id'],
                 'admission_action' => ['required', 'in:admit,assign_bed,transfer'],
+                'transfer_level' => ['nullable', 'in:ward,room,bed'],
                 'transfer_reason' => ['nullable', 'string', 'max:500'],
             ]);
 
@@ -1874,111 +1876,219 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     'data' => [],
                 ], 422);
             }
-
-            $visit = Visit::query()
-                ->where('visit_uuid', $uuid)
-                ->where('facility_id', $facilityId)
-                ->first();
-
-            if (!$visit) {
+            if (($validated['admission_action'] ?? null) === 'transfer' && empty($validated['transfer_level'])) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Visit not found for this facility.',
-                    'data' => [],
-                ], 404);
-            }
-
-            if (in_array($visit->status, ['completed', 'cancelled', 'no_show'], true)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Cannot assign ward/bed for closed visits.',
-                    'data' => [],
-                ], 409);
-            }
-
-            $ward = Ward::query()
-                ->where('id', (int) $validated['ward_id'])
-                ->where('facility_id', $facilityId)
-                ->first();
-
-            if (!$ward) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Selected ward does not belong to this facility.',
+                    'message' => 'Transfer level is required for transfers.',
+                    'errors' => ['transfer_level' => ['Choose transfer level: ward, room, or bed.']],
                     'data' => [],
                 ], 422);
-            }
-
-            $bed = WardBed::query()
-                ->where('id', (int) $validated['bed_id'])
-                ->where('ward_id', $ward->id)
-                ->where('facility_id', $facilityId)
-                ->first();
-
-            if (!$bed) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Selected bed does not belong to selected ward/facility.',
-                    'data' => [],
-                ], 422);
-            }
-
-            $occupiedByAnotherVisit = Visit::query()
-                ->where('facility_id', $facilityId)
-                ->where('visit_uuid', '!=', $uuid)
-                ->whereIn('status', ['active', 'in_progress'])
-                ->whereNotNull('metadata')
-                ->whereRaw("JSON_EXTRACT(metadata, '$.nursing_ward_bed.bed_id') = ?", [(int) $bed->id])
-                ->exists();
-
-            if ($occupiedByAnotherVisit) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Selected bed is currently occupied.',
-                    'errors' => ['bed_id' => ['Please choose another bed.']],
-                    'data' => [],
-                ], 409);
             }
 
             $staffId = Staff::query()->where('user_id', Auth::id())->value('id');
+            $wardId = (int) $validated['ward_id'];
+            $bedId = (int) $validated['bed_id'];
+            $action = (string) $validated['admission_action'];
 
-            $metadata = $visit->metadata;
-            if (is_string($metadata)) {
-                $decoded = json_decode($metadata, true);
-                $metadata = is_array($decoded) ? $decoded : [];
-            } elseif (!is_array($metadata)) {
-                $metadata = [];
+            $visit = DB::transaction(function () use ($facilityId, $uuid, $wardId, $bedId, $action, $validated, $staffId) {
+                $visit = Visit::query()
+                    ->where('visit_uuid', $uuid)
+                    ->where('facility_id', $facilityId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$visit) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Visit not found for this facility.',
+                        'data' => [],
+                    ], 404)];
+                }
+
+                if (in_array($visit->status, ['completed', 'cancelled', 'no_show'], true)) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Cannot assign ward/bed for closed visits.',
+                        'data' => [],
+                    ], 409)];
+                }
+
+                $ward = Ward::query()
+                    ->where('id', $wardId)
+                    ->where('facility_id', $facilityId)
+                    ->first();
+                if (!$ward) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Selected ward does not belong to this facility.',
+                        'data' => [],
+                    ], 422)];
+                }
+
+                $bed = WardBed::query()
+                    ->where('id', $bedId)
+                    ->where('ward_id', $ward->id)
+                    ->where('facility_id', $facilityId)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$bed) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Selected bed does not belong to selected ward/facility.',
+                        'data' => [],
+                    ], 422)];
+                }
+
+                if (in_array($bed->status, ['maintenance', 'inactive'], true)) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Selected bed is not available for assignment.',
+                        'errors' => ['bed_id' => ['Bed is under maintenance or inactive.']],
+                        'data' => [],
+                    ], 409)];
+                }
+
+                $occupiedByAnotherVisit = Visit::query()
+                    ->where('facility_id', $facilityId)
+                    ->where('visit_uuid', '!=', $uuid)
+                    ->whereIn('status', ['active', 'in_progress'])
+                    ->whereNotNull('metadata')
+                    ->whereRaw("JSON_EXTRACT(metadata, '$.nursing_ward_bed.bed_id') = ?", [$bedId])
+                    ->exists();
+                if ($occupiedByAnotherVisit) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Selected bed is currently occupied.',
+                        'errors' => ['bed_id' => ['Please choose another bed.']],
+                        'data' => [],
+                    ], 409)];
+                }
+
+                $metadata = $visit->metadata;
+                if (is_string($metadata)) {
+                    $decoded = json_decode($metadata, true);
+                    $metadata = is_array($decoded) ? $decoded : [];
+                } elseif (!is_array($metadata)) {
+                    $metadata = [];
+                }
+
+                $currentAssignment = data_get($metadata, 'nursing_ward_bed', []);
+                $currentBedId = (int) data_get($currentAssignment, 'bed_id');
+                $currentWardId = (int) data_get($currentAssignment, 'ward_id');
+                $currentRoomLabel = trim((string) data_get($currentAssignment, 'room_label', ''));
+                $nextRoomLabel = trim((string) ($this->wardBedsHasRoomLabel ? ($bed->room_label ?? '') : ''));
+                $transferLevel = (string) ($validated['transfer_level'] ?? '');
+
+                if ($action === 'transfer' && $currentBedId <= 0) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Cannot transfer before initial ward/bed assignment.',
+                        'errors' => ['admission_action' => ['Assign/admit bed first before transfer.']],
+                        'data' => [],
+                    ], 422)];
+                }
+
+                if ($action === 'transfer' && $currentWardId === $wardId && $currentBedId === $bedId) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Transfer target must be a different ward or bed.',
+                        'errors' => ['bed_id' => ['Select a different destination bed for transfer.']],
+                        'data' => [],
+                    ], 422)];
+                }
+                if ($action === 'transfer') {
+                    if ($transferLevel === 'ward' && $currentWardId === $wardId) {
+                        return ['error' => response()->json([
+                            'success' => false,
+                            'message' => 'Ward-level transfer requires selecting a different ward.',
+                            'errors' => ['transfer_level' => ['Select a bed from a different ward.']],
+                            'data' => [],
+                        ], 422)];
+                    }
+                    if ($transferLevel === 'room') {
+                        if ($currentWardId !== $wardId) {
+                            return ['error' => response()->json([
+                                'success' => false,
+                                'message' => 'Room-level transfer must stay within the same ward.',
+                                'errors' => ['transfer_level' => ['Select a bed in the same ward for room transfer.']],
+                                'data' => [],
+                            ], 422)];
+                        }
+                        if ($currentRoomLabel === '' || $nextRoomLabel === '' || $currentRoomLabel === $nextRoomLabel) {
+                            return ['error' => response()->json([
+                                'success' => false,
+                                'message' => 'Room-level transfer requires a different room.',
+                                'errors' => ['transfer_level' => ['Select a bed in a different room.']],
+                                'data' => [],
+                            ], 422)];
+                        }
+                    }
+                    if ($transferLevel === 'bed' && $currentBedId === $bedId) {
+                        return ['error' => response()->json([
+                            'success' => false,
+                            'message' => 'Bed-level transfer requires a different bed.',
+                            'errors' => ['transfer_level' => ['Select a different destination bed.']],
+                            'data' => [],
+                        ], 422)];
+                    }
+                }
+
+                if ($currentBedId > 0 && $currentBedId !== $bedId) {
+                    $previousBed = WardBed::query()
+                        ->where('id', $currentBedId)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($previousBed && !in_array($previousBed->status, ['maintenance', 'inactive'], true)) {
+                        $previousBed->update([
+                            'status' => 'available',
+                            'updated_by_user_id' => Auth::id(),
+                        ]);
+                    }
+                }
+
+                $bed->update([
+                    'status' => 'occupied',
+                    'updated_by_user_id' => Auth::id(),
+                ]);
+
+                $metadata['nursing_ward_bed'] = [
+                    'ward_id' => $ward->id,
+                    'ward_name' => $ward->name,
+                    'bed_id' => $bed->id,
+                    'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null,
+                    'bed_label' => $bed->bed_label,
+                    'admission_action' => $action,
+                    'transfer_level' => $action === 'transfer' ? $transferLevel : null,
+                    'transfer_reason' => $action === 'transfer'
+                        ? trim((string) ($validated['transfer_reason'] ?? ''))
+                        : null,
+                    'updated_at' => now()->toISOString(),
+                    'updated_by_staff_id' => $staffId,
+                ];
+
+                $phase = $visit->current_phase;
+                if ($action === 'transfer') {
+                    $phase = 'transferred';
+                } elseif (in_array($action, ['admit', 'assign_bed'], true)) {
+                    $phase = 'admitted';
+                }
+
+                $visit->update([
+                    'metadata' => $metadata,
+                    'current_phase' => $phase,
+                    'updated_by_staff_id' => $staffId,
+                ]);
+
+                return ['visit' => $visit->fresh()];
+            });
+
+            if (isset($visit['error'])) {
+                return $visit['error'];
             }
-            $metadata['nursing_ward_bed'] = [
-                'ward_id' => $ward->id,
-                'ward_name' => $ward->name,
-                'bed_id' => $bed->id,
-                'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null,
-                'bed_label' => $bed->bed_label,
-                'admission_action' => $validated['admission_action'],
-                'transfer_reason' => $validated['admission_action'] === 'transfer'
-                    ? trim((string) ($validated['transfer_reason'] ?? ''))
-                    : null,
-                'updated_at' => now()->toISOString(),
-                'updated_by_staff_id' => $staffId,
-            ];
-
-            $phase = $visit->current_phase;
-            if ($validated['admission_action'] === 'transfer') {
-                $phase = 'transferred';
-            } elseif (in_array($validated['admission_action'], ['admit', 'assign_bed'], true)) {
-                $phase = 'admitted';
-            }
-
-            $visit->update([
-                'metadata' => $metadata,
-                'current_phase' => $phase,
-                'updated_by_staff_id' => $staffId,
-            ]);
 
             return response()->json([
                 'success' => true,
-                'data' => new VisitResource($visit->fresh()),
+                'data' => new VisitResource($visit['visit']),
                 'message' => 'Ward and bed assignment saved successfully.',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -1998,6 +2108,127 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to assign ward and bed.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Release current visit from its assigned ward/bed.
+     */
+    public function releaseWardBed(Request $request, string $uuid): JsonResponse
+    {
+        try {
+            $facilityId = (int) (
+                $request->header('X-Facility-Id')
+                ?? $request->query('facility_id')
+                ?? $request->input('facility_id')
+            );
+            if (!$facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing facility context.',
+                    'errors' => ['facility_id' => ['Provide X-Facility-Id header or facility_id query/body value.']],
+                    'data' => [],
+                ], 422);
+            }
+
+            $validated = $request->validate([
+                'bed_id' => ['nullable', 'integer', 'exists:ward_beds,id'],
+            ]);
+
+            $staffId = Staff::query()->where('user_id', Auth::id())->value('id');
+
+            $result = DB::transaction(function () use ($uuid, $facilityId, $validated, $staffId) {
+                $visit = Visit::query()
+                    ->where('visit_uuid', $uuid)
+                    ->where('facility_id', $facilityId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$visit) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Visit not found for this facility.',
+                        'data' => [],
+                    ], 404)];
+                }
+
+                $metadata = $visit->metadata;
+                if (is_string($metadata)) {
+                    $decoded = json_decode($metadata, true);
+                    $metadata = is_array($decoded) ? $decoded : [];
+                } elseif (!is_array($metadata)) {
+                    $metadata = [];
+                }
+
+                $assignment = data_get($metadata, 'nursing_ward_bed', []);
+                $assignedBedId = (int) data_get($assignment, 'bed_id');
+                if ($assignedBedId <= 0) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'No current ward/bed assignment to release.',
+                        'data' => [],
+                    ], 409)];
+                }
+
+                $requestedBedId = (int) ($validated['bed_id'] ?? 0);
+                if ($requestedBedId > 0 && $requestedBedId !== $assignedBedId) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Selected bed is not the current assigned bed for this visit.',
+                        'errors' => ['bed_id' => ['Select the currently assigned occupied bed to release.']],
+                        'data' => [],
+                    ], 422)];
+                }
+
+                $assignedBed = WardBed::query()
+                    ->where('id', $assignedBedId)
+                    ->where('facility_id', $facilityId)
+                    ->lockForUpdate()
+                    ->first();
+                if ($assignedBed && !in_array($assignedBed->status, ['maintenance', 'inactive'], true)) {
+                    $assignedBed->update([
+                        'status' => 'available',
+                        'updated_by_user_id' => Auth::id(),
+                    ]);
+                }
+
+                unset($metadata['nursing_ward_bed']);
+
+                $visit->update([
+                    'metadata' => $metadata,
+                    'updated_by_staff_id' => $staffId,
+                ]);
+
+                return ['visit' => $visit->fresh()];
+            });
+
+            if (isset($result['error'])) {
+                return $result['error'];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => new VisitResource($result['visit']),
+                'message' => 'Ward/bed released successfully.',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+                'data' => [],
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to release ward/bed for visit.', [
+                'visit_uuid' => $uuid,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to release ward and bed.',
             ], 500);
         }
     }

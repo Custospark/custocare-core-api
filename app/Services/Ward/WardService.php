@@ -239,6 +239,15 @@ class WardService
             throw new \Exception('Facility scope mismatch.');
         }
     }
+
+    /** Resolve a ward that belongs to the facility (avoids implicit route-model 404 when id is stale or cross-facility). */
+    public function findForFacility(int $wardId, int $facilityId): ?Ward
+    {
+        return Ward::query()
+            ->whereKey($wardId)
+            ->where('facility_id', $facilityId)
+            ->first();
+    }
     
     /**
      * Find or create a ward by name

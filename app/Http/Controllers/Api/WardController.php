@@ -18,6 +18,16 @@ class WardController extends Controller
 {
     public function __construct(private WardService $service) {}
 
+    private function wardNotFoundForFacilityJson(): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Ward not found for this facility.',
+            'errors' => [
+                'ward_id' => ['The ward does not exist, was removed, or does not belong to this facility.'],
+            ],
+        ], 404);
+    }
+
     // GET /api/wards?facility_id=1&status=active&ward_type=medical&search=med
     public function index(Request $request): JsonResponse
     {
@@ -53,43 +63,60 @@ class WardController extends Controller
     }
 
     // GET /api/wards/{ward}?facility_id=1
-    public function show(Request $request, Ward $ward): JsonResponse
+    public function show(Request $request, int $ward): JsonResponse
     {
         $request->validate([
             'facility_id' => ['required', 'integer', 'exists:facilities,id'],
         ]);
 
         $facilityId = (int) $request->query('facility_id');
-        $this->service->ensureFacilityScope($ward, $facilityId);
+        $wardModel = $this->service->findForFacility($ward, $facilityId);
+        if (!$wardModel) {
+            return $this->wardNotFoundForFacilityJson();
+        }
 
-        return response()->json(['data' => $ward]);
+        return response()->json(['data' => $wardModel]);
     }
 
     // PATCH /api/wards/{ward}?facility_id=1
-    public function update(UpdateWardRequest $request, Ward $ward): JsonResponse
+    public function update(UpdateWardRequest $request, int $ward): JsonResponse
     {
-        $facilityId = (int) $request->query('facility_id', $ward->facility_id);
-        $this->service->ensureFacilityScope($ward, $facilityId);
+        $facilityId = (int) $request->query('facility_id', 0);
+        if ($facilityId === 0) {
+            $fallback = Ward::query()->whereKey($ward)->first();
+            if (!$fallback) {
+                return $this->wardNotFoundForFacilityJson();
+            }
+            $facilityId = (int) $fallback->facility_id;
+        }
 
-        $ward = $this->service->update($ward, $request->validated(), Auth::id());
+        $wardModel = $this->service->findForFacility($ward, $facilityId);
+        if (!$wardModel) {
+            return $this->wardNotFoundForFacilityJson();
+        }
+
+        $wardModel = $this->service->update($wardModel, $request->validated(), Auth::id());
 
         return response()->json([
             'message' => 'Ward updated successfully.',
-            'data' => $ward,
+            'data' => $wardModel,
         ]);
     }
 
     // DELETE /api/wards/{ward}?facility_id=1
-    public function destroy(Request $request, Ward $ward): JsonResponse
+    public function destroy(Request $request, int $ward): JsonResponse
     {
         $request->validate([
             'facility_id' => ['required', 'integer', 'exists:facilities,id'],
         ]);
 
         $facilityId = (int) $request->query('facility_id');
-        $this->service->ensureFacilityScope($ward, $facilityId);
+        $wardModel = $this->service->findForFacility($ward, $facilityId);
+        if (!$wardModel) {
+            return $this->wardNotFoundForFacilityJson();
+        }
 
-        $this->service->delete($ward);
+        $this->service->delete($wardModel);
 
         return response()->json([
             'message' => 'Ward deleted successfully.',
@@ -97,17 +124,20 @@ class WardController extends Controller
     }
 
     // GET /api/wards/{ward}/beds?facility_id=1
-    public function beds(Request $request, Ward $ward): JsonResponse
+    public function beds(Request $request, int $ward): JsonResponse
     {
         $request->validate([
             'facility_id' => ['required', 'integer', 'exists:facilities,id'],
         ]);
 
         $facilityId = (int) $request->query('facility_id');
-        $this->service->ensureFacilityScope($ward, $facilityId);
+        $wardModel = $this->service->findForFacility($ward, $facilityId);
+        if (!$wardModel) {
+            return $this->wardNotFoundForFacilityJson();
+        }
 
         $beds = WardBed::query()
-            ->where('ward_id', $ward->id)
+            ->where('ward_id', $wardModel->id)
             ->when(Schema::hasColumn('ward_beds', 'room_label'), fn ($q) => $q->orderByRaw('COALESCE(room_label, "")'))
             ->orderBy('bed_label')
             ->get();
@@ -118,7 +148,7 @@ class WardController extends Controller
     }
 
     // POST /api/wards/{ward}/beds
-    public function storeBed(Request $request, Ward $ward): JsonResponse
+    public function storeBed(Request $request, int $ward): JsonResponse
     {
         try {
             $hasRoomLabel = Schema::hasColumn('ward_beds', 'room_label');
@@ -134,11 +164,14 @@ class WardController extends Controller
             $validated = $request->validate($rules);
 
             $facilityId = (int) $validated['facility_id'];
-            $this->service->ensureFacilityScope($ward, $facilityId);
+            $wardModel = $this->service->findForFacility($ward, $facilityId);
+            if (!$wardModel) {
+                return $this->wardNotFoundForFacilityJson();
+            }
 
             $payload = [
                 'facility_id' => $facilityId,
-                'ward_id' => $ward->id,
+                'ward_id' => $wardModel->id,
                 'bed_label' => trim($validated['bed_label']),
                 'status' => $validated['status'] ?? 'available',
                 'note' => $validated['note'] ?? null,

@@ -1783,15 +1783,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     'occupied_bed_labels' => $occupiedBeds,
                     'available_bed_list' => $availableBedList,
                 ];
-            })
-                ->filter(function (array $ward) use ($currentWardId) {
-                    if (($ward['id'] ?? null) === $currentWardId) {
-                        return true;
-                    }
-                    return (($ward['available_beds'] ?? 0) > 0)
-                        || (($ward['occupied_beds'] ?? 0) > 0);
-                })
-                ->values();
+            })->values();
 
             Log::info('wardBedOptions result summary', [
                 'visit_uuid' => $uuid,
@@ -1978,8 +1970,22 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 $currentRoomLabel = trim((string) data_get($currentAssignment, 'room_label', ''));
                 $nextRoomLabel = trim((string) ($this->wardBedsHasRoomLabel ? ($bed->room_label ?? '') : ''));
                 $transferLevel = (string) ($validated['transfer_level'] ?? '');
+                $effectiveAction = $action;
 
-                if ($action === 'transfer' && $currentBedId <= 0) {
+                if ($currentBedId > 0 && ($currentWardId !== $wardId || $currentBedId !== $bedId)) {
+                    $effectiveAction = 'transfer';
+                    if ($transferLevel === '') {
+                        if ($currentWardId !== $wardId) {
+                            $transferLevel = 'ward';
+                        } elseif ($currentRoomLabel !== '' && $nextRoomLabel !== '' && $currentRoomLabel !== $nextRoomLabel) {
+                            $transferLevel = 'room';
+                        } else {
+                            $transferLevel = 'bed';
+                        }
+                    }
+                }
+
+                if ($effectiveAction === 'transfer' && $currentBedId <= 0) {
                     return ['error' => response()->json([
                         'success' => false,
                         'message' => 'Cannot transfer before initial ward/bed assignment.',
@@ -1988,7 +1994,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     ], 422)];
                 }
 
-                if ($action === 'transfer' && $currentWardId === $wardId && $currentBedId === $bedId) {
+                if ($effectiveAction === 'transfer' && $currentWardId === $wardId && $currentBedId === $bedId) {
                     return ['error' => response()->json([
                         'success' => false,
                         'message' => 'Transfer target must be a different ward or bed.',
@@ -1996,7 +2002,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         'data' => [],
                     ], 422)];
                 }
-                if ($action === 'transfer') {
+                if ($effectiveAction === 'transfer') {
                     if ($transferLevel === 'ward' && $currentWardId === $wardId) {
                         return ['error' => response()->json([
                             'success' => false,
@@ -2035,7 +2041,10 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
 
                 if ($currentBedId > 0 && $currentBedId !== $bedId) {
                     $previousBed = WardBed::query()
-                        ->where('id', $currentBedId)
+                        ->whereKey($currentBedId)
+                        ->whereHas('ward', function ($query) use ($facilityId) {
+                            $query->where('facility_id', $facilityId);
+                        })
                         ->lockForUpdate()
                         ->first();
                     if ($previousBed && !in_array($previousBed->status, ['maintenance', 'inactive'], true)) {
@@ -2057,19 +2066,19 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     'bed_id' => $bed->id,
                     'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null,
                     'bed_label' => $bed->bed_label,
-                    'admission_action' => $action,
-                    'transfer_level' => $action === 'transfer' ? $transferLevel : null,
-                    'transfer_reason' => $action === 'transfer'
-                        ? trim((string) ($validated['transfer_reason'] ?? ''))
+                    'admission_action' => $effectiveAction,
+                    'transfer_level' => $effectiveAction === 'transfer' ? $transferLevel : null,
+                    'transfer_reason' => $effectiveAction === 'transfer'
+                        ? trim((string) ($validated['transfer_reason'] ?? '')) ?: 'Ward/bed assignment updated.'
                         : null,
                     'updated_at' => now()->toISOString(),
                     'updated_by_staff_id' => $staffId,
                 ];
 
                 $phase = $visit->current_phase;
-                if ($action === 'transfer') {
+                if ($effectiveAction === 'transfer') {
                     $phase = 'transferred';
-                } elseif (in_array($action, ['admit', 'assign_bed'], true)) {
+                } elseif (in_array($effectiveAction, ['admit', 'assign_bed'], true)) {
                     $phase = 'admitted';
                 }
 
@@ -2182,11 +2191,21 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 }
 
                 $assignedBed = WardBed::query()
-                    ->where('id', $assignedBedId)
-                    ->where('facility_id', $facilityId)
+                    ->whereKey($assignedBedId)
+                    ->whereHas('ward', function ($query) use ($facilityId) {
+                        $query->where('facility_id', $facilityId);
+                    })
                     ->lockForUpdate()
                     ->first();
-                if ($assignedBed && !in_array($assignedBed->status, ['maintenance', 'inactive'], true)) {
+                if (!$assignedBed) {
+                    return ['error' => response()->json([
+                        'success' => false,
+                        'message' => 'Assigned bed was not found for this facility.',
+                        'errors' => ['bed_id' => ['Bed record is missing or not in this facility.']],
+                        'data' => [],
+                    ], 422)];
+                }
+                if (!in_array($assignedBed->status, ['maintenance', 'inactive'], true)) {
                     $assignedBed->update([
                         'status' => 'available',
                         'updated_by_user_id' => Auth::id(),

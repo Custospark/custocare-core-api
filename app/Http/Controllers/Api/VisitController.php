@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Facades\Auth as SupportFacadesAuth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 use function Illuminate\Log\log;
 
@@ -40,6 +41,7 @@ class VisitController extends Controller
      * @var VisitServiceInterface
      */
     protected $visitService;
+    private bool $wardBedsHasRoomLabel = false;
 
     /**
      * Constructor
@@ -49,6 +51,7 @@ class VisitController extends Controller
     public function __construct(VisitServiceInterface $visitService)
     {
         $this->visitService = $visitService;
+        $this->wardBedsHasRoomLabel = Schema::hasColumn('ward_beds', 'room_label');
     }
 
     /**
@@ -1692,20 +1695,17 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
             ) {
                 $wardId = (int) $ward->id;
                 $capacityOperational = (int) ($ward->capacity_operational ?? 0);
-                $occupied = (int) ($occupancyByWard[$wardId] ?? 0);
 
-                if ($currentWardId === $wardId) {
-                    $occupied = max(0, $occupied - 1);
+                $bedColumns = ['id', 'bed_label', 'status'];
+                if ($this->wardBedsHasRoomLabel) {
+                    $bedColumns[] = 'room_label';
                 }
 
-                $availableBeds = max(0, $capacityOperational - $occupied);
-
                 $beds = WardBed::query()
-                    ->where('facility_id', $facilityId)
                     ->where('ward_id', $wardId)
                     ->whereIn('status', ['available', 'occupied', 'maintenance'])
                     ->orderBy('bed_label')
-                    ->get(['id', 'room_label', 'bed_label', 'status']);
+                    ->get($bedColumns);
 
                 $occupiedBeds = $beds
                     ->filter(function ($bed) use ($occupiedBedIds, $visit, $currentBedId) {
@@ -1714,7 +1714,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         }
                         return isset($occupiedBedIds[(int) $bed->id]) && $occupiedBedIds[(int) $bed->id] !== $visit->visit_uuid;
                     })
-                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $bed->room_label, 'bed_label' => $bed->bed_label])
+                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null, 'bed_label' => $bed->bed_label])
                     ->values();
 
                 $availableBedList = $beds
@@ -1724,8 +1724,15 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         }
                         return !isset($occupiedBedIds[(int) $bed->id]) && $bed->status === 'available';
                     })
-                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $bed->room_label, 'bed_label' => $bed->bed_label])
+                    ->map(fn ($bed) => ['id' => $bed->id, 'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null, 'bed_label' => $bed->bed_label])
                     ->values();
+
+                // Use real bed inventory as source of truth; capacity metadata can be outdated.
+                $occupied = (int) $occupiedBeds->count();
+                $availableBeds = (int) $availableBedList->count();
+                if ($capacityOperational <= 0) {
+                    $capacityOperational = (int) $beds->count();
+                }
 
                 return [
                     'id' => $ward->id,
@@ -1745,7 +1752,8 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                     if (($ward['id'] ?? null) === $currentWardId) {
                         return true;
                     }
-                    return (($ward['available_beds'] ?? 0) > 0);
+                    return (($ward['available_beds'] ?? 0) > 0)
+                        || (($ward['occupied_beds'] ?? 0) > 0);
                 })
                 ->values();
 
@@ -1896,7 +1904,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 'ward_id' => $ward->id,
                 'ward_name' => $ward->name,
                 'bed_id' => $bed->id,
-                'room_label' => $bed->room_label,
+                'room_label' => $this->wardBedsHasRoomLabel ? $bed->room_label : null,
                 'bed_label' => $bed->bed_label,
                 'admission_action' => $validated['admission_action'],
                 'transfer_reason' => $validated['admission_action'] === 'transfer'

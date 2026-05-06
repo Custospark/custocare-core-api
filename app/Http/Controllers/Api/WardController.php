@@ -12,6 +12,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Schema;
 
 class WardController extends Controller
 {
@@ -106,9 +107,8 @@ class WardController extends Controller
         $this->service->ensureFacilityScope($ward, $facilityId);
 
         $beds = WardBed::query()
-            ->where('facility_id', $facilityId)
             ->where('ward_id', $ward->id)
-            ->orderByRaw('COALESCE(room_label, "")')
+            ->when(Schema::hasColumn('ward_beds', 'room_label'), fn ($q) => $q->orderByRaw('COALESCE(room_label, "")'))
             ->orderBy('bed_label')
             ->get();
 

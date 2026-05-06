@@ -1648,6 +1648,7 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
             $visit = Visit::query()
                 ->where('visit_uuid', $uuid)
                 ->where('facility_id', $facilityId)
+                ->with(['patient:id,user_id,patient_uuid', 'patient.user:id,first_name,last_name,display_name'])
                 ->first();
 
             if (!$visit) {
@@ -1797,6 +1798,12 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
             $wardById = $wards->keyBy('id');
             $currentWard = $currentWardId > 0 ? $wardById->get($currentWardId) : null;
 
+            $currentPatientName = trim((string) (
+                data_get($visit, 'patient.user.display_name')
+                ?: ((data_get($visit, 'patient.user.first_name', '') . ' ' . data_get($visit, 'patient.user.last_name', '')))
+            ));
+            $currentPatientIdentifier = $visit->patient?->patient_uuid;
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -1806,6 +1813,8 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                         'bed_id' => $currentBedId ?: null,
                         'room_label' => $currentRoomLabel ?: null,
                         'bed_label' => $currentBedLabel ?: null,
+                        'patient_name' => $currentPatientName !== '' ? $currentPatientName : null,
+                        'patient_uuid' => $currentPatientIdentifier,
                         'admission_action' => data_get($currentAssignment, 'admission_action'),
                         'transfer_level' => data_get($currentAssignment, 'transfer_level'),
                         'transfer_reason' => data_get($currentAssignment, 'transfer_reason'),

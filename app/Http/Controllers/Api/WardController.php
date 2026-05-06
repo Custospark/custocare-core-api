@@ -121,27 +121,34 @@ class WardController extends Controller
     public function storeBed(Request $request, Ward $ward): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $hasRoomLabel = Schema::hasColumn('ward_beds', 'room_label');
+            $rules = [
                 'facility_id' => ['required', 'integer', 'exists:facilities,id'],
-                'room_label' => ['nullable', 'string', 'max:50'],
                 'bed_label' => ['required', 'string', 'max:50'],
                 'status' => ['nullable', 'in:available,occupied,maintenance,inactive'],
                 'note' => ['nullable', 'string'],
-            ]);
+            ];
+            if ($hasRoomLabel) {
+                $rules['room_label'] = ['nullable', 'string', 'max:50'];
+            }
+            $validated = $request->validate($rules);
 
             $facilityId = (int) $validated['facility_id'];
             $this->service->ensureFacilityScope($ward, $facilityId);
 
-            $bed = WardBed::create([
+            $payload = [
                 'facility_id' => $facilityId,
                 'ward_id' => $ward->id,
-                'room_label' => isset($validated['room_label']) ? trim((string) $validated['room_label']) : null,
                 'bed_label' => trim($validated['bed_label']),
                 'status' => $validated['status'] ?? 'available',
                 'note' => $validated['note'] ?? null,
                 'created_by_user_id' => Auth::id(),
                 'updated_by_user_id' => Auth::id(),
-            ]);
+            ];
+            if ($hasRoomLabel) {
+                $payload['room_label'] = isset($validated['room_label']) ? trim((string) $validated['room_label']) : null;
+            }
+            $bed = WardBed::create($payload);
 
             return response()->json([
                 'message' => 'Bed created successfully.',
@@ -162,14 +169,18 @@ class WardController extends Controller
     public function updateBed(Request $request, WardBed $bed): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $hasRoomLabel = Schema::hasColumn('ward_beds', 'room_label');
+            $rules = [
                 'facility_id' => ['required', 'integer', 'exists:facilities,id'],
                 'ward_id' => ['sometimes', 'integer', 'exists:wards,id'],
-                'room_label' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'bed_label' => ['sometimes', 'string', 'max:50'],
                 'status' => ['sometimes', 'in:available,occupied,maintenance,inactive'],
                 'note' => ['sometimes', 'nullable', 'string'],
-            ]);
+            ];
+            if ($hasRoomLabel) {
+                $rules['room_label'] = ['sometimes', 'nullable', 'string', 'max:50'];
+            }
+            $validated = $request->validate($rules);
 
             $facilityId = (int) $validated['facility_id'];
             if ((int) $bed->facility_id !== $facilityId) {
@@ -178,16 +189,19 @@ class WardController extends Controller
                 ], 422);
             }
 
-            $bed->update([
+            $payload = [
                 'ward_id' => $validated['ward_id'] ?? $bed->ward_id,
-                'room_label' => array_key_exists('room_label', $validated)
-                    ? trim((string) ($validated['room_label'] ?? '')) ?: null
-                    : $bed->room_label,
                 'bed_label' => isset($validated['bed_label']) ? trim($validated['bed_label']) : $bed->bed_label,
                 'status' => $validated['status'] ?? $bed->status,
                 'note' => array_key_exists('note', $validated) ? $validated['note'] : $bed->note,
                 'updated_by_user_id' => Auth::id(),
-            ]);
+            ];
+            if ($hasRoomLabel) {
+                $payload['room_label'] = array_key_exists('room_label', $validated)
+                    ? trim((string) ($validated['room_label'] ?? '')) ?: null
+                    : $bed->room_label;
+            }
+            $bed->update($payload);
 
             return response()->json([
                 'message' => 'Bed updated successfully.',

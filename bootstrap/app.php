@@ -3,6 +3,7 @@
 use App\Http\Middleware\EnsureAdminAccess;
 use App\Http\Middleware\EnsureFacilitySubscriptionIsActive;
 use App\Http\Middleware\ValidateActiveContext;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -29,6 +30,15 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (AuthenticationException $e, \Illuminate\Http\Request $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'message' => 'Unauthenticated.',
+                    'error' => 'Authentication token is missing or invalid.',
+                ], 401);
+            }
+
+            return redirect()->guest(route('login'));
+        });
     })
     ->create();

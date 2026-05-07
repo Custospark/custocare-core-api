@@ -70,3 +70,4 @@ require __DIR__.'/api_v1/consultation/_index.php';
 require __DIR__.'/api_v1/facilityTasks/_index.php';
 require __DIR__.'/api_v1/facilityShiftHandovers/_index.php';
 require __DIR__.'/api_v1/nursingMedication/_index.php';
+require __DIR__.'/api_v1/nursing/_index.php';

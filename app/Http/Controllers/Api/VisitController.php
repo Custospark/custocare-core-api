@@ -140,7 +140,6 @@ class VisitController extends Controller
                 ->where('staff_id', $staffId)
                 ->where('assignment_status', 'active')
                 ->first(['id', 'role_code']);
-                Log::alert($assignment);
 
             if (!$assignment) {
                 return response()->json([

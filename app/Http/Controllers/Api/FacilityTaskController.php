@@ -30,6 +30,8 @@ class FacilityTaskController extends Controller
             'search' => ['nullable', 'string', 'max:200'],
             'due_from' => ['nullable', 'date'],
             'due_to' => ['nullable', 'date'],
+            /** Nursing encounter / visit-scoped task board */
+            'visit_uuid' => ['nullable', 'string', 'uuid'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -47,6 +49,7 @@ class FacilityTaskController extends Controller
             'search' => $request->query('search'),
             'due_from' => $request->query('due_from'),
             'due_to' => $request->query('due_to'),
+            'visit_uuid' => $request->query('visit_uuid'),
         ], fn ($v) => $v !== null && $v !== '');
 
         $paginator = $this->service->paginateIndex($facilityId, $filters, $perPage);
@@ -69,6 +72,7 @@ class FacilityTaskController extends Controller
             'facility_id' => ['required', 'integer', 'exists:facilities,id'],
             'status' => ['nullable', 'string'],
             'priority' => ['nullable', 'string'],
+            'visit_uuid' => ['nullable', 'string', 'uuid'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -79,6 +83,7 @@ class FacilityTaskController extends Controller
         $filters = array_filter([
             'status' => $request->query('status'),
             'priority' => $request->query('priority'),
+            'visit_uuid' => $request->query('visit_uuid'),
         ], fn ($v) => $v !== null && $v !== '');
 
         $userId = (int) Auth::id();

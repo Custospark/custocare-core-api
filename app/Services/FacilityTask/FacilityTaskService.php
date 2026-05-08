@@ -106,6 +106,10 @@ class FacilityTaskService
             $q->where('due_at', '<=', $filters['due_to']);
         }
 
+        if (! empty($filters['visit_uuid'])) {
+            $q->where('visit_uuid', (string) $filters['visit_uuid']);
+        }
+
         return $q->orderByDesc('created_at')->paginate($perPage);
     }
 
@@ -127,6 +131,10 @@ class FacilityTaskService
 
         if (! empty($filters['priority'])) {
             $q->where('priority', $filters['priority']);
+        }
+
+        if (! empty($filters['visit_uuid'])) {
+            $q->where('visit_uuid', (string) $filters['visit_uuid']);
         }
 
         return $q

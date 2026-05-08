@@ -154,10 +154,12 @@ class VisitController extends Controller
             $filters = $request->validate([
                 'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
                 'limit' => 'nullable|integer|min:1|max:100',
+                'without_ward_assignment' => 'nullable|boolean',
             ]);
 
             $phase = $filters['current_phase'] ?? null;
             $limit = (int) ($filters['limit'] ?? 50);
+            $withoutWardAssignment = (bool) ($filters['without_ward_assignment'] ?? false);
 
             // 5) My queue = visits assigned to me (VISIT-centric)
             $visits = Visit::query()
@@ -165,6 +167,15 @@ class VisitController extends Controller
                 ->where('assigned_staff_id', $staffId)
                 ->whereIn('status', ['active', 'in_progress'])
                 // ->when($phase, fn ($q) => $q->where('current_phase', $phase))
+                ->when($withoutWardAssignment, function ($q): void {
+                    // Visits with no ward/bed in metadata (nursing intake — exclude assigned inpatients)
+                    $q->where(function ($w): void {
+                        $w->whereNull('metadata')
+                            ->orWhereRaw(
+                                'CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, "$.nursing_ward_bed.ward_id")),"0") AS UNSIGNED) = 0'
+                            );
+                    });
+                })
                 ->with(['patient.user'])
                 ->orderBy('acuity_score', 'asc')
                 ->orderBy('waiting_since', 'asc')
@@ -239,6 +250,7 @@ class VisitController extends Controller
                     'role_code' => $assignment->role_code,
                     'filters' => [
                         'current_phase' => $phase,
+                        'without_ward_assignment' => $withoutWardAssignment,
                     ],
 
                     // legacy

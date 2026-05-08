@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services\Lab;
 
+use App\Models\BillingCycle;
+use App\Models\InventoryItem;
+use App\Models\InvoiceLineItem;
 use App\Models\LabRequestItem;
+use App\Models\ServiceCatalog;
+use App\Models\ServiceVersion;
 use App\Repositories\Lab\Contracts\LabRequestItemRepositoryInterface;
 use App\Repositories\Lab\Contracts\LabRequestRepositoryInterface;
 use App\Repositories\Lab\Contracts\LabTestRepositoryInterface;
@@ -380,9 +385,11 @@ class LabRequestItemService implements LabRequestItemServiceInterface
     public function updateItemStatus(string $uuid, string $status): array
     {
         try {
+            DB::beginTransaction();
             $item = $this->itemRepository->findByUuid($uuid);
             
             if (!$item) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Lab request item not found',
@@ -393,6 +400,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             
             // Validate status transition
             if (!$this->validateItemStatusTransition($item->status, $status)) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Invalid status transition',
@@ -404,6 +412,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             $updated = $this->itemRepository->updateStatus($item, $status);
             
             if (!$updated) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Failed to update item status',
@@ -414,6 +423,12 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             
             // Update parent request status if needed
             $this->updateParentRequestStatus($item->lab_request_id);
+
+            if (in_array($status, ['completed', 'verified'], true)) {
+                $this->syncCompletedOrVerifiedItemToBilling($item->fresh());
+            }
+
+            DB::commit();
             
             return [
                 'success' => true,
@@ -423,6 +438,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ],
             ];
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Failed to update item status', [
                 'uuid' => $uuid,
                 'status' => $status,
@@ -563,9 +579,11 @@ class LabRequestItemService implements LabRequestItemServiceInterface
     public function markItemCompleted(string $uuid): array
     {
         try {
+            DB::beginTransaction();
             $item = $this->itemRepository->findByUuid($uuid);
             
             if (!$item) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Lab request item not found',
@@ -575,6 +593,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             }
             
             if (!$item->isInProgress()) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Cannot complete item',
@@ -586,6 +605,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             $completed = $this->itemRepository->updateStatus($item, 'completed');
             
             if (!$completed) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Failed to complete item',
@@ -593,6 +613,9 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                     'data' => [],
                 ];
             }
+
+            $this->syncCompletedOrVerifiedItemToBilling($item->fresh());
+            DB::commit();
             
             return [
                 'success' => true,
@@ -602,6 +625,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ],
             ];
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Failed to mark item as completed', [
                 'uuid' => $uuid,
                 'error' => $e->getMessage(),
@@ -629,9 +653,11 @@ class LabRequestItemService implements LabRequestItemServiceInterface
     public function markItemVerified(string $uuid, int $verifiedByStaffId): array
     {
         try {
+            DB::beginTransaction();
             $item = $this->itemRepository->findByUuid($uuid);
             
             if (!$item) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Lab request item not found',
@@ -644,6 +670,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
             $verified = $this->itemRepository->markVerified($item, $verifiedByStaffId);
             
             if (!$verified) {
+                DB::rollBack();
                 return [
                     'success' => false,
                     'message' => 'Failed to verify item',
@@ -651,6 +678,9 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                     'data' => [],
                 ];
             }
+
+            $this->syncCompletedOrVerifiedItemToBilling($item->fresh());
+            DB::commit();
                         
             return [
                 'success' => true,
@@ -660,6 +690,7 @@ class LabRequestItemService implements LabRequestItemServiceInterface
                 ],
             ];
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Failed to verify item', [
                 'uuid' => $uuid,
                 'verified_by_staff_id' => $verifiedByStaffId,
@@ -1133,5 +1164,244 @@ class LabRequestItemService implements LabRequestItemServiceInterface
 
         //Note: For now we just need to set the status to inprogress,business logic may change in the future.
             $this->requestRepository->updateStatus($request, 'in_progress');
+    }
+
+    protected function syncCompletedOrVerifiedItemToBilling(LabRequestItem $item): void
+    {
+        $item = $item->fresh(['labRequest', 'labTest']);
+        if (!$item || !$item->labRequest || !$item->labTest) {
+            return;
+        }
+
+        $labRequest = $item->labRequest;
+        $labTest = $item->labTest;
+
+        $existingLineItem = InvoiceLineItem::query()
+            ->where('visit_id', $labRequest->visit_id)
+            ->where(function ($query) use ($item): void {
+                $query->where('metadata->lab_request_item_id', $item->id)
+                    ->orWhere('metadata->lab_request_item_uuid', $item->item_uuid);
+            })
+            ->first();
+
+        if ($existingLineItem) {
+            return;
+        }
+
+        $facilityId = (int) $labRequest->facility_id;
+        $testName = trim((string) $labTest->name);
+        $testCode = trim((string) ($labTest->code ?? ''));
+
+        $serviceCatalog = $this->resolveServiceCatalogForLabTest($facilityId, $testName, $testCode);
+        $serviceVersion = $serviceCatalog
+            ? $this->resolveServiceVersionForCatalog($serviceCatalog->id, $facilityId)
+            : null;
+        $inventoryItem = $this->resolveInventoryItemForLabTestName($facilityId, $testName);
+
+        $billingCycle = $this->resolveOrCreateOpenBillingCycle(
+            $facilityId,
+            (int) $labRequest->visit_id,
+            (int) $labRequest->patient_id,
+            $item->updated_by_staff_id ?? $item->created_by_staff_id
+        );
+
+        $unitPrice = (float) (
+            $serviceVersion->final_price_amount
+            ?? $serviceCatalog->price_amount
+            ?? 0
+        );
+
+        $snapshot = [
+            'source' => 'lab_workflow',
+            'lab_test_id' => $labTest->id,
+            'lab_test_uuid' => $labTest->test_uuid,
+            'lab_request_item_id' => $item->id,
+            'service_catalog_id' => $serviceCatalog?->id,
+            'service_catalog_uuid' => $serviceCatalog?->service_uuid,
+            'service_name' => $serviceCatalog?->service_name ?? $testName,
+            'service_code' => $serviceCatalog?->service_code ?? ($testCode !== '' ? $testCode : 'LAB-TEST'),
+            'final_price_amount' => $unitPrice,
+        ];
+
+        $now = now();
+        InvoiceLineItem::query()->create([
+            'billing_cycle_id' => $billingCycle->id,
+            'inventory_item_id' => $inventoryItem?->id,
+            'service_catalog_id' => $serviceCatalog?->id,
+            'visit_id' => (int) $labRequest->visit_id,
+            'service_version_id' => $serviceVersion?->id,
+            'service_version_snapshot' => $snapshot,
+            'service_code' => (string) ($serviceCatalog?->service_code ?? ($testCode !== '' ? $testCode : 'LAB-TEST')),
+            'service_description' => $testName !== '' ? $testName : 'Laboratory Test',
+            'quantity' => 1,
+            'unit_of_measure' => 'test',
+            'unit_price_at_time' => $unitPrice,
+            'line_total_amount' => $unitPrice,
+            'applied_discount_percentage' => 0,
+            'discount_amount' => 0,
+            'adjustment_amount' => 0,
+            'net_amount' => $unitPrice,
+            'staff_performed_id' => $item->completed_by_staff_id ?? $item->verified_by_staff_id ?? null,
+            'service_performed_at' => $item->completed_at ?? $item->verified_at ?? $now,
+            'line_item_status' => 'pending',
+            'created_by_staff_id' => $item->updated_by_staff_id ?? $item->created_by_staff_id,
+            'metadata' => [
+                'source_module' => 'laboratory',
+                'lab_request_id' => $labRequest->id,
+                'lab_request_uuid' => $labRequest->request_uuid,
+                'lab_request_item_id' => $item->id,
+                'lab_request_item_uuid' => $item->item_uuid,
+                'lab_test_id' => $labTest->id,
+                'lab_test_uuid' => $labTest->test_uuid,
+                'auto_billed_on_status' => $item->status,
+            ],
+        ]);
+
+        $this->refreshBillingCycleTotals($billingCycle);
+    }
+
+    protected function resolveServiceCatalogForLabTest(int $facilityId, string $testName, string $testCode): ?ServiceCatalog
+    {
+        $base = ServiceCatalog::query()
+            ->where('status', 'active')
+            ->where(function ($query) use ($facilityId): void {
+                $query->where('facility_id', $facilityId)
+                    ->orWhereNull('facility_id');
+            })
+            ->whereIn('service_category', ['laboratory_test', 'pathology']);
+
+        if ($testCode !== '') {
+            $matchByCode = (clone $base)
+                ->where('service_code', $testCode)
+                ->orderByRaw('CASE WHEN facility_id = ? THEN 0 ELSE 1 END', [$facilityId])
+                ->first();
+            if ($matchByCode) {
+                return $matchByCode;
+            }
+        }
+
+        if ($testName === '') {
+            return null;
+        }
+
+        $matchByName = (clone $base)
+            ->whereRaw('LOWER(service_name) = ?', [strtolower($testName)])
+            ->orderByRaw('CASE WHEN facility_id = ? THEN 0 ELSE 1 END', [$facilityId])
+            ->first();
+        if ($matchByName) {
+            return $matchByName;
+        }
+
+        return (clone $base)
+            ->where(function ($query) use ($testName): void {
+                $query->where('service_name', 'like', '%'.$testName.'%')
+                    ->orWhere('service_description', 'like', '%'.$testName.'%');
+            })
+            ->orderByRaw('CASE WHEN facility_id IS NULL THEN 1 ELSE 0 END')
+            ->first();
+    }
+
+    protected function resolveServiceVersionForCatalog(int $serviceCatalogId, int $facilityId): ?ServiceVersion
+    {
+        return ServiceVersion::query()
+            ->where('service_catalog_id', $serviceCatalogId)
+            ->where('is_billable', true)
+            ->where(function ($query) use ($facilityId): void {
+                $query->where('facility_id', $facilityId)
+                    ->orWhereNull('facility_id');
+            })
+            ->where(function ($query): void {
+                $today = now()->toDateString();
+                $query->where('valid_from', '<=', $today)
+                    ->where(function ($q) use ($today): void {
+                        $q->where('valid_to', '>=', $today)
+                            ->orWhereNull('valid_to');
+                    });
+            })
+            ->orderByRaw('CASE WHEN facility_id = ? THEN 0 ELSE 1 END', [$facilityId])
+            ->orderByDesc('is_current')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    protected function resolveInventoryItemForLabTestName(int $facilityId, string $testName): ?InventoryItem
+    {
+        if ($testName === '') {
+            return null;
+        }
+
+        return InventoryItem::query()
+            ->where('facility_id', $facilityId)
+            ->where('status', 'active')
+            ->where('item_category', 'laboratory_reagent')
+            ->whereRaw('LOWER(item_name) = ?', [strtolower($testName)])
+            ->first();
+    }
+
+    protected function resolveOrCreateOpenBillingCycle(int $facilityId, int $visitId, int $patientId, ?int $staffId): BillingCycle
+    {
+        $openStatuses = [
+            'draft',
+            'pending_review',
+            'pending_submission',
+            'submitted_to_insurance',
+            'partially_paid',
+            'payment_plan',
+            'disputed',
+        ];
+
+        $existing = BillingCycle::query()
+            ->where('facility_id', $facilityId)
+            ->where('visit_id', $visitId)
+            ->where('patient_id', $patientId)
+            ->whereIn('billing_status', $openStatuses)
+            ->latest('id')
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        $now = now();
+        return BillingCycle::query()->create([
+            'billing_cycle_uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'facility_id' => $facilityId,
+            'visit_id' => $visitId,
+            'patient_id' => $patientId,
+            'cycle_type' => 'visit_based',
+            'period_start' => $now,
+            'billing_status' => 'draft',
+            'created_by_staff_id' => $staffId,
+            'updated_by_staff_id' => $staffId,
+            'metadata' => [
+                'source_module' => 'laboratory',
+                'auto_created_for_lab' => true,
+            ],
+        ]);
+    }
+
+    protected function refreshBillingCycleTotals(BillingCycle $billingCycle): void
+    {
+        $subtotal = (float) InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycle->id)
+            ->whereNull('deleted_at')
+            ->sum('line_total_amount');
+
+        $net = (float) InvoiceLineItem::query()
+            ->where('billing_cycle_id', $billingCycle->id)
+            ->whereNull('deleted_at')
+            ->sum('net_amount');
+
+        $totalPaid = (float) ($billingCycle->total_paid_amount ?? 0);
+        $balance = max(0, $net - $totalPaid);
+
+        $billingCycle->subtotal_amount = round($subtotal, 2);
+        $billingCycle->total_amount_charged = round($subtotal, 2);
+        $billingCycle->net_amount = round($net, 2);
+        $billingCycle->grand_total_amount = round($net, 2);
+        $billingCycle->patient_responsibility_amount = round($net, 2);
+        $billingCycle->balance_amount = round($balance, 2);
+        $billingCycle->updated_at = now();
+        $billingCycle->save();
     }
 }

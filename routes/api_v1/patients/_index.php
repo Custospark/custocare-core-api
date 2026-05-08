@@ -31,8 +31,10 @@ Route::prefix('patients')
         Route::get('/facility-patient-analytics', [PatientAnalyticsController::class, 'overview']);
 
         
-        // Item routes LAST
+        // Item routes LAST (specific paths before the generic GET /)
         Route::prefix('{patient}')->group(function () {
+            Route::get('medical-history', [PatientController::class, 'medicalHistory'])->name('medical-history');
+
             Route::get('/', [PatientController::class, 'show'])->name('show');
             Route::put('/', [PatientController::class, 'update'])->name('update');
             Route::patch('/', [PatientController::class, 'update'])->name('patch');

@@ -10,6 +10,7 @@ use App\Http\Resources\PatientResource;
 use App\Http\Resources\PatientSearchResource;
 use App\Models\OnboardingToken;
 use App\Services\Contracts\PatientServiceInterface;
+use App\Services\Patient\PatientMedicalHistoryService;
 use App\Models\Patient;
 use App\Models\Staff;
 use App\Models\User;
@@ -1092,6 +1093,43 @@ public function createPatientByAdmin(Request $request): JsonResponse
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve patients requiring isolation.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Cross-facility continuity of care summary for a patient (visits, allergies, prescriptions, etc.).
+     */
+    public function medicalHistory(Patient $patient, PatientMedicalHistoryService $historyService): JsonResponse
+    {
+        try {
+            $resolved = $this->patientService->getPatientByUuid($patient->patient_uuid);
+
+            if (! $resolved) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Patient not found.',
+                ], 404);
+            }
+
+            $payload = $historyService->build($patient->loadMissing('user'));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Patient medical history retrieved successfully.',
+                'data' => $payload,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to build patient medical history', [
+                'patient_id' => $patient->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve patient medical history.',
+                'errors' => config('app.debug') ? ['details' => $e->getMessage()] : [],
             ], 500);
         }
     }

@@ -10,6 +10,7 @@ use App\Models\Consultation;
 use App\Models\Diagnosis;
 use App\Models\Facility;
 use App\Models\LabRequest;
+use App\Models\LabResult;
 use App\Models\Patient;
 use App\Models\Prescription;
 use App\Models\Visit;
@@ -50,6 +51,7 @@ class PatientMedicalHistoryService
             'diagnoses' => $this->mapDiagnoses($patient->id, $facilitiesMap),
             'consultations' => $this->mapConsultations($patient->id, $facilitiesMap),
             'lab_requests' => $this->mapLabRequests($patient->id, $facilitiesMap),
+            'lab_results' => $this->mapLabResults($patient->id, $facilitiesMap),
             'generated_at' => Carbon::now()->toIso8601String(),
         ];
     }
@@ -121,9 +123,12 @@ class PatientMedicalHistoryService
     private function mapPatientSummary(Patient $patient): array
     {
         $user = $patient->user;
-        $name = $user?->full_name
-            ?? trim(($user?->first_name ?? '').' '.($user?->last_name ?? ''))
-            ?: null;
+        
+        // Combine first_name and last_name to get the full name
+        $firstName = $user?->first_name ?? '';
+        $lastName = $user?->last_name ?? '';
+        $fullName = trim($firstName . ' ' . $lastName);
+        $name = !empty($fullName) ? $fullName : null;
 
         return [
             'id' => $patient->id,
@@ -181,6 +186,15 @@ class PatientMedicalHistoryService
                 : null;
 
             $occurred = $a->diagnosed_at ?? $a->created_at;
+            
+            // Get recorded by name from first_name and last_name
+            $recordedByName = null;
+            if ($a->recordedBy) {
+                $firstName = $a->recordedBy->first_name ?? '';
+                $lastName = $a->recordedBy->last_name ?? '';
+                $recordedByName = trim($firstName . ' ' . $lastName);
+                $recordedByName = !empty($recordedByName) ? $recordedByName : null;
+            }
 
             return [
                 'id' => $a->id,
@@ -198,7 +212,7 @@ class PatientMedicalHistoryService
                 'occurred_at' => $occurred?->toIso8601String(),
                 'recorded_by' => $a->recordedBy ? [
                     'id' => $a->recordedBy->id,
-                    'name' => $a->recordedBy->full_name,
+                    'name' => $recordedByName,
                 ] : null,
             ];
         })->values()->all();
@@ -212,7 +226,7 @@ class PatientMedicalHistoryService
     {
         $rows = Prescription::query()
             ->where('patient_id', $patientId)
-            ->with(['items', 'facility'])
+            ->with(['items', 'facility', 'prescribedBy'])
             ->orderByDesc('prescription_date')
             ->orderByDesc('id')
             ->limit(self::ROW_LIMIT)
@@ -227,6 +241,15 @@ class PatientMedicalHistoryService
             $occurred = $p->prescription_date
                 ? $p->prescription_date->copy()->startOfDay()
                 : $p->created_at;
+            
+            // Get prescribed by name from first_name and last_name
+            $prescribedByName = null;
+            if ($p->prescribedBy) {
+                $firstName = $p->prescribedBy->first_name ?? '';
+                $lastName = $p->prescribedBy->last_name ?? '';
+                $prescribedByName = trim($firstName . ' ' . $lastName);
+                $prescribedByName = !empty($prescribedByName) ? $prescribedByName : null;
+            }
 
             return [
                 'id' => $p->id,
@@ -243,6 +266,10 @@ class PatientMedicalHistoryService
                 'special_instructions' => $p->special_instructions,
                 'created_at' => $p->created_at?->toIso8601String(),
                 'occurred_at' => $occurred?->toIso8601String(),
+                'clinician' => $p->prescribedBy ? [
+                    'id' => $p->prescribedBy->id,
+                    'name' => $this->formatClinicianName($prescribedByName),
+                ] : null,
                 'items' => $p->items->map(static function ($item) {
                     return [
                         'id' => $item->id,
@@ -272,6 +299,7 @@ class PatientMedicalHistoryService
     {
         $rows = ClinicalNote::query()
             ->where('patient_id', $patientId)
+            ->with(['staff.user'])
             ->orderByDesc('noted_at')
             ->orderByDesc('created_at')
             ->limit(self::ROW_LIMIT)
@@ -285,6 +313,15 @@ class PatientMedicalHistoryService
             }
 
             $occurred = $n->noted_at ?? $n->created_at;
+            
+            // Get staff name from first_name and last_name via user relationship
+            $staffName = null;
+            if ($n->staff && $n->staff->user) {
+                $firstName = $n->staff->user->first_name ?? '';
+                $lastName = $n->staff->user->last_name ?? '';
+                $staffName = trim($firstName . ' ' . $lastName);
+                $staffName = !empty($staffName) ? $staffName : null;
+            }
 
             return [
                 'id' => $n->id,
@@ -301,6 +338,10 @@ class PatientMedicalHistoryService
                 'noted_at' => $n->noted_at?->toIso8601String(),
                 'created_at' => $n->created_at?->toIso8601String(),
                 'occurred_at' => $occurred?->toIso8601String(),
+                'clinician' => $n->staff ? [
+                    'id' => $n->staff->id,
+                    'name' => $this->formatClinicianName($staffName),
+                ] : null,
             ];
         })->values()->all();
     }
@@ -313,6 +354,7 @@ class PatientMedicalHistoryService
     {
         $rows = Vital::query()
             ->where('patient_id', $patientId)
+            ->with(['staff.user'])
             ->orderByDesc('measured_at')
             ->orderByDesc('id')
             ->limit(self::ROW_LIMIT)
@@ -323,6 +365,15 @@ class PatientMedicalHistoryService
             $snapshot = $fid !== null ? ($facilitiesMap[(string) $fid] ?? null) : null;
             if ($snapshot === null && $fid !== null) {
                 $snapshot = $this->formatFacilitySnapshot(Facility::query()->find($fid));
+            }
+            
+            // Get staff name from first_name and last_name via user relationship
+            $staffName = null;
+            if ($v->staff && $v->staff->user) {
+                $firstName = $v->staff->user->first_name ?? '';
+                $lastName = $v->staff->user->last_name ?? '';
+                $staffName = trim($firstName . ' ' . $lastName);
+                $staffName = !empty($staffName) ? $staffName : null;
             }
 
             return [
@@ -344,6 +395,10 @@ class PatientMedicalHistoryService
                 'measured_at' => $v->measured_at?->toIso8601String(),
                 'created_at' => $v->created_at?->toIso8601String(),
                 'occurred_at' => $v->measured_at?->toIso8601String(),
+                'clinician' => $v->staff ? [
+                    'id' => $v->staff->id,
+                    'name' => $this->formatClinicianName($staffName),
+                ] : null,
             ];
         })->values()->all();
     }
@@ -356,6 +411,7 @@ class PatientMedicalHistoryService
     {
         $rows = Diagnosis::query()
             ->where('patient_id', $patientId)
+            ->with(['staff.user'])
             ->orderByDesc('created_at')
             ->limit(self::ROW_LIMIT)
             ->get();
@@ -365,6 +421,15 @@ class PatientMedicalHistoryService
             $snapshot = $fid !== null ? ($facilitiesMap[(string) $fid] ?? null) : null;
             if ($snapshot === null && $fid !== null) {
                 $snapshot = $this->formatFacilitySnapshot(Facility::query()->find($fid));
+            }
+            
+            // Get staff name from first_name and last_name via user relationship
+            $staffName = null;
+            if ($d->staff && $d->staff->user) {
+                $firstName = $d->staff->user->first_name ?? '';
+                $lastName = $d->staff->user->last_name ?? '';
+                $staffName = trim($firstName . ' ' . $lastName);
+                $staffName = !empty($staffName) ? $staffName : null;
             }
 
             return [
@@ -380,6 +445,10 @@ class PatientMedicalHistoryService
                 'onset_date' => $d->onset_date?->format('Y-m-d'),
                 'created_at' => $d->created_at?->toIso8601String(),
                 'occurred_at' => $d->created_at?->toIso8601String(),
+                'clinician' => $d->staff ? [
+                    'id' => $d->staff->id,
+                    'name' => $this->formatClinicianName($staffName),
+                ] : null,
             ];
         })->values()->all();
     }
@@ -404,6 +473,24 @@ class PatientMedicalHistoryService
             if ($snapshot === null && $fid !== null) {
                 $snapshot = $this->formatFacilitySnapshot(Facility::query()->find($fid));
             }
+            
+            // Get requesting staff name from first_name and last_name via user relationship
+            $requestingStaffName = null;
+            if ($c->requestingStaff && $c->requestingStaff->user) {
+                $firstName = $c->requestingStaff->user->first_name ?? '';
+                $lastName = $c->requestingStaff->user->last_name ?? '';
+                $requestingStaffName = trim($firstName . ' ' . $lastName);
+                $requestingStaffName = !empty($requestingStaffName) ? $requestingStaffName : null;
+            }
+            
+            // Get consultant staff name from first_name and last_name via user relationship
+            $consultantStaffName = null;
+            if ($c->consultantStaff && $c->consultantStaff->user) {
+                $firstName = $c->consultantStaff->user->first_name ?? '';
+                $lastName = $c->consultantStaff->user->last_name ?? '';
+                $consultantStaffName = trim($firstName . ' ' . $lastName);
+                $consultantStaffName = !empty($consultantStaffName) ? $consultantStaffName : null;
+            }
 
             return [
                 'id' => $c->id,
@@ -422,13 +509,11 @@ class PatientMedicalHistoryService
                 'occurred_at' => $c->requested_at?->toIso8601String(),
                 'requesting_staff' => $c->requestingStaff ? [
                     'id' => $c->requestingStaff->id,
-                    'name' => $c->requestingStaff->user?->full_name
-                        ?? trim(($c->requestingStaff->user?->first_name ?? '').' '.($c->requestingStaff->user?->last_name ?? '')),
+                    'name' => $this->formatClinicianName($requestingStaffName),
                 ] : null,
                 'consultant_staff' => $c->consultantStaff ? [
                     'id' => $c->consultantStaff->id,
-                    'name' => $c->consultantStaff->user?->full_name
-                        ?? trim(($c->consultantStaff->user?->first_name ?? '').' '.($c->consultantStaff->user?->last_name ?? '')),
+                    'name' => $this->formatClinicianName($consultantStaffName),
                 ] : null,
             ];
         })->values()->all();
@@ -442,7 +527,7 @@ class PatientMedicalHistoryService
     {
         $rows = LabRequest::query()
             ->where('patient_id', $patientId)
-            ->with(['items.labTest'])
+            ->with(['items.labTest', 'requestedBy.user'])
             ->orderByDesc('requested_at')
             ->orderByDesc('id')
             ->limit(self::ROW_LIMIT)
@@ -453,6 +538,15 @@ class PatientMedicalHistoryService
             $snapshot = $fid !== null ? ($facilitiesMap[(string) $fid] ?? null) : null;
             if ($snapshot === null && $fid !== null) {
                 $snapshot = $this->formatFacilitySnapshot(Facility::query()->find($fid));
+            }
+            
+            // Get requested by name from first_name and last_name via user relationship
+            $requestedByName = null;
+            if ($r->requestedBy && $r->requestedBy->user) {
+                $firstName = $r->requestedBy->user->first_name ?? '';
+                $lastName = $r->requestedBy->user->last_name ?? '';
+                $requestedByName = trim($firstName . ' ' . $lastName);
+                $requestedByName = !empty($requestedByName) ? $requestedByName : null;
             }
 
             return [
@@ -467,6 +561,10 @@ class PatientMedicalHistoryService
                 'requested_at' => $r->requested_at?->toIso8601String(),
                 'completed_at' => $r->completed_at?->toIso8601String(),
                 'occurred_at' => $r->requested_at?->toIso8601String(),
+                'clinician' => $r->requestedBy ? [
+                    'id' => $r->requestedBy->id,
+                    'name' => $this->formatClinicianName($requestedByName),
+                ] : null,
                 'items' => $r->items->map(static function ($item) {
                     return [
                         'id' => $item->id,
@@ -478,6 +576,99 @@ class PatientMedicalHistoryService
                 })->values()->all(),
             ];
         })->values()->all();
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $facilitiesMap
+     * @return list<array<string, mixed>>
+     */
+    private function mapLabResults(int $patientId, array $facilitiesMap): array
+    {
+        $rows = LabResult::query()
+            ->whereHas('labRequestItem.labRequest', fn ($q) => $q->where('patient_id', $patientId))
+            ->with([
+                'templateField',
+                'recordedBy.user',
+                'verifiedBy.user',
+                'labRequestItem.labTest',
+                'labRequestItem.labRequest',
+            ])
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->limit(self::ROW_LIMIT)
+            ->get();
+
+        return $rows->map(function (LabResult $res) use ($facilitiesMap) {
+            $labRequest = $res->labRequestItem?->labRequest;
+            $fid = $labRequest?->facility_id ? (int) $labRequest->facility_id : null;
+            $snapshot = $fid !== null ? ($facilitiesMap[(string) $fid] ?? null) : null;
+            if ($snapshot === null && $fid !== null) {
+                $snapshot = $this->formatFacilitySnapshot(Facility::query()->find($fid));
+            }
+
+            // Get recorded by name from first_name and last_name via user relationship
+            $recordedByName = null;
+            if ($res->recordedBy && $res->recordedBy->user) {
+                $firstName = $res->recordedBy->user->first_name ?? '';
+                $lastName = $res->recordedBy->user->last_name ?? '';
+                $recordedByName = trim($firstName . ' ' . $lastName);
+                $recordedByName = !empty($recordedByName) ? $recordedByName : null;
+            }
+            
+            // Get verified by name from first_name and last_name via user relationship
+            $verifiedByName = null;
+            if ($res->verifiedBy && $res->verifiedBy->user) {
+                $firstName = $res->verifiedBy->user->first_name ?? '';
+                $lastName = $res->verifiedBy->user->last_name ?? '';
+                $verifiedByName = trim($firstName . ' ' . $lastName);
+                $verifiedByName = !empty($verifiedByName) ? $verifiedByName : null;
+            }
+
+            return [
+                'id' => $res->id,
+                'result_uuid' => $res->result_uuid,
+                'visit_id' => $labRequest?->visit_id,
+                'facility_id' => $fid,
+                'facility' => $snapshot,
+                'lab_request_id' => $labRequest?->id,
+                'lab_request_item_id' => $res->lab_request_item_id,
+                'test_name' => $res->labRequestItem?->labTest?->name,
+                'field_name' => $res->templateField?->field_name,
+                'value' => $res->value,
+                'unit' => $res->unit,
+                'numeric_value' => $res->numeric_value,
+                'flag' => $res->flag,
+                'reference_min' => $res->reference_min,
+                'reference_max' => $res->reference_max,
+                'interpretation' => $res->interpretation,
+                'comments' => $res->comments,
+                'recorded_at' => $res->recorded_at?->toIso8601String(),
+                'verified_at' => $res->verified_at?->toIso8601String(),
+                'occurred_at' => $res->recorded_at?->toIso8601String(),
+                'clinician' => $recordedByName ? [
+                    'id' => $res->recordedBy?->id,
+                    'name' => $this->formatClinicianName($recordedByName),
+                ] : null,
+                'verified_by' => $verifiedByName ? [
+                    'id' => $res->verifiedBy?->id,
+                    'name' => $this->formatClinicianName($verifiedByName),
+                ] : null,
+            ];
+        })->values()->all();
+    }
+
+    private function formatClinicianName(?string $name): ?string
+    {
+        if ($name === null || trim($name) === '') {
+            return null;
+        }
+
+        $clean = trim($name);
+        if (str_starts_with(strtolower($clean), 'dr.')) {
+            return $clean;
+        }
+
+        return 'Dr. '.$clean;
     }
 
     private function formatFacilitySnapshot(?Facility $facility): ?array

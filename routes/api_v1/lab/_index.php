@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Lab\LabTemplateFieldController;
 use App\Http\Controllers\Api\Lab\LabRequestController;
 use App\Http\Controllers\Api\Lab\LabRequestItemController;
 use App\Http\Controllers\Api\Lab\LabResultController;
+use App\Http\Controllers\Api\Lab\LaboratoryDashboardController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -20,6 +21,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware(['auth:sanctum'])->prefix('lab')->group(function () {
+    Route::get('/facility/{facilityId}/dashboard', [LaboratoryDashboardController::class, 'show']);
     
     // ─────────────────────────────────────────────────────────────────────
     // 1. LAB TEMPLATE ROUTES

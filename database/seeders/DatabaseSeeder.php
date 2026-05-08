@@ -25,7 +25,7 @@ class DatabaseSeeder extends Seeder
             ['code' => 'medical_records', 'name' => 'Medical Records', 'description' => 'Medical Records, Patient Registration & workflows', 'is_active' => true],
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
             ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
-            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => false],
+            ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
             ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true],
             // ADD NEW PLATFORM ADMINISTRATION MODULE
             ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],

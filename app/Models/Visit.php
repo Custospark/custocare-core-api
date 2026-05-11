@@ -12,6 +12,40 @@ class Visit extends Model
     use HasFactory, SoftDeletes;
 
     /**
+     * Care-delivery module queue identifiers (aligned with frontend CareDeliveryWorkflow enum).
+     *
+     * @var list<string>
+     */
+    public const CARE_DELIVERY_WORKFLOWS = [
+        'registration',
+        'triage',
+        'medical_records',
+        'clinical',
+        'laboratory',
+        'pharmacy',
+        'billing',
+        'nursing',
+        'imaging',
+    ];
+
+    /**
+     * Target visit.current_phase when a visit is placed on a module queue.
+     *
+     * @var array<string, string>
+     */
+    public const CARE_DELIVERY_TARGET_PHASES = [
+        'registration' => 'registration',
+        'triage' => 'waiting_triage',
+        'medical_records' => 'registration',
+        'clinical' => 'waiting_provider',
+        'laboratory' => 'diagnostic_tests',
+        'pharmacy' => 'treatment',
+        'billing' => 'billing',
+        'nursing' => 'observation',
+        'imaging' => 'procedures',
+    ];
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var array<int, string>
@@ -37,6 +71,7 @@ class Visit extends Model
         'referral_reason',
         'current_department_id',
         'current_phase',
+        'care_delivery_workflow',
         'waiting_since',
         'clinical_care_started_at',
         'clinical_care_ended_at',

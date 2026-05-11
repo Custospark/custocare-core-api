@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Auth as SupportFacadesAuth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 use function Illuminate\Log\log;
 
@@ -150,23 +151,26 @@ class VisitController extends Controller
                 ], 403);
             }
 
-            // 4) Optional filters
+            // 4) Optional filters (aligned with frontend QueueFilters / my-queue query params)
             $filters = $request->validate([
                 'current_phase' => 'nullable|in:registration,waiting_triage,triage,waiting_provider,consultation,diagnostic_tests,awaiting_results,treatment,procedures,observation,admission_pending,billing,discharge_pending,discharged,left_without_being_seen,left_against_medical_advice,transferred,admitted,expired',
                 'limit' => 'nullable|integer|min:1|max:100',
                 'without_ward_assignment' => 'nullable|boolean',
+                'department_id' => 'nullable|integer|exists:departments,id',
+                'care_delivery_workflow' => ['nullable', 'string', Rule::in(Visit::CARE_DELIVERY_WORKFLOWS)],
             ]);
 
             $phase = $filters['current_phase'] ?? null;
             $limit = (int) ($filters['limit'] ?? 50);
             $withoutWardAssignment = (bool) ($filters['without_ward_assignment'] ?? false);
+            $departmentId = $filters['department_id'] ?? null;
+            $careWorkflow = $filters['care_delivery_workflow'] ?? null;
 
-            // 5) My queue = visits assigned to me (VISIT-centric)
-            $visits = Visit::query()
+            // 5) Queue: visits assigned to this staff OR (when filtering) visits in the module workflow bucket
+            $queueQuery = Visit::query()
                 ->where('facility_id', $facilityId)
-                ->where('assigned_staff_id', $staffId)
                 ->whereIn('status', ['active', 'in_progress'])
-                // ->when($phase, fn ($q) => $q->where('current_phase', $phase))
+                ->when($departmentId, fn ($q) => $q->where('current_department_id', $departmentId))
                 ->when($withoutWardAssignment, function ($q): void {
                     // Visits with no ward/bed in metadata (nursing intake — exclude assigned inpatients)
                     $q->where(function ($w): void {
@@ -175,7 +179,31 @@ class VisitController extends Controller
                                 'CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, "$.nursing_ward_bed.ward_id")),"0") AS UNSIGNED) = 0'
                             );
                     });
-                })
+                });
+
+            if ($careWorkflow) {
+                /** @var list<string> $workflowMatchValues registration is legacy alias for front-desk / records queue */
+                $workflowMatchValues = $careWorkflow === 'medical_records'
+                    ? ['medical_records', 'registration']
+                    : [$careWorkflow];
+
+                $queueQuery->where(function ($outer) use ($staffId, $workflowMatchValues, $phase): void {
+                    $outer->where('assigned_staff_id', $staffId)
+                        ->orWhere(function ($inner) use ($workflowMatchValues, $phase): void {
+                            $inner->whereIn('care_delivery_workflow', $workflowMatchValues);
+                            if ($phase !== null && $phase !== '') {
+                                $inner->where('current_phase', $phase);
+                            }
+                        });
+                });
+            } else {
+                $queueQuery->where('assigned_staff_id', $staffId);
+                if ($phase !== null && $phase !== '') {
+                    $queueQuery->where('current_phase', $phase);
+                }
+            }
+
+            $visits = $queueQuery
                 ->with(['patient.user'])
                 ->orderBy('acuity_score', 'asc')
                 ->orderBy('waiting_since', 'asc')
@@ -218,6 +246,7 @@ class VisitController extends Controller
                     'visit_type' => $v->visit_type,
                     'status' => $v->status,
                     'is_walk_in' => (bool) $v->is_walk_in,
+                    'care_delivery_workflow' => $v->care_delivery_workflow,
                 ];
             })->values();
 
@@ -235,6 +264,7 @@ class VisitController extends Controller
                     'arrived_at' => optional($v->arrived_at)->toISOString(),
                     'visit_type' => $v->visit_type,
                     'status' => $v->status,
+                    'care_delivery_workflow' => $v->care_delivery_workflow,
                 ];
             })->values();
 
@@ -250,7 +280,9 @@ class VisitController extends Controller
                     'role_code' => $assignment->role_code,
                     'filters' => [
                         'current_phase' => $phase,
+                        'department_id' => $departmentId,
                         'without_ward_assignment' => $withoutWardAssignment,
+                        'care_delivery_workflow' => $careWorkflow,
                     ],
 
                     // legacy
@@ -470,15 +502,21 @@ class VisitController extends Controller
 
             $validated = $request->validate([
                 'visit_id' => 'required|integer',
-                'assigned_staff_id' => 'required|integer',
+                'forwarding_kind' => 'nullable|in:staff,workflow',
+                'assigned_staff_id' => 'nullable|integer',
+                'care_delivery_workflow' => ['nullable', 'string', Rule::in(Visit::CARE_DELIVERY_WORKFLOWS)],
             ]);
 
+            $forwardingKind = $validated['forwarding_kind'] ?? 'staff';
+            if (! in_array($forwardingKind, ['staff', 'workflow'], true)) {
+                $forwardingKind = 'staff';
+            }
+
             $visitId = (int) $validated['visit_id'];
-            $assignedStaffId = (int) $validated['assigned_staff_id'];
 
             // Resolve referring staff from authenticated user
             $referringStaffId = Staff::query()->where('user_id', Auth::id())->value('id');
-            if (!$referringStaffId) {
+            if (! $referringStaffId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Staff profile not found for this user.',
@@ -487,18 +525,6 @@ class VisitController extends Controller
                 ], 403);
             }
 
-            // 3) Check assigned staff exists
-            $staffExists = Staff::query()->whereKey($assignedStaffId)->exists();
-            if (!$staffExists) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Assigned staff not found.',
-                    'errors' => ['assigned_staff_id' => ['No staff record exists for the provided assigned staff.']],
-                    'data' => [],
-                ], 404);
-            }
-
-            // 4) Ensure BOTH staff are ACTIVE in the SAME facility
             $referringActive = FacilityStaffRole::query()
                 ->where('facility_id', $facilityId)
                 ->where('staff_id', $referringStaffId)
@@ -506,11 +532,11 @@ class VisitController extends Controller
                 ->whereDate('effective_from', '<=', now()->toDateString())
                 ->where(function ($q) {
                     $q->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', now()->toDateString());
+                        ->orWhereDate('effective_to', '>=', now()->toDateString());
                 })
                 ->exists();
 
-            if (!$referringActive) {
+            if (! $referringActive) {
                 return response()->json([
                     'success' => false,
                     'message' => 'You are not assigned to this facility.',
@@ -519,63 +545,118 @@ class VisitController extends Controller
                 ], 403);
             }
 
-            $assignedActive = FacilityStaffRole::query()
-                ->where('facility_id', $facilityId)
-                ->where('staff_id', $assignedStaffId)
-                ->where('assignment_status', 'active')
-                ->whereDate('effective_from', '<=', now()->toDateString())
-                ->where(function ($q) {
-                    $q->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', now()->toDateString());
-                })
-                ->exists();
-
-            if (!$assignedActive) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Assigned staff is not active in this facility.',
-                    'errors' => ['assigned_staff_id' => ['Assigned staff has no active assignment in this facility.']],
-                    'data' => [],
-                ], 403);
-            }
-
-            // 5) Check assigned staff presence status is allowed
-            $presence = StaffPresence::query()
-                ->where('staff_id', $assignedStaffId)
-                ->orderByDesc('updated_at')
-                ->first();
-
-            if (!$presence || !in_array($presence->status, ['busy', 'on_duty'], true)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Staff is not available for assignment.',
-                    'errors' => ['staff_presence' => ['Staff must be in status busy or on_duty to be assigned.']],
-                    'data' => [],
-                ], 422);
-            }
-
-            // 6) Update visit assignment (lock to avoid race conditions)
-            $visit = DB::transaction(function () use ($visitId, $facilityId, $assignedStaffId, $referringStaffId) {
-                $visit = Visit::query()->lockForUpdate()->find($visitId);
-
-                if (!$visit) {
-                    return null;
+            if ($forwardingKind === 'workflow') {
+                $workflow = $validated['care_delivery_workflow'] ?? null;
+                if (! $workflow || ! isset(Visit::CARE_DELIVERY_TARGET_PHASES[$workflow])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Validation failed.',
+                        'errors' => [
+                            'care_delivery_workflow' => ['A valid care_delivery_workflow is required when forwarding_kind is workflow.'],
+                        ],
+                        'data' => [],
+                    ], 422);
                 }
 
-                // Ensure visit belongs to the same facility
-                if ((int) $visit->facility_id !== (int) $facilityId) {
-                    // return a sentinel value to handle outside transaction cleanly
-                    return 'FACILITY_MISMATCH';
+                $targetPhase = Visit::CARE_DELIVERY_TARGET_PHASES[$workflow];
+
+                $visit = DB::transaction(function () use ($visitId, $facilityId, $referringStaffId, $workflow, $targetPhase) {
+                    $visit = Visit::query()->lockForUpdate()->find($visitId);
+
+                    if (! $visit) {
+                        return null;
+                    }
+
+                    if ((int) $visit->facility_id !== (int) $facilityId) {
+                        return 'FACILITY_MISMATCH';
+                    }
+
+                    $visit->update([
+                        'assigned_staff_id' => null,
+                        'assigned_at' => null,
+                        'care_delivery_workflow' => $workflow,
+                        'current_phase' => $targetPhase,
+                        'referring_provider_staff_id' => $referringStaffId,
+                    ]);
+
+                    return $visit->fresh();
+                });
+            } else {
+                $assignedStaffId = isset($validated['assigned_staff_id']) ? (int) $validated['assigned_staff_id'] : 0;
+                if ($assignedStaffId < 1) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Validation failed.',
+                        'errors' => ['assigned_staff_id' => ['assigned_staff_id is required when forwarding to a specific staff member.']],
+                        'data' => [],
+                    ], 422);
                 }
 
-                $visit->update([
-                    'assigned_staff_id' => $assignedStaffId,
-                    'assigned_at' => now(),
-                    'referring_provider_staff_id' => $referringStaffId,
-                ]);
+                $staffExists = Staff::query()->whereKey($assignedStaffId)->exists();
+                if (! $staffExists) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Assigned staff not found.',
+                        'errors' => ['assigned_staff_id' => ['No staff record exists for the provided assigned staff.']],
+                        'data' => [],
+                    ], 404);
+                }
 
-                return $visit->fresh();
-            });
+                $assignedActive = FacilityStaffRole::query()
+                    ->where('facility_id', $facilityId)
+                    ->where('staff_id', $assignedStaffId)
+                    ->where('assignment_status', 'active')
+                    ->whereDate('effective_from', '<=', now()->toDateString())
+                    ->where(function ($q) {
+                        $q->whereNull('effective_to')
+                            ->orWhereDate('effective_to', '>=', now()->toDateString());
+                    })
+                    ->exists();
+
+                if (! $assignedActive) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Assigned staff is not active in this facility.',
+                        'errors' => ['assigned_staff_id' => ['Assigned staff has no active assignment in this facility.']],
+                        'data' => [],
+                    ], 403);
+                }
+
+                $presence = StaffPresence::query()
+                    ->where('staff_id', $assignedStaffId)
+                    ->orderByDesc('updated_at')
+                    ->first();
+
+                if (! $presence || ! in_array($presence->status, ['busy', 'on_duty'], true)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Staff is not available for assignment.',
+                        'errors' => ['staff_presence' => ['Staff must be in status busy or on_duty to be assigned.']],
+                        'data' => [],
+                    ], 422);
+                }
+
+                $visit = DB::transaction(function () use ($visitId, $facilityId, $assignedStaffId, $referringStaffId) {
+                    $visit = Visit::query()->lockForUpdate()->find($visitId);
+
+                    if (! $visit) {
+                        return null;
+                    }
+
+                    if ((int) $visit->facility_id !== (int) $facilityId) {
+                        return 'FACILITY_MISMATCH';
+                    }
+
+                    $visit->update([
+                        'assigned_staff_id' => $assignedStaffId,
+                        'assigned_at' => now(),
+                        'referring_provider_staff_id' => $referringStaffId,
+                        'care_delivery_workflow' => null,
+                    ]);
+
+                    return $visit->fresh();
+                });
+            }
 
             if ($visit === 'FACILITY_MISMATCH') {
                 return response()->json([
@@ -586,7 +667,7 @@ class VisitController extends Controller
                 ], 403);
             }
 
-            if (!$visit) {
+            if (! $visit) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Visit not found.',
@@ -598,7 +679,9 @@ class VisitController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => new VisitResource($visit),
-                'message' => 'Patient forwarded successfully.',
+                'message' => $forwardingKind === 'workflow'
+                    ? 'Visit routed to module queue successfully.'
+                    : 'Patient forwarded successfully.',
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {

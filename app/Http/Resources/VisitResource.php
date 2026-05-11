@@ -42,6 +42,7 @@ class VisitResource extends JsonResource
             'referral_reason' => $this->referral_reason,
             'current_department' => $this->whenLoaded('currentDepartment', new DepartmentResource($this->currentDepartment)),
             'current_phase' => $this->current_phase,
+            'care_delivery_workflow' => $this->care_delivery_workflow,
             'waiting_since' => $this->waiting_since,
             'clinical_care_started_at' => $this->clinical_care_started_at,
             'clinical_care_ended_at' => $this->clinical_care_ended_at,

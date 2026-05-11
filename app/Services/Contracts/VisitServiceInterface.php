@@ -112,10 +112,10 @@ interface VisitServiceInterface
      * @param string $uuid
      * @param string $status
      * @param array $additionalData
-     * @param int $userId
+     * @param int|null $staffId Authenticated staff id for audit (updated_by_staff_id)
      * @return array
      */
-    public function updateVisitStatus(string $uuid, string $status, array $additionalData = [], ?int $userId = null): array;
+    public function updateVisitStatus(string $uuid, string $status, array $additionalData = [], ?int $staffId = null): array;
 
     /**
      * Discharge a visit

@@ -707,8 +707,6 @@ public function createVisit(array $data, int $staffId): array
     public function updateVisitStatus(string $uuid, string $status, array $additionalData = [], ?int $staffId = null): array
     {
         try {
-            DB::beginTransaction();
-
             // Find the visit
             $visit = $this->visitRepository->findByUuid($uuid);
             if (!$visit) {
@@ -742,15 +740,15 @@ public function createVisit(array $data, int $staffId): array
                 $additionalData['updated_by_staff_id'] = $staffId;
             }
 
-            // Update status
+            $previousStatus = $visit->status;
+
+            // Update status (repository owns the DB transaction)
             $updatedVisit = $this->visitRepository->updateStatus($visit, $status, $additionalData);
 
-            DB::commit();
-
             Log::info('Visit status updated', [
-                'visit_id' => $visit->id,
+                'visit_id' => $updatedVisit->id,
                 'visit_uuid' => $uuid,
-                'old_status' => $visit->status,
+                'old_status' => $previousStatus,
                 'new_status' => $status,
                 'staff_id' => $staffId,
             ]);
@@ -761,12 +759,10 @@ public function createVisit(array $data, int $staffId): array
                 'message' => 'Visit status updated successfully.',
             ];
         } catch (\Exception $e) {
-            DB::rollBack();
-
             Log::error('Failed to update visit status', [
                 'uuid' => $uuid,
                 'status' => $status,
-                'user_id' => $staffId,
+                'staff_id' => $staffId,
                 'error' => $e->getMessage(),
             ]);
 
@@ -1185,26 +1181,37 @@ public function createVisit(array $data, int $staffId): array
     /**
      * Check if status transition is allowed
      *
+     * Rules align with non-terminal workflow states (`active`, `in_progress`): either may
+     * move to the other non-terminal state or to any terminal outcome (`completed`, `cancelled`,
+     * `no_show`). Terminal records stay immutable. A no-show may be reopened to `active` or
+     * directly to `in_progress` when the encounter actually occurred after a mistaken no-show.
+     *
      * @param string $currentStatus
      * @param string $newStatus
      * @return bool
      */
     private function isStatusTransitionAllowed(string $currentStatus, string $newStatus): bool
     {
-        Log::info("her----------------");
-        Log::info($currentStatus);
-        Log::info($newStatus);
-        Log::info("stopped----------------");
+        if ($currentStatus === $newStatus) {
+            return true;
+        }
+
+        if (!in_array($currentStatus, $this->validStatuses, true) || !in_array($newStatus, $this->validStatuses, true)) {
+            return false;
+        }
+
+        $nonTerminal = ['active', 'in_progress'];
+        $terminal = ['completed', 'cancelled', 'no_show'];
 
         $allowedTransitions = [
-            'active' => ['completed', 'cancelled', 'no_show', 'in_progress'],
-            'in_progress' => ['active', 'completed', 'cancelled'],
-            'completed' => [], // Cannot transition from completed
-            'cancelled' => [], // Cannot transition from cancelled
-            'no_show' => ['active'], // Can reactivate a no-show
+            'active' => array_merge($nonTerminal, $terminal),
+            'in_progress' => array_merge($nonTerminal, $terminal),
+            'completed' => [],
+            'cancelled' => [],
+            'no_show' => ['active', 'in_progress'],
         ];
 
-        return in_array($newStatus, $allowedTransitions[$currentStatus] ?? []);
+        return in_array($newStatus, $allowedTransitions[$currentStatus] ?? [], true);
     }
 
     /**

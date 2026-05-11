@@ -312,9 +312,146 @@ class VisitController extends Controller
         }
     }
 
+    /**
+     * Completed encounters for the facility (`status = completed`) in the discharge / end date window.
+     * Facility from `X-Facility-Id` (also set on every request in `axiosConfig`). No workflow or staff filter.
+     */
+    public function myCompletedWork(Request $request): JsonResponse
+    {
+        try {
+            $facilityId = (int) $request->header('X-Facility-Id');
 
+            if (! $facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing X-Facility-Id header.',
+                    'errors' => ['facility_id' => ['X-Facility-Id header is required.']],
+                    'data' => [],
+                ], 422);
+            }
 
+            $userId = Auth::id();
+            $staffId = Staff::query()->where('user_id', $userId)->value('id');
 
+            if (! $staffId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff profile not found for this user.',
+                    'errors' => ['staff' => ['No staff record is linked to this account.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            $assignment = FacilityStaffRole::query()
+                ->where('facility_id', $facilityId)
+                ->where('staff_id', $staffId)
+                ->where('assignment_status', 'active')
+                ->first(['id', 'role_code']);
+
+            if (! $assignment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not assigned to this facility.',
+                    'errors' => ['facility' => ['No active facility assignment found.']],
+                    'data' => [],
+                ], 403);
+            }
+
+            $filters = $request->validate([
+                'date_preset' => 'nullable|in:today,this_week,this_month',
+                'limit' => 'nullable|integer|min:1|max:100',
+            ]);
+
+            $preset = $filters['date_preset'] ?? 'this_week';
+            $limit = (int) ($filters['limit'] ?? 100);
+
+            $now = now();
+            if ($preset === 'today') {
+                $start = $now->copy()->startOfDay();
+                $end = $now->copy()->endOfDay();
+            } elseif ($preset === 'this_month') {
+                $start = $now->copy()->startOfMonth();
+                $end = $now->copy()->endOfMonth();
+            } else {
+                $start = $now->copy()->startOfWeek();
+                $end = $now->copy()->endOfWeek();
+            }
+
+            $visits = Visit::query()
+                ->where('facility_id', $facilityId)
+                ->where('status', 'completed')
+                ->whereRaw(
+                    'COALESCE(discharged_at, clinical_care_ended_at, updated_at) BETWEEN ? AND ?',
+                    [$start->toDateTimeString(), $end->toDateTimeString()]
+                )
+                ->with(['patient.user'])
+                ->orderByRaw('COALESCE(discharged_at, clinical_care_ended_at, updated_at) DESC')
+                ->limit($limit)
+                ->get();
+
+            $patients = $visits
+                ->map(fn ($v) => $v->patient)
+                ->filter()
+                ->unique('id')
+                ->values();
+
+            $queueVisits = $visits->map(function ($v) {
+                return [
+                    'visit_id' => $v->id,
+                    'visit_uuid' => $v->visit_uuid,
+                    'facility_id' => $v->facility_id,
+
+                    'patient_id' => $v->patient_id,
+                    'patient' => $v->patient ? new PatientSearchResource($v->patient) : null,
+
+                    'current_phase' => $v->current_phase,
+                    'current_department_id' => $v->current_department_id,
+
+                    'assigned_staff_id' => $v->assigned_staff_id,
+                    'assigned_at' => optional($v->assigned_at)->toISOString(),
+
+                    'waiting_since' => optional($v->waiting_since)->toISOString(),
+                    'acuity_score' => $v->acuity_score,
+                    'arrived_at' => optional($v->arrived_at)->toISOString(),
+
+                    'visit_type' => $v->visit_type,
+                    'status' => $v->status,
+                    'is_walk_in' => (bool) $v->is_walk_in,
+                    'care_delivery_workflow' => $v->care_delivery_workflow,
+                    'discharged_at' => optional($v->discharged_at)->toISOString(),
+                ];
+            })->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => PatientSearchResource::collection($patients),
+                'meta' => [
+                    'facility_id' => $facilityId,
+                    'staff_id' => $staffId,
+                    'role_code' => $assignment->role_code,
+                    'filters' => [
+                        'date_preset' => $preset,
+                        'date_from' => $start->toIso8601String(),
+                        'date_to' => $end->toIso8601String(),
+                    ],
+                    'queue_visits' => $queueVisits,
+                    'total_visits' => $visits->count(),
+                    'total_patients' => $patients->count(),
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Failed to load completed facility visits', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load completed visits.',
+                'data' => [],
+            ], 500);
+        }
+    }
 
     /**
      * Store a newly created visit.
@@ -1304,7 +1441,6 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
      */
     public function updateStatus(Request $request, string $uuid): JsonResponse
     {
-        
         try {
             // Validate request
             $request->validate([
@@ -1312,8 +1448,14 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
                 'additional_data' => 'nullable|array',
             ]);
 
-            // Get current user ID
-            $staffId = Staff::where('user_id',$request->user()->id)->first()->id;
+            $staff = Staff::where('user_id', $request->user()->id)->first();
+            if (!$staff) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff record not found for authenticated user',
+                ], 404);
+            }
+            $staffId = $staff->id;
 
             // Update status via service
             $result = $this->visitService->updateVisitStatus(

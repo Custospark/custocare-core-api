@@ -187,7 +187,7 @@ class Visit extends Model
         static::saving(function (Visit $visit) {
             $hasStaff = $visit->assigned_staff_id !== null && (int) $visit->assigned_staff_id > 0;
 
-            if ($visit->isDirty('current_phase')) {
+            if ($visit->isDirty('current_phase') && ! $visit->isTerminalVisitState()) {
                 $wf = $visit->care_delivery_workflow;
                 if ($wf !== null && $wf !== '' && isset(static::CARE_DELIVERY_TARGET_PHASES[$wf])) {
                     if ($visit->current_phase !== static::CARE_DELIVERY_TARGET_PHASES[$wf]) {
@@ -200,7 +200,7 @@ class Visit extends Model
 
             if ($hasStaff) {
                 $visit->care_delivery_workflow = null;
-            } elseif ($hasWorkflow) {
+            } elseif ($hasWorkflow && ! $visit->isTerminalVisitState()) {
                 $visit->assigned_staff_id = null;
                 $visit->assigned_at = null;
                 if (isset(static::CARE_DELIVERY_TARGET_PHASES[$visit->care_delivery_workflow])) {
@@ -208,6 +208,27 @@ class Visit extends Model
                 }
             }
         });
+    }
+
+    /**
+     * Terminal phases / finished visit records: do not auto-sync workflow↔phase
+     * so completed visits can retain last `care_delivery_workflow` for module history.
+     */
+    public function isTerminalVisitState(): bool
+    {
+        $terminalPhases = [
+            'discharged',
+            'left_without_being_seen',
+            'left_against_medical_advice',
+            'transferred',
+            'expired',
+        ];
+
+        if (in_array($this->current_phase, $terminalPhases, true)) {
+            return true;
+        }
+
+        return in_array($this->status, ['completed', 'cancelled', 'no_show'], true);
     }
 
     /**

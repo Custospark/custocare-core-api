@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Billing\Admin;
 
+use App\Constants\Billing\PlanFeatures;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -26,6 +27,7 @@ class StorePlanRequest extends FormRequest
             'billing_cycle'          => 'required|in:monthly',
             'trial_days'             => 'nullable|integer|min:0|max:90',
             'features'               => 'nullable|array',
+            'features.*'             => 'boolean',
             'max_staff'              => 'nullable|integer|min:1',
             'max_departments'        => 'nullable|integer|min:1',
             'max_patients_per_month' => 'nullable|integer|min:1',
@@ -33,6 +35,24 @@ class StorePlanRequest extends FormRequest
             'is_popular'             => 'nullable|boolean',
             'is_active'              => 'nullable|boolean',
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            $features = $this->input('features');
+            if (!is_array($features)) {
+                return;
+            }
+
+            $unknown = array_diff(array_keys($features), PlanFeatures::ALL);
+            if (!empty($unknown)) {
+                $validator->errors()->add(
+                    'features',
+                    'Unsupported feature keys: ' . implode(', ', $unknown)
+                );
+            }
+        });
     }
 
     protected function failedValidation(Validator $validator): void

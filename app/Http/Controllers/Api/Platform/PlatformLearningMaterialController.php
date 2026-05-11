@@ -87,13 +87,28 @@ class PlatformLearningMaterialController extends Controller
     private function respondWithStoredThumbnail(Request $request, ?LearningMaterial $learningMaterial): JsonResponse
     {
         $request->validate([
-            'photo' => ['required', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
+            'photo'                     => ['required', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
+            'previous_thumbnail_path'   => ['nullable', 'string', 'max:512'],
         ]);
 
         $file = $request->file('photo');
 
-        if ($learningMaterial !== null && $learningMaterial->thumbnail_path) {
-            Storage::disk('public')->delete($learningMaterial->thumbnail_path);
+        if ($learningMaterial !== null) {
+            $disk = Storage::disk('public');
+            $materialDir = 'learning-material-thumbnails/'.$learningMaterial->id;
+            $previousPath = $learningMaterial->thumbnail_path;
+
+            // Wipe the whole material folder so repeat uploads (before save) cannot leave duplicates.
+            if ($disk->exists($materialDir)) {
+                $disk->deleteDirectory($materialDir);
+            }
+
+            // Legacy / pending paths stored on the row but outside this folder (e.g. pending/… before first save).
+            if ($previousPath && $disk->exists($previousPath)) {
+                $disk->delete($previousPath);
+            }
+        } else {
+            $this->deletePendingThumbnailIfAllowed($request->string('previous_thumbnail_path')->toString());
         }
 
         $directory = $learningMaterial !== null
@@ -192,5 +207,25 @@ class PlatformLearningMaterialController extends Controller
         }
 
         return $validated;
+    }
+
+    /**
+     * Remove a prior pending upload when the client replaces the thumbnail before save (no traversal).
+     */
+    private function deletePendingThumbnailIfAllowed(string $path): void
+    {
+        if ($path === '' || str_contains($path, '..')) {
+            return;
+        }
+
+        $prefix = 'learning-material-thumbnails/pending/';
+        if (! str_starts_with($path, $prefix)) {
+            return;
+        }
+
+        $disk = Storage::disk('public');
+        if ($disk->exists($path)) {
+            $disk->delete($path);
+        }
     }
 }

@@ -183,6 +183,31 @@ class Visit extends Model
                 $model->visit_uuid = (string) \Illuminate\Support\Str::uuid();
             }
         });
+
+        static::saving(function (Visit $visit) {
+            $hasStaff = $visit->assigned_staff_id !== null && (int) $visit->assigned_staff_id > 0;
+
+            if ($visit->isDirty('current_phase')) {
+                $wf = $visit->care_delivery_workflow;
+                if ($wf !== null && $wf !== '' && isset(static::CARE_DELIVERY_TARGET_PHASES[$wf])) {
+                    if ($visit->current_phase !== static::CARE_DELIVERY_TARGET_PHASES[$wf]) {
+                        $visit->care_delivery_workflow = null;
+                    }
+                }
+            }
+
+            $hasWorkflow = $visit->care_delivery_workflow !== null && $visit->care_delivery_workflow !== '';
+
+            if ($hasStaff) {
+                $visit->care_delivery_workflow = null;
+            } elseif ($hasWorkflow) {
+                $visit->assigned_staff_id = null;
+                $visit->assigned_at = null;
+                if (isset(static::CARE_DELIVERY_TARGET_PHASES[$visit->care_delivery_workflow])) {
+                    $visit->current_phase = static::CARE_DELIVERY_TARGET_PHASES[$visit->care_delivery_workflow];
+                }
+            }
+        });
     }
 
     /**

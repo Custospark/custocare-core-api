@@ -188,13 +188,15 @@ class VisitController extends Controller
                     : [$careWorkflow];
 
                 $queueQuery->where(function ($outer) use ($staffId, $workflowMatchValues, $phase): void {
-                    $outer->where('assigned_staff_id', $staffId)
-                        ->orWhere(function ($inner) use ($workflowMatchValues, $phase): void {
-                            $inner->whereIn('care_delivery_workflow', $workflowMatchValues);
-                            if ($phase !== null && $phase !== '') {
-                                $inner->where('current_phase', $phase);
-                            }
-                        });
+                    $outer->where(function ($mine) use ($staffId, $phase): void {
+                        $mine->where('assigned_staff_id', $staffId);
+                        if ($phase !== null && $phase !== '') {
+                            $mine->where('current_phase', $phase);
+                        }
+                    })->orWhere(function ($inner) use ($workflowMatchValues): void {
+                        $inner->whereIn('care_delivery_workflow', $workflowMatchValues)
+                            ->whereNull('assigned_staff_id');
+                    });
                 });
             } else {
                 $queueQuery->where('assigned_staff_id', $staffId);

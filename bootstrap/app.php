@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\MessageRecipientNotResolvedException;
 use App\Http\Middleware\EnsureAdminAccess;
 use App\Http\Middleware\EnsureFacilitySubscriptionIsActive;
 use App\Http\Middleware\ValidateActiveContext;
@@ -30,6 +31,21 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->render(function (MessageRecipientNotResolvedException $e, \Illuminate\Http\Request $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'errors' => [
+                        'recipients' => [$e->getMessage()],
+                        'recipient_channel' => [$e->channel],
+                    ],
+                ], 422);
+            }
+
+            return null;
+        });
+
         $exceptions->render(function (AuthenticationException $e, \Illuminate\Http\Request $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
                 return response()->json([

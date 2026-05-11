@@ -14,6 +14,7 @@ use Illuminate\Support\Carbon;
  * @property int|null    $user_id
  * @property string|null $name
  * @property string      $email
+ * @property string|null $phone
  * @property string      $type              to|cc|bcc
  * @property string      $delivery_status   pending|sent|delivered|failed|read
  * @property Carbon|null $delivered_at
@@ -32,6 +33,7 @@ class MessageRecipient extends Model
         'user_id',
         'name',
         'email',
+        'phone',
         'type',
         'delivery_status',
         'delivered_at',

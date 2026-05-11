@@ -13,6 +13,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -53,6 +54,35 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 class MessageController extends Controller
 {
     public function __construct(private readonly MessageService $service) {}
+
+    /**
+     * Each recipient must have exactly one of email or phone (internal messaging resolves Users by hash).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function validateRecipientPayload(array $data): void
+    {
+        foreach (['to', 'cc', 'bcc'] as $field) {
+            foreach ($data[$field] ?? [] as $i => $recipient) {
+                $email = isset($recipient['email']) ? trim((string) $recipient['email']) : '';
+                $phone = isset($recipient['phone']) ? trim((string) $recipient['phone']) : '';
+                $hasEmail = $email !== '';
+                $hasPhone = $phone !== '';
+
+                if (!$hasEmail && !$hasPhone) {
+                    throw ValidationException::withMessages([
+                        "{$field}.{$i}.contact" => ['Provide either an email or a phone number.'],
+                    ]);
+                }
+
+                if ($hasEmail && $hasPhone) {
+                    throw ValidationException::withMessages([
+                        "{$field}.{$i}.contact" => ['Provide only one of email or phone per recipient.'],
+                    ]);
+                }
+            }
+        }
+    }
 
     // ── GET /messages ──────────────────────────────────────────────────────
 
@@ -112,17 +142,22 @@ class MessageController extends Controller
             'parent_id'                 => ['nullable', 'integer', 'exists:messages,id'],
             'labels'                    => ['sometimes', 'array'],
             'labels.*'                  => ['string', 'max:100'],
-            // Recipients: flat arrays keyed by type
+            // Recipients: flat arrays keyed by type (email XOR phone per row)
             'to'                        => ['sometimes', 'array'],
             'to.*.name'                 => ['nullable', 'string', 'max:255'],
-            'to.*.email'                => ['required_with:to', 'email', 'max:255'],
+            'to.*.email'                => ['nullable', 'email', 'max:255'],
+            'to.*.phone'                => ['nullable', 'string', 'max:30'],
             'cc'                        => ['sometimes', 'array'],
             'cc.*.name'                 => ['nullable', 'string', 'max:255'],
-            'cc.*.email'                => ['required_with:cc', 'email', 'max:255'],
+            'cc.*.email'                => ['nullable', 'email', 'max:255'],
+            'cc.*.phone'                => ['nullable', 'string', 'max:30'],
             'bcc'                       => ['sometimes', 'array'],
             'bcc.*.name'                => ['nullable', 'string', 'max:255'],
-            'bcc.*.email'               => ['required_with:bcc', 'email', 'max:255'],
+            'bcc.*.email'               => ['nullable', 'email', 'max:255'],
+            'bcc.*.phone'               => ['nullable', 'string', 'max:30'],
         ]);
+
+        $this->validateRecipientPayload($data);
 
         $user = Auth::user();
 
@@ -186,14 +221,19 @@ class MessageController extends Controller
             'labels.*'              => ['string', 'max:100'],
             'to'                    => ['sometimes', 'array'],
             'to.*.name'             => ['nullable', 'string', 'max:255'],
-            'to.*.email'            => ['required_with:to', 'email'],
+            'to.*.email'            => ['nullable', 'email'],
+            'to.*.phone'            => ['nullable', 'string', 'max:30'],
             'cc'                    => ['sometimes', 'array'],
             'cc.*.name'             => ['nullable', 'string', 'max:255'],
-            'cc.*.email'            => ['required_with:cc', 'email'],
+            'cc.*.email'            => ['nullable', 'email'],
+            'cc.*.phone'            => ['nullable', 'string', 'max:30'],
             'bcc'                   => ['sometimes', 'array'],
             'bcc.*.name'            => ['nullable', 'string', 'max:255'],
-            'bcc.*.email'           => ['required_with:bcc', 'email'],
+            'bcc.*.email'           => ['nullable', 'email'],
+            'bcc.*.phone'           => ['nullable', 'string', 'max:30'],
         ]);
+
+        $this->validateRecipientPayload($data);
 
         $message = $this->service->updateDraft(Auth::user(), $id, $data);
 

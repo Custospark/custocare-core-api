@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
+use App\Exceptions\MessageRecipientNotResolvedException;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -171,6 +172,7 @@ class MessageService
               })
               ->orWhereHas('message.recipients', function (Builder $rq) use ($term) {
                   $rq->where('email', 'LIKE', $term)
+                     ->orWhere('phone', 'LIKE', $term)
                      ->orWhere('name', 'LIKE', $term);
               })
               ->orWhereHas('message.labels', function (Builder $lq) use ($user, $term) {
@@ -1044,37 +1046,102 @@ public function downloadAttachment(User $user, int $attachmentId)
     }
 
     /**
-     * Create a single recipient.
+     * Normalize phone for hashing — same rules as patient registration
+     * ({@see PatientController::createPatientByAdmin}).
+     */
+    private function normalizeRecipientPhone(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+        $trimmed = trim($value);
+        $normalized = preg_replace('/(?!^\+)[^\d]/', '', $trimmed);
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    private function decryptUserEmail(User $user): ?string
+    {
+        if (!$user->email_encrypted) {
+            return null;
+        }
+        try {
+            return decrypt($user->email_encrypted);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function decryptUserPhone(User $user): ?string
+    {
+        if (!$user->phone_encrypted) {
+            return null;
+        }
+        try {
+            return decrypt($user->phone_encrypted);
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Create a single recipient (must resolve to an internal {@see User}).
+     *
+     * @throws MessageRecipientNotResolvedException
      */
     private function createRecipient(Message $message, array $recipient, string $type): void
     {
-        $email = strtolower(trim($recipient['email']));
-        
-        // Try to resolve internal user
-        $internalUser = User::where('email_hash', hash('sha256', $email))
-            ->first();
-        
-        // Log the debug information
-        Log::info(sprintf(
-            "Debug: Looking for user with email '%s' (hash: %s). Found: %s. User ID: %s",
-            $email,
-            hash('sha256', $email),
-            $internalUser ? 'YES' : 'NO',
-            $internalUser?->id ?? 'null'
-        ));
-        
-        // Throw error if user not found
-        if (!$internalUser) {
-            throw new \Exception(
-                "Internal user not found for email: {$email}"
-            );
+        $emailInput = isset($recipient['email']) ? strtolower(trim((string) $recipient['email'])) : '';
+        $phoneInput = $this->normalizeRecipientPhone($recipient['phone'] ?? null);
+
+        if ($emailInput !== '' && $phoneInput !== null) {
+            throw new InvalidArgumentException('Provide only one of email or phone per recipient.');
         }
+        if ($emailInput === '' && $phoneInput === null) {
+            throw new InvalidArgumentException('Each recipient must include an email or a phone number.');
+        }
+
+        if ($emailInput !== '') {
+            $internalUser = User::query()
+                ->where('email_hash', hash('sha256', $emailInput))
+                ->first();
+
+            if (!$internalUser) {
+                throw new MessageRecipientNotResolvedException('email', $emailInput);
+            }
+
+            $displayEmail = $this->decryptUserEmail($internalUser) ?: $emailInput;
+
+            MessageRecipient::create([
+                'message_id' => $message->id,
+                'user_id' => $internalUser->id,
+                'name' => $recipient['name'] ?? null,
+                'email' => $displayEmail,
+                'phone' => null,
+                'type' => $type,
+                'delivery_status' => 'pending',
+            ]);
+
+            return;
+        }
+
+        $internalUser = User::query()
+            ->where('phone_hash', hash('sha256', $phoneInput))
+            ->first();
+
+        if (!$internalUser) {
+            throw new MessageRecipientNotResolvedException('phone', $phoneInput);
+        }
+
+        $displayEmail = $this->decryptUserEmail($internalUser) ?? '';
+        $displayPhone = $this->decryptUserPhone($internalUser) ?: $phoneInput;
 
         MessageRecipient::create([
             'message_id' => $message->id,
             'user_id' => $internalUser->id,
             'name' => $recipient['name'] ?? null,
-            'email' => $email,
+            'email' => $displayEmail,
+            'phone' => $displayPhone,
             'type' => $type,
             'delivery_status' => 'pending',
         ]);

@@ -7,8 +7,11 @@ namespace App\Http\Controllers\Api\Platform;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\LearningMaterialResource;
 use App\Models\LearningMaterial;
+use App\Services\Learning\VideoThumbnailResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /**
@@ -49,6 +52,66 @@ class PlatformLearningMaterialController extends Controller
         ]);
     }
 
+    public function previewThumbnail(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'video_url' => ['required', 'string', 'max:2048', 'url'],
+        ]);
+
+        $resolved = VideoThumbnailResolver::resolve($data['video_url']);
+
+        return response()->json([
+            'success' => true,
+            'message' => $resolved
+                ? 'Preview thumbnail resolved for this video URL.'
+                : 'No automatic preview is available for this host (try uploading an image).',
+            'data'    => [
+                'thumbnail_url' => $resolved,
+            ],
+        ]);
+    }
+
+    /**
+     * Same pattern as profile photos: store on the public disk, return relative path + asset URL.
+     */
+    public function uploadThumbnailForMaterial(Request $request, LearningMaterial $learningMaterial): JsonResponse
+    {
+        return $this->respondWithStoredThumbnail($request, $learningMaterial);
+    }
+
+    public function uploadThumbnailPending(Request $request): JsonResponse
+    {
+        return $this->respondWithStoredThumbnail($request, null);
+    }
+
+    private function respondWithStoredThumbnail(Request $request, ?LearningMaterial $learningMaterial): JsonResponse
+    {
+        $request->validate([
+            'photo' => ['required', 'image', 'mimes:jpeg,png,jpg,gif,svg,webp', 'max:2048'],
+        ]);
+
+        $file = $request->file('photo');
+
+        if ($learningMaterial !== null && $learningMaterial->thumbnail_path) {
+            Storage::disk('public')->delete($learningMaterial->thumbnail_path);
+        }
+
+        $directory = $learningMaterial !== null
+            ? 'learning-material-thumbnails/'.$learningMaterial->id
+            : 'learning-material-thumbnails/pending/'.Str::ulid();
+
+        $path = $file->store($directory, 'public');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Thumbnail uploaded successfully.',
+            'data'    => [
+                'thumbnail_path' => $path,
+                'thumbnail_url'  => asset('storage/'.$path),
+            ],
+        ], 200);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $data = $this->validatedPayload($request);
@@ -67,7 +130,14 @@ class PlatformLearningMaterialController extends Controller
     public function update(Request $request, LearningMaterial $learningMaterial): JsonResponse
     {
         $data = $this->validatedPayload($request, isUpdate: true);
+
+        $previousPath = $learningMaterial->thumbnail_path;
         $learningMaterial->fill($data);
+
+        if ($previousPath && $previousPath !== $learningMaterial->thumbnail_path) {
+            Storage::disk('public')->delete($previousPath);
+        }
+
         $learningMaterial->save();
 
         return response()->json([
@@ -97,6 +167,7 @@ class PlatformLearningMaterialController extends Controller
             'title'            => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:255'],
             'description'      => ['nullable', 'string', 'max:50000'],
             'video_url'        => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:2048', 'url'],
+            'thumbnail_path'   => ['nullable', 'string', 'max:512'],
             'thumbnail_url'    => ['nullable', 'string', 'max:2048', 'url'],
             'banner_image_url' => ['nullable', 'string', 'max:2048', 'url'],
             'category'         => [$isUpdate ? 'sometimes' : 'required', 'string', Rule::in(LearningMaterial::allowedCategories())],
@@ -112,6 +183,12 @@ class PlatformLearningMaterialController extends Controller
 
         if (array_key_exists('sort_order', $validated)) {
             $validated['sort_order'] = (int) $validated['sort_order'];
+        }
+
+        foreach (['thumbnail_path', 'thumbnail_url', 'banner_image_url'] as $key) {
+            if (array_key_exists($key, $validated) && $validated[$key] === '') {
+                $validated[$key] = null;
+            }
         }
 
         return $validated;

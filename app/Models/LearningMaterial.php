@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class LearningMaterial extends Model
@@ -21,6 +22,7 @@ class LearningMaterial extends Model
         'description',
         'video_url',
         'thumbnail_url',
+        'thumbnail_path',
         'banner_image_url',
         'category',
         'sort_order',
@@ -36,16 +38,17 @@ class LearningMaterial extends Model
         ];
     }
 
-    public function getRouteKeyName(): string
-    {
-        return 'uuid';
-    }
-
     protected static function booted(): void
     {
         static::creating(function (LearningMaterial $material): void {
             if (empty($material->uuid)) {
                 $material->uuid = (string) Str::uuid();
+            }
+        });
+
+        static::forceDeleted(function (LearningMaterial $material): void {
+            if ($material->thumbnail_path) {
+                Storage::disk('public')->delete($material->thumbnail_path);
             }
         });
     }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Platform\PlatformHubFeedbackRequestController;
 use App\Http\Controllers\Api\Platform\PlatformLearningMaterialController;
 use App\Http\Controllers\Api\Statistics\PlatformAdminController;
 use Illuminate\Support\Facades\Route;
@@ -12,6 +13,10 @@ Route::prefix('platform-admin')->middleware(['auth:sanctum', 'admin.access'])->g
     Route::post('learning-materials', [PlatformLearningMaterialController::class, 'store']);
     Route::put('learning-materials/{learningMaterial}', [PlatformLearningMaterialController::class, 'update']);
     Route::delete('learning-materials/{learningMaterial}', [PlatformLearningMaterialController::class, 'destroy']);
+
+    Route::get('hub-feedback', [PlatformHubFeedbackRequestController::class, 'index']);
+    Route::get('hub-feedback/{hubFeedbackRequest}', [PlatformHubFeedbackRequestController::class, 'show']);
+    Route::patch('hub-feedback/{hubFeedbackRequest}', [PlatformHubFeedbackRequestController::class, 'update']);
 });
 
 Route::prefix('platform-admin')->middleware(['auth:sanctum'])->group(function () {

@@ -65,6 +65,7 @@ require __DIR__.'/api_v1/learningMaterial/_index.php';
 require __DIR__.'/api_v1/hubFeedback/_index.php';
 require __DIR__.'/api_v1/hubSupportFaq/_index.php';
 require __DIR__.'/api_v1/hubSupportTicket/_index.php';
+require __DIR__.'/api_v1/hubCommunity/_index.php';
 require __DIR__.'/api_v1/allergy/_index.php';
 require __DIR__.'/api_v1/lab/_index.php';
 require __DIR__.'/api_v1/clinicalNote/_index.php';

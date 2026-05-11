@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Platform\PlatformHubCommunityProductUpdateController;
 use App\Http\Controllers\Api\Platform\PlatformHubFeedbackRequestController;
 use App\Http\Controllers\Api\Platform\PlatformHubSupportFaqController;
 use App\Http\Controllers\Api\Platform\PlatformHubSupportTicketController;
@@ -28,6 +29,12 @@ Route::prefix('platform-admin')->middleware(['auth:sanctum', 'admin.access'])->g
     Route::get('hub-support-tickets', [PlatformHubSupportTicketController::class, 'index']);
     Route::get('hub-support-tickets/{hubSupportTicket}', [PlatformHubSupportTicketController::class, 'show']);
     Route::patch('hub-support-tickets/{hubSupportTicket}', [PlatformHubSupportTicketController::class, 'update']);
+
+    Route::get('hub-product-updates', [PlatformHubCommunityProductUpdateController::class, 'index']);
+    Route::post('hub-product-updates', [PlatformHubCommunityProductUpdateController::class, 'store']);
+    Route::get('hub-product-updates/{id}', [PlatformHubCommunityProductUpdateController::class, 'show'])->whereNumber('id');
+    Route::put('hub-product-updates/{id}', [PlatformHubCommunityProductUpdateController::class, 'update'])->whereNumber('id');
+    Route::delete('hub-product-updates/{id}', [PlatformHubCommunityProductUpdateController::class, 'destroy'])->whereNumber('id');
 });
 
 Route::prefix('platform-admin')->middleware(['auth:sanctum'])->group(function () {

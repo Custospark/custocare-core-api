@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\Platform\PlatformHubFeedbackRequestController;
 use App\Http\Controllers\Api\Platform\PlatformHubSupportFaqController;
+use App\Http\Controllers\Api\Platform\PlatformHubSupportTicketController;
 use App\Http\Controllers\Api\Platform\PlatformLearningMaterialController;
 use App\Http\Controllers\Api\Statistics\PlatformAdminController;
 use Illuminate\Support\Facades\Route;
@@ -23,6 +24,10 @@ Route::prefix('platform-admin')->middleware(['auth:sanctum', 'admin.access'])->g
     Route::post('hub-support-faqs', [PlatformHubSupportFaqController::class, 'store']);
     Route::put('hub-support-faqs/{id}', [PlatformHubSupportFaqController::class, 'update'])->whereNumber('id');
     Route::delete('hub-support-faqs/{id}', [PlatformHubSupportFaqController::class, 'destroy'])->whereNumber('id');
+
+    Route::get('hub-support-tickets', [PlatformHubSupportTicketController::class, 'index']);
+    Route::get('hub-support-tickets/{hubSupportTicket}', [PlatformHubSupportTicketController::class, 'show']);
+    Route::patch('hub-support-tickets/{hubSupportTicket}', [PlatformHubSupportTicketController::class, 'update']);
 });
 
 Route::prefix('platform-admin')->middleware(['auth:sanctum'])->group(function () {

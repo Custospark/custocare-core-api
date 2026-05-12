@@ -148,6 +148,23 @@ class PatientMedicalHistoryService
     private function mapVisit(Visit $visit, array $facilitiesMap): array
     {
         $fid = $visit->facility_id ? (int) $visit->facility_id : null;
+
+        // Match resolveLatestVisitContext: infer facility from clinical rows when the visit row has no facility_id
+        // so patient portal (e.g. per-visit downloads) receives consistent facility_id / snapshot payloads.
+        if ($fid === null) {
+            $inferred = $this->inferFacilityIdForVisit((int) $visit->patient_id, $visit->id);
+            if ($inferred !== null) {
+                $fid = $inferred;
+                $existingFacilityId = $visit->facility?->id !== null ? (int) $visit->facility->id : null;
+                if ($existingFacilityId !== $inferred) {
+                    $facilityModel = Facility::query()->where('id', $inferred)->whereNull('deleted_at')->first();
+                    if ($facilityModel !== null) {
+                        $visit->setRelation('facility', $facilityModel);
+                    }
+                }
+            }
+        }
+
         $snapshot = $fid !== null
             ? ($facilitiesMap[(string) $fid] ?? $this->formatFacilitySnapshot($visit->facility))
             : null;

@@ -117,6 +117,14 @@ class AppointmentRepository implements AppointmentRepositoryInterface
                 });
             }
 
+            if (isset($filters['upcoming'])) {
+                $upcoming = $filters['upcoming'];
+                $truthy = $upcoming === true || $upcoming === 1 || $upcoming === '1' || $upcoming === 'true';
+                if ($truthy) {
+                    $query->where('scheduled_start_time', '>', now());
+                }
+            }
+
             // Default ordering
             $query->orderBy('scheduled_start_time', 'desc');
 

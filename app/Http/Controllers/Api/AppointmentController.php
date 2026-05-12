@@ -49,6 +49,11 @@ class AppointmentController extends Controller
                 'upcoming'
             ]);
 
+            $user = $request->user();
+            if ($user && $user->hasRole('patient') && $user->patientProfile) {
+                $filters['patient_id'] = $user->patientProfile->id;
+            }
+
             // Get paginated appointments
             $perPage = $request->input('per_page', 15);
             $appointments = $this->appointmentService->getAllAppointments($filters, $perPage);

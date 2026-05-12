@@ -78,6 +78,11 @@ class AppointmentPolicy
             return Response::allow();
         }
 
+        // Patients may request appointments for themselves (patient_id validated in StoreAppointmentRequest)
+        if ($user->hasRole('patient') && $user->patientProfile) {
+            return Response::allow();
+        }
+
         return Response::deny('You are not authorized to create appointments.');
     }
 

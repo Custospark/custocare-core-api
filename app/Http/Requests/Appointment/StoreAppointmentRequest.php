@@ -5,6 +5,7 @@ namespace App\Http\Requests\Appointment;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Validation\Validator as IlluminateValidator;
 
 class StoreAppointmentRequest extends FormRequest
 {
@@ -18,8 +19,24 @@ class StoreAppointmentRequest extends FormRequest
     }
 
     /**
-     * Get the validation rules that apply to the request.
-     *
+     * Extra validation after base rules (e.g. patients may only book for their own profile).
+     */
+    public function withValidator(IlluminateValidator $validator): void
+    {
+        $validator->after(function (IlluminateValidator $validator): void {
+            $user = $this->user();
+            if ($user && $user->hasRole('patient') && $user->patientProfile) {
+                if ((int) $this->input('patient_id') !== (int) $user->patientProfile->id) {
+                    $validator->errors()->add(
+                        'patient_id',
+                        'You may only schedule appointments for your own patient profile.'
+                    );
+                }
+            }
+        });
+    }
+
+    /**
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
      */
     public function rules(): array

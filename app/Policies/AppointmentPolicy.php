@@ -3,364 +3,328 @@
 namespace App\Policies;
 
 use App\Models\Appointment;
+use App\Models\FacilityStaffRole;
+use App\Models\Patient;
+use App\Models\Staff;
 use App\Models\User;
 use Illuminate\Auth\Access\HandlesAuthorization;
 use Illuminate\Auth\Access\Response;
 
+/**
+ * Authorization uses concrete domain tables (staff, patients, facility_staff_roles),
+ * not Spatie application roles.
+ */
 class AppointmentPolicy
 {
     use HandlesAuthorization;
 
+    /** Assignment rows considered usable for facility access checks. */
+    private const ACTIVE_ASSIGNMENT_STATUSES = ['active', 'on_leave', 'suspended'];
+
+    private function patientProfile(User $user): ?Patient
+    {
+        return $user->patientProfile;
+    }
+
+    private function staff(User $user): ?Staff
+    {
+        return $user->staff;
+    }
+
+    private function isSuperAdminStaff(User $user): bool
+    {
+        $s = $this->staff($user);
+
+        return $s !== null && $s->global_role_level === 'super_admin';
+    }
+
+    private function staffHasActiveFacilityAssignment(User $user, int $facilityId): bool
+    {
+        $s = $this->staff($user);
+        if ($s === null) {
+            return false;
+        }
+
+        return FacilityStaffRole::query()
+            ->where('staff_id', $s->id)
+            ->where('facility_id', $facilityId)
+            ->whereIn('assignment_status', self::ACTIVE_ASSIGNMENT_STATUSES)
+            ->exists();
+    }
+
+    private function staffHasAnyActiveFacilityAssignment(User $user): bool
+    {
+        $s = $this->staff($user);
+        if ($s === null) {
+            return false;
+        }
+
+        return FacilityStaffRole::query()
+            ->where('staff_id', $s->id)
+            ->whereIn('assignment_status', self::ACTIVE_ASSIGNMENT_STATUSES)
+            ->exists();
+    }
+
+    private function isAssignedProvider(User $user, Appointment $appointment): bool
+    {
+        $s = $this->staff($user);
+
+        return $s !== null && (int) $s->id === (int) $appointment->provider_staff_id;
+    }
+
+    private function isPatientOwner(User $user, Appointment $appointment): bool
+    {
+        $p = $this->patientProfile($user);
+
+        return $p !== null && (int) $p->id === (int) $appointment->patient_id;
+    }
+
     /**
-     * Determine whether the user can view any models.
+     * Facility-level delete (previously facility_manager + admin).
      */
+    private function staffCanDeleteAtFacility(User $user, int $facilityId): bool
+    {
+        if ($this->isSuperAdminStaff($user)) {
+            return true;
+        }
+
+        $s = $this->staff($user);
+        if ($s === null) {
+            return false;
+        }
+
+        if ($s->global_role_level === 'facility_admin' && $this->staffHasActiveFacilityAssignment($user, $facilityId)) {
+            return true;
+        }
+
+        return FacilityStaffRole::query()
+            ->where('staff_id', $s->id)
+            ->where('facility_id', $facilityId)
+            ->whereIn('assignment_status', self::ACTIVE_ASSIGNMENT_STATUSES)
+            ->where('role_code', 'facility-administrator')
+            ->exists();
+    }
+
     public function viewAny(User $user): Response
     {
-        // Admins, facility managers, providers, and receptionists can view appointments
-        if ($user->hasAnyRole(['admin', 'facility_manager', 'healthcare_provider', 'receptionist'])) {
+        if ($this->patientProfile($user) !== null) {
             return Response::allow();
         }
 
-        // Patients can only view their own appointments
-        if ($user->hasRole('patient')) {
+        if ($this->isSuperAdminStaff($user)) {
+            return Response::allow();
+        }
+
+        if ($this->staffHasAnyActiveFacilityAssignment($user)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to view appointments.');
     }
 
-    /**
-     * Determine whether the user can view the model.
-     */
     public function view(User $user, Appointment $appointment): Response
     {
-        // Admins can view any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can view appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->isPatientOwner($user, $appointment)) {
             return Response::allow();
         }
 
-        // Providers can view appointments they're assigned to
-        if ($user->hasRole('healthcare_provider') && 
-            $user->staffProfile && 
-            $user->staffProfile->id === $appointment->provider_staff_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
-        // Receptionists can view appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Patients can view their own appointments
-        if ($user->hasRole('patient') && 
-            $user->patientProfile && 
-            $user->patientProfile->id === $appointment->patient_id) {
+        if ($this->isAssignedProvider($user, $appointment)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to view this appointment.');
     }
 
-    /**
-     * Determine whether the user can create models.
-     */
     public function create(User $user): Response
     {
-        // Admins, facility managers, providers, and receptionists can create appointments
-        if ($user->hasAnyRole(['admin', 'facility_manager', 'healthcare_provider', 'receptionist'])) {
+        if ($this->patientProfile($user) !== null) {
             return Response::allow();
         }
 
-        // Patients may request appointments for themselves (patient_id validated in StoreAppointmentRequest)
-        if ($user->hasRole('patient') && $user->patientProfile) {
+        if ($this->isSuperAdminStaff($user)) {
+            return Response::allow();
+        }
+
+        if ($this->staffHasAnyActiveFacilityAssignment($user)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to create appointments.');
     }
 
-    /**
-     * Determine whether the user can update the model.
-     */
     public function update(User $user, Appointment $appointment): Response
     {
-        // Don't allow updates to completed or cancelled appointments
         if ($appointment->isCompleted() || $appointment->status === Appointment::STATUS_CANCELLED) {
             return Response::deny('Cannot update a completed or cancelled appointment.');
         }
 
-        // Admins can update any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can update appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
-        // Providers can update appointments they're assigned to
-        if ($user->hasRole('healthcare_provider') && 
-            $user->staffProfile && 
-            $user->staffProfile->id === $appointment->provider_staff_id) {
-            return Response::allow();
-        }
-
-        // Receptionists can update appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->isAssignedProvider($user, $appointment)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to update this appointment.');
     }
 
-    /**
-     * Determine whether the user can delete the model.
-     */
     public function delete(User $user, Appointment $appointment): Response
     {
-        // Don't allow deletion of in-progress or completed appointments
         if ($appointment->isInProgress() || $appointment->isCompleted()) {
             return Response::deny('Cannot delete an appointment that is in progress or completed.');
         }
 
-        // Admins can delete any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->staffCanDeleteAtFacility($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
-        // Facility managers can delete appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Don't allow providers or receptionists to delete appointments
         return Response::deny('You are not authorized to delete appointments.');
     }
 
-    /**
-     * Determine whether the user can cancel the model.
-     */
     public function cancel(User $user, Appointment $appointment): Response
     {
-        // Check if appointment can be cancelled
         if (!$appointment->isCancellable()) {
             return Response::deny('This appointment cannot be cancelled at this time.');
         }
 
-        // Admins can cancel any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can cancel appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
-        // Providers can cancel appointments they're assigned to
-        if ($user->hasRole('healthcare_provider') && 
-            $user->staffProfile && 
-            $user->staffProfile->id === $appointment->provider_staff_id) {
+        if ($this->isAssignedProvider($user, $appointment)) {
             return Response::allow();
         }
 
-        // Receptionists can cancel appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Patients can cancel their own appointments
-        if ($user->hasRole('patient') && 
-            $user->patientProfile && 
-            $user->patientProfile->id === $appointment->patient_id) {
+        if ($this->isPatientOwner($user, $appointment)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to cancel this appointment.');
     }
 
-    /**
-     * Determine whether the user can confirm the model.
-     */
     public function confirm(User $user, Appointment $appointment): Response
     {
-        // Only scheduled appointments can be confirmed
         if ($appointment->status !== Appointment::STATUS_SCHEDULED) {
             return Response::deny('Only scheduled appointments can be confirmed.');
         }
 
-        // Admins can confirm any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can confirm appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Receptionists can confirm appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to confirm this appointment.');
     }
 
-    /**
-     * Determine whether the user can check in to the model.
-     */
     public function checkIn(User $user, Appointment $appointment): Response
     {
-        // Only confirmed appointments can be checked in
         if ($appointment->status !== Appointment::STATUS_CONFIRMED) {
             return Response::deny('Only confirmed appointments can be checked in.');
         }
 
-        // Patients can check in to their own appointments
-        if ($user->hasRole('patient') && 
-            $user->patientProfile && 
-            $user->patientProfile->id === $appointment->patient_id) {
+        if ($this->isPatientOwner($user, $appointment)) {
             return Response::allow();
         }
 
-        // Receptionists can check in patients in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to check in for this appointment.');
     }
 
-    /**
-     * Determine whether the user can mark the model as completed.
-     */
     public function complete(User $user, Appointment $appointment): Response
     {
-        // Only checked-in or in-progress appointments can be completed
         if (!in_array($appointment->status, [
             Appointment::STATUS_CHECKED_IN,
-            Appointment::STATUS_IN_PROGRESS
-        ])) {
+            Appointment::STATUS_IN_PROGRESS,
+        ], true)) {
             return Response::deny('Only checked-in or in-progress appointments can be completed.');
         }
 
-        // Providers can complete appointments they're assigned to
-        if ($user->hasRole('healthcare_provider') && 
-            $user->staffProfile && 
-            $user->staffProfile->id === $appointment->provider_staff_id) {
+        if ($this->isSuperAdminStaff($user)) {
+            return Response::allow();
+        }
+
+        if ($this->isAssignedProvider($user, $appointment)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to complete this appointment.');
     }
 
-    /**
-     * Determine whether the user can reschedule the model.
-     */
     public function reschedule(User $user, Appointment $appointment): Response
     {
-        // Don't allow rescheduling of completed or cancelled appointments
         if ($appointment->isCompleted() || $appointment->status === Appointment::STATUS_CANCELLED) {
             return Response::deny('Cannot reschedule a completed or cancelled appointment.');
         }
 
-        // Admins can reschedule any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can reschedule appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
-        // Providers can reschedule appointments they're assigned to
-        if ($user->hasRole('healthcare_provider') && 
-            $user->staffProfile && 
-            $user->staffProfile->id === $appointment->provider_staff_id) {
+        if ($this->isAssignedProvider($user, $appointment)) {
             return Response::allow();
         }
 
-        // Receptionists can reschedule appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Patients can reschedule their own appointments
-        if ($user->hasRole('patient') && 
-            $user->patientProfile && 
-            $user->patientProfile->id === $appointment->patient_id) {
+        if ($this->isPatientOwner($user, $appointment)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to reschedule this appointment.');
     }
 
-    /**
-     * Determine whether the user can send reminders for the model.
-     */
     public function sendReminder(User $user, Appointment $appointment): Response
     {
-        // Only upcoming appointments can have reminders sent
         if (!$appointment->isUpcoming()) {
             return Response::deny('Reminders can only be sent for upcoming appointments.');
         }
 
-        // Admins can send reminders for any appointment
-        if ($user->hasRole('admin')) {
+        if ($this->isSuperAdminStaff($user)) {
             return Response::allow();
         }
 
-        // Facility managers can send reminders for appointments in their facility
-        if ($user->hasRole('facility_manager') && 
-            $user->facility_id === $appointment->facility_id) {
-            return Response::allow();
-        }
-
-        // Receptionists can send reminders for appointments in their facility
-        if ($user->hasRole('receptionist') && 
-            $user->facility_id === $appointment->facility_id) {
+        if ($this->staffHasActiveFacilityAssignment($user, (int) $appointment->facility_id)) {
             return Response::allow();
         }
 
         return Response::deny('You are not authorized to send reminders for this appointment.');
     }
 
-    /**
-     * Determine whether the user can restore the model.
-     */
     public function restore(User $user, Appointment $appointment): Response
     {
-        return $user->hasRole('admin')
+        return $this->isSuperAdminStaff($user)
             ? Response::allow()
             : Response::deny('You are not authorized to restore appointments.');
     }
 
-    /**
-     * Determine whether the user can permanently delete the model.
-     */
     public function forceDelete(User $user, Appointment $appointment): Response
     {
-        return $user->hasRole('admin')
+        return $this->isSuperAdminStaff($user)
             ? Response::allow()
             : Response::deny('You are not authorized to permanently delete appointments.');
     }

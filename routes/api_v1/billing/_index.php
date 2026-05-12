@@ -6,6 +6,9 @@ use App\Http\Controllers\Api\BillingRevenueDashboardController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('billing')->middleware(['auth:sanctum'])->group(function () {
+    /** Cross-facility receipts for the authenticated patient's own chart (no X-Facility-Id). */
+    Route::get('/patient-portal', [BillingController::class, 'patientPortalIndex']);
+
     Route::post('/save', [BillingController::class, 'saveBilling']);
     
     // New endpoint that returns data in facility format

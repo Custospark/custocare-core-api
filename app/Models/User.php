@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
@@ -242,6 +243,23 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
         }
 
         return $this->display_name;
+    }
+
+    /**
+     * Patient chart linked to this account (portal / patient role).
+     * Used by {@see \App\Policies\AppointmentPolicy} and appointment booking validation.
+     */
+    public function patientProfile(): HasOne
+    {
+        return $this->hasOne(Patient::class, 'user_id');
+    }
+
+    /**
+     * Staff profile linked to this login (clinical / facility users).
+     */
+    public function staff(): HasOne
+    {
+        return $this->hasOne(Staff::class, 'user_id');
     }
 
       public function notifications()

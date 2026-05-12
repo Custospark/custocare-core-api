@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
+use App\Models\User;
 use App\Services\Billing\BillingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -454,6 +455,69 @@ class BillingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve patient billing data.',
+            ], 500);
+        }
+    }
+
+    /**
+     * List billing cycles (receipt-ready) for the authenticated portal patient across all facilities.
+     * Patient is resolved from the user's linked patient profile — URL must not carry patient id.
+     */
+    public function patientPortalIndex(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            if (!$user instanceof User) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated.',
+                ], 401);
+            }
+
+            $patient = $user->patientProfile;
+            if (!$patient) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No patient profile is linked to this account.',
+                ], 403);
+            }
+
+            $filters = $request->validate([
+                'status' => ['nullable', 'string', 'in:draft,pending,pending_review,pending_submission,submitted_to_insurance,partially_paid,paid_in_full,payment_plan,collections,disputed,written_off,charity_care,partially_refunded,fully_refunded'],
+                'date_from' => ['nullable', 'date'],
+                'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+                'payment_method' => ['nullable', 'string', 'in:cash,insurance,card,bank_transfer,mobile,mobile_money,other'],
+                'min_amount' => ['nullable', 'numeric', 'min:0'],
+                'max_amount' => ['nullable', 'numeric', 'min:0', 'gte:min_amount'],
+            ]);
+
+            $search = trim((string) $request->input('search', ''));
+            $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+            $page = max((int) $request->input('page', 1), 1);
+
+            $result = $this->billingService->getBillingForPatientPortal(
+                (int) $patient->id,
+                $filters,
+                $search,
+                $perPage,
+                $page
+            );
+
+            return response()->json($result, !empty($result['success']) ? 200 : 500);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Patient portal billing index failed', [
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve billing data.',
             ], 500);
         }
     }

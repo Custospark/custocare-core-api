@@ -25,7 +25,7 @@ class StoreAppointmentRequest extends FormRequest
     {
         $validator->after(function (IlluminateValidator $validator): void {
             $user = $this->user();
-            if ($user && $user->hasRole('patient') && $user->patientProfile) {
+            if ($user && $user->patientProfile && ! $user->staff) {
                 if ((int) $this->input('patient_id') !== (int) $user->patientProfile->id) {
                     $validator->errors()->add(
                         'patient_id',

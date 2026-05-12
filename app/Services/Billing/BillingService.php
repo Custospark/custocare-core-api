@@ -928,6 +928,138 @@ protected function getRefundedItemsFromAdjustments(
         }
     }
 
+    /**
+     * Paginated billing cycles for a patient across all facilities (patient portal).
+     * Shapes items like facility billing review plus facility_id / facility_name for each visit.
+     */
+    public function getBillingForPatientPortal(
+        int $patientId,
+        array $filters = [],
+        string $search = '',
+        int $perPage = 25,
+        int $page = 1
+    ): array {
+        try {
+            $query = BillingCycle::query()
+                ->where('patient_id', $patientId)
+                ->withTrashed()
+                ->with([
+                    'visit' => fn ($q) => $q->withTrashed()->with(['patient.user', 'facility']),
+                    'lineItems' => fn ($q) => $q->withTrashed(),
+                ])
+                ->latest('id');
+
+            if (!empty($filters['status'])) {
+                $query->where('billing_status', $filters['status']);
+            }
+
+            if (!empty($filters['date_from'])) {
+                $query->whereDate('created_at', '>=', $filters['date_from']);
+            }
+
+            if (!empty($filters['date_to'])) {
+                $query->whereDate('created_at', '<=', $filters['date_to']);
+            }
+
+            if (!empty($filters['payment_method'])) {
+                $query->where('metadata', 'like', '%'.$filters['payment_method'].'%');
+            }
+
+            if (!empty($filters['min_amount'])) {
+                $query->where('grand_total_amount', '>=', (float) $filters['min_amount']);
+            }
+
+            if (!empty($filters['max_amount'])) {
+                $query->where('grand_total_amount', '<=', (float) $filters['max_amount']);
+            }
+
+            if ($search !== '') {
+                $query->where(function ($q) use ($search) {
+                    $q->where('billing_cycle_uuid', 'like', "%{$search}%")
+                        ->orWhere('id', 'like', "%{$search}%")
+                        ->orWhere('visit_id', 'like', "%{$search}%")
+                        ->orWhereHas('visit.facility', function ($fq) use ($search) {
+                            $fq->where('name', 'like', "%{$search}%");
+                        });
+                });
+            }
+
+            $summaryRow = (clone $query)
+                ->reorder()
+                ->selectRaw('
+                    COUNT(*) as receipt_count,
+                    ROUND(COALESCE(SUM(grand_total_amount), 0), 2) as total_billed,
+                    ROUND(COALESCE(SUM(COALESCE(total_paid_amount, 0)), 0), 2) as total_paid,
+                    ROUND(COALESCE(SUM(COALESCE(balance_amount, 0)), 0), 2) as total_balance
+                ')
+                ->first();
+
+            $total = $query->count();
+            $billingCycles = $query->forPage($page, $perPage)->get();
+
+            $items = $billingCycles
+                ->map(function (BillingCycle $billingCycle) {
+                    if (!$billingCycle->visit) {
+                        Log::warning('Billing cycle missing visit during patient portal listing.', [
+                            'billing_cycle_id' => $billingCycle->id,
+                        ]);
+
+                        return null;
+                    }
+
+                    $item = $this->transformBillingData($billingCycle, $billingCycle->visit, null);
+                    $facility = $billingCycle->visit->facility;
+                    $item['facility_id'] = (int) $billingCycle->visit->facility_id;
+                    $item['facility_name'] = $facility?->name;
+
+                    return $item;
+                })
+                ->filter()
+                ->values()
+                ->toArray();
+
+            $totalPages = $total > 0 ? (int) ceil($total / $perPage) : 0;
+
+            return [
+                'success' => true,
+                'message' => 'Patient billing data retrieved successfully.',
+                'data' => [
+                    'items' => $items,
+                    'pagination' => [
+                        'current_page' => $page,
+                        'per_page' => $perPage,
+                        'total_items' => $total,
+                        'total_pages' => $totalPages,
+                        'from' => $total > 0 ? (($page - 1) * $perPage) + 1 : null,
+                        'to' => $total > 0 ? min($page * $perPage, $total) : null,
+                        'has_previous' => $page > 1,
+                        'has_next' => $page < $totalPages,
+                    ],
+                    'summary' => [
+                        'receipt_count' => (int) ($summaryRow->receipt_count ?? 0),
+                        'total_billed' => (float) ($summaryRow->total_billed ?? 0),
+                        'total_paid' => (float) ($summaryRow->total_paid ?? 0),
+                        'total_balance' => (float) ($summaryRow->total_balance ?? 0),
+                    ],
+                    'filters_applied' => array_filter($filters, fn ($value) => $value !== null && $value !== ''),
+                    'search_term' => $search !== '' ? $search : null,
+                ],
+            ];
+        } catch (Throwable $e) {
+            Log::error('Patient portal billing retrieval failed.', [
+                'patient_id' => $patientId,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'An unexpected error occurred while retrieving billing data.',
+                'errors' => ['system' => ['Failed to retrieve billing information.']],
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
+    }
+
     public function adjustBillingLineItem(int $lineItemId, array $data, int $facilityId, int $staffId): array
     {
         try {

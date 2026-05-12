@@ -50,7 +50,7 @@ class AppointmentController extends Controller
             ]);
 
             $user = $request->user();
-            if ($user && $user->hasRole('patient') && $user->patientProfile) {
+            if ($user && $user->patientProfile && ! $user->staff) {
                 $filters['patient_id'] = $user->patientProfile->id;
             }
 

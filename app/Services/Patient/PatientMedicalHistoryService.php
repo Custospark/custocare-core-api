@@ -708,4 +708,90 @@ class PatientMedicalHistoryService
             ],
         ];
     }
+
+    /**
+     * Resolve latest visit + facility on the server for patient portal clients (no staff facility context).
+     * If the visit row has no facility_id, infers it from clinical rows tied to that visit.
+     *
+     * @return array{
+     *     visit: array<string, mixed>,
+     *     facility_id: int|null,
+     *     facility: array<string, mixed>|null,
+     *     patient: array<string, mixed>,
+     *     generated_at: string
+     * }|null
+     */
+    public function resolveLatestVisitContext(Patient $patient): ?array
+    {
+        $patient->loadMissing('user');
+
+        $visits = Visit::query()
+            ->where('patient_id', $patient->id)
+            ->with('facility')
+            ->orderByDesc('arrived_at')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get();
+
+        if ($visits->isEmpty()) {
+            return null;
+        }
+
+        /** @var Visit $latest */
+        $latest = $visits->sortByDesc(function (Visit $v) {
+            return max(
+                $v->arrived_at?->getTimestamp() ?? 0,
+                $v->discharged_at?->getTimestamp() ?? 0,
+            );
+        })->first();
+
+        $facilitiesMap = $this->loadFacilitiesMap($patient->id, $visits);
+
+        $effectiveFacilityId = $latest->facility_id ? (int) $latest->facility_id : null;
+        if ($effectiveFacilityId === null) {
+            $inferred = $this->inferFacilityIdForVisit($patient->id, $latest->id);
+            if ($inferred !== null) {
+                $effectiveFacilityId = $inferred;
+                $latest->facility_id = $inferred;
+                $facilityModel = Facility::query()->where('id', $inferred)->whereNull('deleted_at')->first();
+                if ($facilityModel !== null) {
+                    $latest->setRelation('facility', $facilityModel);
+                    $snap = $this->formatFacilitySnapshot($facilityModel);
+                    if ($snap !== null) {
+                        $facilitiesMap[(string) $inferred] = $snap;
+                    }
+                }
+            }
+        }
+
+        $visitPayload = $this->mapVisit($latest, $facilitiesMap);
+
+        return [
+            'visit' => $visitPayload,
+            'facility_id' => $visitPayload['facility_id'] ?? $effectiveFacilityId,
+            'facility' => $visitPayload['facility'] ?? null,
+            'patient' => $this->mapPatientSummary($patient),
+            'generated_at' => Carbon::now()->toIso8601String(),
+        ];
+    }
+
+    private function inferFacilityIdForVisit(int $patientId, int $visitId): ?int
+    {
+        $sources = [
+            ClinicalNote::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+            Vital::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+            Diagnosis::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+            Consultation::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+            Prescription::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+            LabRequest::query()->where('patient_id', $patientId)->where('visit_id', $visitId)->whereNotNull('facility_id')->orderByDesc('id')->value('facility_id'),
+        ];
+
+        foreach ($sources as $fid) {
+            if ($fid !== null && $fid !== '') {
+                return (int) $fid;
+            }
+        }
+
+        return null;
+    }
 }

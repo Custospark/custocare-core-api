@@ -1103,6 +1103,8 @@ public function createPatientByAdmin(Request $request): JsonResponse
     public function medicalHistory(Patient $patient, PatientMedicalHistoryService $historyService): JsonResponse
     {
         try {
+            $this->authorize('view', $patient);
+
             $resolved = $this->patientService->getPatientByUuid($patient->patient_uuid);
 
             if (! $resolved) {
@@ -1129,6 +1131,45 @@ public function createPatientByAdmin(Request $request): JsonResponse
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to retrieve patient medical history.',
+                'errors' => config('app.debug') ? ['details' => $e->getMessage()] : [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Server-resolved latest visit and facility for patient portal (visit/facility ids from backend only).
+     */
+    public function latestVisitContext(Patient $patient, PatientMedicalHistoryService $historyService): JsonResponse
+    {
+        try {
+            $this->authorize('view', $patient);
+
+            $resolved = $this->patientService->getPatientByUuid($patient->patient_uuid);
+
+            if (! $resolved) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Patient not found.',
+                ], 404);
+            }
+
+            $payload = $historyService->resolveLatestVisitContext($patient->loadMissing('user'));
+
+            return response()->json([
+                'success' => true,
+                'message' => $payload === null ? 'No visits on file.' : 'Latest visit context resolved.',
+                'data' => $payload,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Failed to resolve latest visit context', [
+                'patient_id' => $patient->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to resolve latest visit context.',
                 'errors' => config('app.debug') ? ['details' => $e->getMessage()] : [],
             ], 500);
         }

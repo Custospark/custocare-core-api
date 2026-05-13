@@ -396,6 +396,78 @@ class InventoryLedgerController extends Controller
     }
 
     /**
+     * Record a stock adjustment (increase or decrease).
+     * User enters only the delta — system calculates the new balance.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function recordAdjustment(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'facility_id' => 'required|integer|exists:facilities,id',
+                'inventory_item_id' => 'required|integer|exists:inventory_items,id',
+                'quantity' => 'required|numeric|min:1',
+                'unit_of_measure' => 'required|string|max:50',
+                'performed_by_staff_id' => 'nullable|integer|exists:staff,id',
+                'transaction_notes' => 'nullable|string|max:1000',
+                'lot_number' => 'nullable|string|max:100',
+                'expiry_date' => 'nullable|date|after_or_equal:today',
+            ]);
+
+            $data = $request->only([
+                'facility_id',
+                'inventory_item_id',
+                'unit_of_measure',
+                'performed_by_staff_id',
+                'transaction_notes',
+                'lot_number',
+                'expiry_date',
+            ]);
+
+            $data['quantity'] = $request->input('quantity');
+
+            // If no staff ID provided, resolve from authenticated user
+            if (empty($data['performed_by_staff_id'])) {
+                $staff = $request->user()?->staff()->first();
+                if ($staff) {
+                    $data['performed_by_staff_id'] = $staff->id;
+                }
+            }
+
+            $ledgerEntry = $this->inventoryLedgerService->recordAdjustment($data);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Stock adjusted successfully.',
+                'data' => new InventoryLedgerResource($ledgerEntry->load($this->getRelationships($request))),
+            ], 200);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Exception $e) {
+            Log::error('Failed to record stock adjustment', [
+                'error' => $e->getMessage(),
+                'request' => $request->all(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to adjust stock. Please try again.',
+            ], 500);
+        }
+    }
+
+    /**
      * Get relationships to eager load based on request.
      *
      * @param Request $request

@@ -36,6 +36,9 @@ class StorePatientRequest extends FormRequest
             'ethnicity' => 'nullable|string|max:100',
             'genetic_markers' => 'nullable|array',
             'emergency_contact_chain_encrypted' => 'nullable|array',
+            'emergency_contact_chain_encrypted.full_name' => 'required_with:emergency_contact_chain_encrypted|string|max:255',
+            'emergency_contact_chain_encrypted.phone' => 'required_with:emergency_contact_chain_encrypted|string|max:30',
+            'emergency_contact_chain_encrypted.relationship' => 'required_with:emergency_contact_chain_encrypted|string|max:100',
             'known_allergies' => 'nullable|array',
             'chronic_conditions' => 'nullable|array',
             'active_medications' => 'nullable|array',
@@ -89,6 +92,25 @@ class StorePatientRequest extends FormRequest
                 'errors' => $validator->errors(),
             ], 422)
         );
+    }
+
+    /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        $emergencyContact = $this->input('emergency_contact_chain_encrypted');
+
+        if (is_array($emergencyContact) && isset($emergencyContact['phone'])) {
+            // Normalize: strip non-digit chars but keep leading +
+            $phone = $emergencyContact['phone'];
+            $normalized = preg_replace('/(?!^\+)[^\d]/', '', $phone);
+            $emergencyContact['phone'] = $normalized !== '' ? $normalized : $phone;
+
+            $this->merge([
+                'emergency_contact_chain_encrypted' => $emergencyContact,
+            ]);
+        }
     }
 
     /**

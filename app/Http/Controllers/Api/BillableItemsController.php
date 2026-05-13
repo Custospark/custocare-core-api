@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\InventoryItem;
+use App\Models\InventoryLedger;
 use App\Models\ServiceCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -105,11 +106,12 @@ class BillableItemsController extends Controller
                     ->get();
 
                 // Transform inventory items to match the frontend ServiceItem interface
-                $transformedInventory = $inventoryItems->map(function ($item) {
+                $transformedInventory = $inventoryItems->map(function ($item) use ($facilityId) {
                     // Calculate available quantity based on packaging
-                    $availablePackages = (int) ($item->total_stock ?? 0);
                     $unitsPerPackage = $item->package_quantity ?? 1;
-                    $availableUnits = $availablePackages * $unitsPerPackage;
+                    $currentBalance = (int) InventoryLedger::getCurrentBalance($facilityId, $item->id);
+                    $availablePackages = $unitsPerPackage > 0 ? (int) floor($currentBalance / $unitsPerPackage) : 0;
+                    $availableUnits = $currentBalance;
 
                     return [
                         // Core identifiers - matches ServiceItem interface
@@ -130,6 +132,7 @@ class BillableItemsController extends Controller
                         'strength' => $item->strength,
                         'unit_of_measure' => $item->unit_of_measure,
                         'package_quantity' => $unitsPerPackage,
+                        'current_balance' => $currentBalance,
                         'requires_prescription' => (bool) $item->requires_prescription,
                         'currency' => $item->currency_code ?? 'UGX',
                         
@@ -138,8 +141,8 @@ class BillableItemsController extends Controller
                             'available_packages' => $availablePackages,
                             'available_units' => $availableUnits,
                             'units_per_package' => $unitsPerPackage,
-                            'has_stock' => $availablePackages > 0,
-                            'is_low_stock' => $availablePackages < ($item->reorder_point ?? 5),
+                            'has_stock' => $currentBalance > 0,
+                            'is_low_stock' => $currentBalance > 0 && $currentBalance <= ($item->reorder_point ?? 5),
                         ],
                         
                         // Status

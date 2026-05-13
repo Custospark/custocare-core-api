@@ -4,6 +4,7 @@ namespace App\Services\Billing\Processing;
 
 use App\Models\BillingCycle;
 use App\Models\InventoryItem;
+use App\Models\InventoryLedger;
 use App\Models\InvoiceLineItem;
 use App\Models\ServiceCatalog;
 use App\Models\Staff;
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Services\Contracts\InventoryLedgerServiceInterface;
 use RuntimeException;
 use App\Services\Billing\Support\BillingAuditTrailService;
 
@@ -23,7 +25,8 @@ class BillingProcessor
     use BillingHelpers;
 
         public function __construct(
-        protected BillingAuditTrailService $billingAuditTrail
+        protected BillingAuditTrailService $billingAuditTrail,
+        protected InventoryLedgerServiceInterface $inventoryLedgerService
     ) {
     }
 
@@ -81,7 +84,7 @@ class BillingProcessor
                 $existingBillingCycle
             );
 
-            $this->deductInventoryStock($data['charge_items'] ?? [], $staffId);
+            $this->deductInventoryStock($data['charge_items'] ?? [], $facilityId, $staffId);
 
             $this->reallocateCycleLineItemDiscounts(
                 $billingCycle->fresh(),
@@ -536,7 +539,7 @@ protected function createOrUpdateLineItems(
      * Deduct stock only for inventory-backed services represented in the incoming
      * request. Existing already persisted quantities are never re-deducted.
      */
-    protected function deductInventoryStock(array $chargeItems, int $staffId): void
+    protected function deductInventoryStock(array $chargeItems, int $facilityId, int $staffId): void
     {
         foreach ($this->normalizeChargeItems($chargeItems) as $chargeItem) {
             $service = $chargeItem['service'] ?? [];
@@ -556,14 +559,14 @@ protected function createOrUpdateLineItems(
                 continue;
             }
 
-            if ((int) $inventoryItem->package_quantity < $quantity) {
+            $currentBalance = (int) InventoryLedger::getCurrentBalance($facilityId, $inventoryItem->id);
+            if ($currentBalance < $quantity) {
                 throw new RuntimeException(
-                    "Insufficient stock for item '{$service['name']}' (Code: {$service['code']})."
+                    "Insufficient stock for item '{$service['name']}' (Code: {$service['code']}). "
+                    . "Available: {$currentBalance}, Requested: {$quantity}."
                 );
             }
 
-            $previousQuantity = (int) $inventoryItem->package_quantity;
-            $newQuantity = $previousQuantity - $quantity;
             $metadata = $this->decodeJsonishToArray($inventoryItem->metadata ?? null);
             $metadata['stock_deductions'] = is_array($metadata['stock_deductions'] ?? null)
                 ? $metadata['stock_deductions']
@@ -573,19 +576,29 @@ protected function createOrUpdateLineItems(
                 'deducted_at' => now()->toIso8601String(),
                 'deducted_by_staff_id' => $staffId,
                 'units_deducted' => $quantity,
-                'previous_quantity' => $previousQuantity,
-                'new_quantity' => $newQuantity,
-                'service_code' => $service['code'] ?? null,
-                'service_name' => $service['name'] ?? 'Unknown',
                 'reason' => 'billing_finalization',
             ];
 
-            $metadata['last_stock_deduction'] = end($metadata['stock_deductions']);
-
-            $inventoryItem->package_quantity = $newQuantity;
             $inventoryItem->updated_by_staff_id = $staffId;
             $inventoryItem->metadata = $metadata;
             $inventoryItem->save();
+
+            try {
+                $this->inventoryLedgerService->recordConsumption([
+                    'facility_id' => $facilityId,
+                    'inventory_item_id' => $inventoryItem->id,
+                    'quantity' => $quantity,
+                    'unit_of_measure' => $inventoryItem->unit_of_measure,
+                    'performed_by_staff_id' => $staffId,
+                    'transaction_notes' => "Billed via {$service['name']} (Code: {$service['code']})",
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to record inventory ledger consumption for billing, stock deduction continued', [
+                    'item_id' => $inventoryItem->id,
+                    'quantity' => $quantity,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
     }
 
@@ -989,15 +1002,18 @@ public function processPersistedLineItemAdjustment(
             return;
         }
 
-        $previousQuantity = (int) $inventoryItem->package_quantity;
+        $facilityId = (int) (request()->header('X-Facility-Id') ?? request()->header('X-Active-Facility-Id') ?? 0);
+        $currentBalance = (int) InventoryLedger::getCurrentBalance($facilityId, $inventoryItem->id);
+
+        if ($direction === 'deduct' && $currentBalance < $units) {
+            throw new RuntimeException(
+                "Insufficient stock for item code '{$serviceCode}'. Available: {$currentBalance}, Requested: {$units}."
+            );
+        }
+
+        $previousQuantity = $currentBalance;
 
         if ($direction === 'deduct') {
-            if ($previousQuantity < $units) {
-                throw new RuntimeException(
-                    "Insufficient stock for item code '{$serviceCode}'. Available: {$previousQuantity}, Requested: {$units}."
-                );
-            }
-
             $newQuantity = $previousQuantity - $units;
         } else {
             $newQuantity = $previousQuantity + $units;
@@ -1014,15 +1030,41 @@ public function processPersistedLineItemAdjustment(
             'service_code' => $serviceCode,
             'direction' => $direction,
             'units' => $units,
-            'previous_quantity' => $previousQuantity,
-            'new_quantity' => $newQuantity,
             'reason' => 'billing_line_item_adjustment',
         ];
 
-        $inventoryItem->package_quantity = $newQuantity;
         $inventoryItem->updated_by_staff_id = $staffId;
         $inventoryItem->metadata = $metadata;
         $inventoryItem->save();
+
+        try {
+            if ($direction === 'deduct') {
+                $this->inventoryLedgerService->recordConsumption([
+                    'facility_id' => $facilityId,
+                    'inventory_item_id' => $inventoryItem->id,
+                    'quantity' => $units,
+                    'unit_of_measure' => $inventoryItem->unit_of_measure,
+                    'performed_by_staff_id' => $staffId,
+                    'transaction_notes' => "Line item adjustment - deducted for {$serviceCode}",
+                ]);
+            } else {
+                $this->inventoryLedgerService->recordAdjustment([
+                    'facility_id' => $facilityId,
+                    'inventory_item_id' => $inventoryItem->id,
+                    'quantity' => $units,
+                    'unit_of_measure' => $inventoryItem->unit_of_measure,
+                    'performed_by_staff_id' => $staffId,
+                    'transaction_notes' => "Line item adjustment - restored for {$serviceCode}",
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Failed to record ledger entry for line item adjustment', [
+                'item_id' => $inventoryItem->id,
+                'units' => $units,
+                'direction' => $direction,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     protected function extractDiscountRuleFromCycle(BillingCycle $billingCycle): array

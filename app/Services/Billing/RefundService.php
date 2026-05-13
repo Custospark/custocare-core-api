@@ -5,12 +5,14 @@ namespace App\Services\Billing;
 use App\Models\BillingCycle;
 use App\Models\FinancialAdjustment;
 use App\Models\InventoryItem;
+use App\Models\InventoryLedger;
 use App\Models\InvoiceLineItem;
 use App\Models\Visit;
 use App\Services\Billing\Traits\BillingHelpers;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Services\Contracts\InventoryLedgerServiceInterface;
 use RuntimeException;
 use Throwable;
 use App\Services\Billing\Support\BillingAuditTrailService;
@@ -21,9 +23,10 @@ class RefundService
     use BillingHelpers;
 
     public function __construct(
-    protected BillingAuditTrailService $billingAuditTrail
-) {
-}
+        protected BillingAuditTrailService $billingAuditTrail,
+        protected InventoryLedgerServiceInterface $inventoryLedgerService
+    ) {
+    }
 
 
     /**
@@ -1844,6 +1847,7 @@ private function splitRefundAcrossPayers(
         string $referenceNumber
     ): array {
         $restored = [];
+        $facilityId = (int) (request()->header('X-Facility-Id') ?? request()->header('X-Active-Facility-Id') ?? 0);
 
         foreach ($plans as $plan) {
             $unitsToRestore = (int) round((float) ($plan['refund_quantity'] ?? 0));
@@ -1875,9 +1879,6 @@ private function splitRefundAcrossPayers(
                     continue;
                 }
 
-                $previousQuantity = (int) $inventoryItem->package_quantity;
-                $newQuantity = $previousQuantity + $unitsToRestore;
-
                 $metadata = $this->decodeJsonishToArray($inventoryItem->metadata ?? null);
                 $metadata['stock_restorations'] = is_array($metadata['stock_restorations'] ?? null)
                     ? $metadata['stock_restorations']
@@ -1887,8 +1888,6 @@ private function splitRefundAcrossPayers(
                     'restored_at' => now()->toIso8601String(),
                     'restored_by_staff_id' => $staffId,
                     'units_restored' => $unitsToRestore,
-                    'previous_quantity' => $previousQuantity,
-                    'new_quantity' => $newQuantity,
                     'reference_number' => $referenceNumber,
                     'reason' => 'refund_line_item_adjustment',
                     'line_item_id' => $plan['line_item_id'] ?? null,
@@ -1896,24 +1895,30 @@ private function splitRefundAcrossPayers(
                     'matched_reference_type' => $plan['matched_reference_type'] ?? null,
                 ];
 
-                $inventoryItem->package_quantity = $newQuantity;
                 $inventoryItem->updated_by_staff_id = $staffId;
                 $inventoryItem->metadata = $metadata;
                 $inventoryItem->save();
 
-                $restored[] = [
+                $this->inventoryLedgerService->recordAdjustment([
+                    'facility_id' => $facilityId,
                     'inventory_item_id' => $inventoryItem->id,
-                    'item_code' => $inventoryItem->item_code,
-                    'quantity_restored' => $unitsToRestore,
-                    'new_quantity' => $newQuantity,
+                    'quantity' => $unitsToRestore,
+                    'unit_of_measure' => $inventoryItem->unit_of_measure,
+                    'performed_by_staff_id' => $staffId,
+                    'transaction_notes' => "Stock restored via refund (ref: {$referenceNumber})",
+                ]);
+
+                $restored[] = [
                     'line_item_id' => $plan['line_item_id'] ?? null,
-                    'matched_reference_id' => $plan['matched_reference_id'] ?? null,
+                    'service_code' => $plan['service_code'] ?? null,
+                    'units_restored' => $unitsToRestore,
                 ];
-            } catch (Throwable $e) {
-                Log::error('Inventory restoration failed during refund', [
+
+            } catch (\Throwable $e) {
+                Log::warning('Failed to restore inventory during refund', [
                     'line_item_id' => $plan['line_item_id'] ?? null,
-                    'matched_reference_id' => $plan['matched_reference_id'] ?? null,
-                    'reference_number' => $referenceNumber,
+                    'service_code' => $plan['service_code'] ?? null,
+                    'units' => $unitsToRestore,
                     'error' => $e->getMessage(),
                 ]);
             }

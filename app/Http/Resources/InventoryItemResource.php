@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Models\InventoryLedger;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,6 +15,8 @@ class InventoryItemResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $facilityId = $request->header('X-Facility-Id') ?? $request->header('X-Active-Facility-Id');
+
         return [
             'id' => $this->id,
             'item_uuid' => $this->item_uuid,
@@ -75,6 +78,11 @@ class InventoryItemResource extends JsonResource
             'reorder_quantity' => $this->reorder_quantity,
             'safety_stock_level' => $this->safety_stock_level,
             'max_stock_level' => $this->max_stock_level,
+            
+            // Live stock balance from ledger
+            'current_balance' => $facilityId
+                ? InventoryLedger::getCurrentBalance((int) $facilityId, $this->id)
+                : 0,
             
             // Status
             'status' => $this->status,

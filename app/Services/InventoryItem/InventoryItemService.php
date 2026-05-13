@@ -5,6 +5,8 @@ namespace App\Services\InventoryItem;
 use App\Models\InventoryItem;
 use App\Repositories\Contracts\InventoryItemRepositoryInterface;
 use App\Services\Contracts\InventoryItemServiceInterface;
+use App\Services\Contracts\InventoryLedgerServiceInterface;
+use App\Models\Staff;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -32,13 +34,24 @@ class InventoryItemService implements InventoryItemServiceInterface
     protected ?int $facilityId = null;
 
     /**
+     * The inventory ledger service instance.
+     *
+     * @var InventoryLedgerServiceInterface
+     */
+    protected InventoryLedgerServiceInterface $ledgerService;
+
+    /**
      * Create a new service instance.
      *
      * @param InventoryItemRepositoryInterface $repository
+     * @param InventoryLedgerServiceInterface $ledgerService
      */
-    public function __construct(InventoryItemRepositoryInterface $repository)
-    {
+    public function __construct(
+        InventoryItemRepositoryInterface $repository,
+        InventoryLedgerServiceInterface $ledgerService
+    ) {
         $this->repository = $repository;
+        $this->ledgerService = $ledgerService;
         $this->facilityId = $this->getCurrentFacilityId();
     }
 
@@ -334,6 +347,37 @@ class InventoryItemService implements InventoryItemServiceInterface
         $inventoryItem = DB::transaction(function () use ($data) {
             return $this->repository->create($data);
         });
+
+        /**
+         * 5) Seed the inventory ledger with initial stock
+         */
+        try {
+            $staffId = null;
+            $user = Auth::user();
+            if ($user) {
+                $staff = Staff::where('user_id', $user->id)->first();
+                $staffId = $staff?->id;
+            }
+
+            $this->ledgerService->recordAdjustment([
+                'facility_id' => $this->facilityId,
+                'inventory_item_id' => $inventoryItem->id,
+                'quantity' => (float) $data['package_quantity'],
+                'unit_of_measure' => $data['unit_of_measure'],
+                'performed_by_staff_id' => $staffId,
+                'transaction_notes' => 'Initial stock on item creation',
+            ]);
+
+            Log::info('Initial stock ledger entry created for new inventory item', [
+                'item_id' => $inventoryItem->id,
+                'quantity' => $data['package_quantity'],
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to seed initial stock ledger entry, item was still created', [
+                'item_id' => $inventoryItem->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         Log::info('Inventory item created successfully', [
             'facility_id' => $this->facilityId,

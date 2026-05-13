@@ -408,7 +408,7 @@ class InventoryLedgerController extends Controller
             $request->validate([
                 'facility_id' => 'required|integer|exists:facilities,id',
                 'inventory_item_id' => 'required|integer|exists:inventory_items,id',
-                'quantity' => 'required|numeric|min:1',
+                'quantity' => 'required|numeric',
                 'unit_of_measure' => 'required|string|max:50',
                 'performed_by_staff_id' => 'nullable|integer|exists:staff,id',
                 'transaction_notes' => 'nullable|string|max:1000',

@@ -123,8 +123,9 @@ return [
         App\Providers\AppServiceProvider::class,
         
         
-        // Your custom provider should be here:
-        App\Providers\UserServiceProvider::class, // ← Add this line
+        // Your custom providers should be here:
+        App\Providers\UserServiceProvider::class,
+        App\Providers\ReferralServiceProvider::class,
     ])->toArray(),
 
     'key' => env('APP_KEY'),

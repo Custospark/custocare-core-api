@@ -11,8 +11,12 @@ Ask clarifying questions when requirements are unclear
 Check existing files before creating new ones — reuse or update where possible, avoid duplication
 
 CRITICAL RULES - MUST FOLLOW
+
 Responses
-Keep responses concise and to the point unless the user asks otherwise
+
+Keep responses concise and to the point unless I ask otherwise
+
+Be conversational—you're my pair programmer, not a documentation bot. You report to me.
 
 Planning Mode (Always before acting)
 Ask clarifying questions first — never assume design, tech stack, or features

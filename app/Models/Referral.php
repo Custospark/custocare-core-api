@@ -35,6 +35,7 @@ class Referral extends Model
         'referral_uuid',
         'patient_id',
         'facility_id',
+        'receiving_facility_id',
         'referring_staff_id',
         'receiving_staff_id',
         'referral_type',
@@ -61,6 +62,7 @@ class Referral extends Model
         'referral_uuid' => 'string',
         'patient_id' => 'integer',
         'facility_id' => 'integer',
+        'receiving_facility_id' => 'integer',
         'referring_staff_id' => 'integer',
         'receiving_staff_id' => 'integer',
         'referral_date' => 'datetime',
@@ -107,11 +109,28 @@ class Referral extends Model
     }
 
     /**
-     * Get the facility associated with the referral.
+     * Get the referring facility (source facility).
+     * Alias: referringFacility()
      */
     public function facility(): BelongsTo
     {
-        return $this->belongsTo(Facility::class);
+        return $this->belongsTo(Facility::class, 'facility_id');
+    }
+
+    /**
+     * Explicit alias for source facility.
+     */
+    public function referringFacility(): BelongsTo
+    {
+        return $this->belongsTo(Facility::class, 'facility_id');
+    }
+
+    /**
+     * Get the receiving facility (destination facility).
+     */
+    public function receivingFacility(): BelongsTo
+    {
+        return $this->belongsTo(Facility::class, 'receiving_facility_id');
     }
 
     /**
@@ -303,11 +322,30 @@ class Referral extends Model
     }
 
     /**
-     * Scope a query to only include referrals for a specific facility.
+     * Scope a query to only include referrals originating from a facility.
+     */
+    public function scopeFromFacility($query, int $facilityId)
+    {
+        return $query->where('facility_id', $facilityId);
+    }
+
+    /**
+     * Scope a query to only include referrals destined for a facility.
+     */
+    public function scopeToFacility($query, int $facilityId)
+    {
+        return $query->where('receiving_facility_id', $facilityId);
+    }
+
+    /**
+     * Scope a query to only include referrals involving a facility (either as source or destination).
      */
     public function scopeForFacility($query, int $facilityId)
     {
-        return $query->where('facility_id', $facilityId);
+        return $query->where(function ($q) use ($facilityId) {
+            $q->where('facility_id', $facilityId)
+              ->orWhere('receiving_facility_id', $facilityId);
+        });
     }
 
     /**
@@ -340,5 +378,48 @@ class Referral extends Model
     public function scopeExternal($query)
     {
         return $query->where('referral_type', 'external');
+    }
+
+    /**
+     * Scope a query to only include cross-facility referrals.
+     */
+    public function scopeCrossFacility($query)
+    {
+        return $query->whereNotNull('receiving_facility_id')
+            ->whereColumn('facility_id', '!=', 'receiving_facility_id');
+    }
+
+    /**
+     * Scope a query to only include same-facility referrals.
+     */
+    public function scopeSameFacility($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('receiving_facility_id')
+              ->orWhereColumn('facility_id', 'receiving_facility_id');
+        });
+    }
+
+    /**
+     * Determine the referral direction relative to a given facility.
+     *
+     * Returns 'outgoing', 'incoming', or 'internal' for the specified facility.
+     */
+    public function directionRelativeTo(int $facilityId): string
+    {
+        $isSource = $this->facility_id === $facilityId;
+        $isDestination = $this->receiving_facility_id === $facilityId;
+
+        if ($isSource && $isDestination) {
+            return 'internal';
+        }
+        if ($isSource) {
+            return 'outgoing';
+        }
+        if ($isDestination) {
+            return 'incoming';
+        }
+
+        return 'unrelated';
     }
 }

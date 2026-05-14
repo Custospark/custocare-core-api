@@ -104,7 +104,7 @@ interface ReferralServiceInterface
     public function getReferralsForPatient(int $patientId, array $filters = [], int $perPage = 15): ResourceCollection;
 
     /**
-     * Get referrals for a specific facility.
+     * Get referrals involving a facility (source or destination).
      *
      * @param int $facilityId
      * @param array $filters
@@ -112,6 +112,26 @@ interface ReferralServiceInterface
      * @return ResourceCollection
      */
     public function getReferralsForFacility(int $facilityId, array $filters = [], int $perPage = 15): ResourceCollection;
+
+    /**
+     * Get referrals originating from a specific facility.
+     *
+     * @param int $facilityId
+     * @param array $filters
+     * @param int $perPage
+     * @return ResourceCollection
+     */
+    public function getReferralsFromFacility(int $facilityId, array $filters = [], int $perPage = 15): ResourceCollection;
+
+    /**
+     * Get referrals destined for a specific facility.
+     *
+     * @param int $facilityId
+     * @param array $filters
+     * @param int $perPage
+     * @return ResourceCollection
+     */
+    public function getReferralsToFacility(int $facilityId, array $filters = [], int $perPage = 15): ResourceCollection;
 
     /**
      * Get pending referrals.

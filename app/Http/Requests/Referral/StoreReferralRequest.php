@@ -28,7 +28,8 @@ class StoreReferralRequest extends FormRequest
         return [
             'patient_id' => ['required', 'exists:patients,id'],
             'facility_id' => ['required', 'exists:facilities,id'],
-            'referring_staff_id' => ['required', 'exists:staff,id'],
+            'receiving_facility_id' => ['nullable', 'exists:facilities,id'],
+            'referring_staff_id' => ['nullable', 'exists:staff,id'],
             'receiving_staff_id' => ['nullable', 'exists:staff,id'],
             'referral_type' => ['required', Rule::in(['internal', 'external'])],
             'referral_reason' => ['nullable', 'string', 'max:1000'],
@@ -50,9 +51,9 @@ class StoreReferralRequest extends FormRequest
         return [
             'patient_id.required' => 'Patient ID is required.',
             'patient_id.exists' => 'Patient does not exist.',
-            'facility_id.required' => 'Facility ID is required.',
-            'facility_id.exists' => 'Facility does not exist.',
-            'referring_staff_id.required' => 'Referring staff ID is required.',
+            'facility_id.required' => 'Referring facility ID is required.',
+            'facility_id.exists' => 'Referring facility does not exist.',
+            'receiving_facility_id.exists' => 'Receiving facility does not exist.',
             'referring_staff_id.exists' => 'Referring staff does not exist.',
             'receiving_staff_id.exists' => 'Receiving staff does not exist.',
             'referral_type.required' => 'Referral type is required.',

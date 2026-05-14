@@ -20,6 +20,8 @@ Route::prefix('referrals')
         // Patient and facility specific routes
         Route::get('/patient/{patientId}', [ReferralController::class, 'patientReferrals'])->name('patient');
         Route::get('/facility/{facilityId}', [ReferralController::class, 'facilityReferrals'])->name('facility');
+        Route::get('/from-facility/{facilityId}', [ReferralController::class, 'fromFacility'])->name('from-facility');
+        Route::get('/to-facility/{facilityId}', [ReferralController::class, 'toFacility'])->name('to-facility');
         
         // Item routes LAST (specific paths before the generic GET /)
         Route::prefix('{referral}')->group(function () {

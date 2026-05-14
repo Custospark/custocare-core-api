@@ -28,6 +28,7 @@ class UpdateReferralRequest extends FormRequest
         return [
             'patient_id' => ['nullable', 'exists:patients,id'],
             'facility_id' => ['nullable', 'exists:facilities,id'],
+            'receiving_facility_id' => ['nullable', 'exists:facilities,id'],
             'referring_staff_id' => ['nullable', 'exists:staff,id'],
             'receiving_staff_id' => ['nullable', 'exists:staff,id'],
             'referral_type' => ['nullable', Rule::in(['internal', 'external'])],
@@ -53,7 +54,8 @@ class UpdateReferralRequest extends FormRequest
     {
         return [
             'patient_id.exists' => 'Patient does not exist.',
-            'facility_id.exists' => 'Facility does not exist.',
+            'facility_id.exists' => 'Referring facility does not exist.',
+            'receiving_facility_id.exists' => 'Receiving facility does not exist.',
             'referring_staff_id.exists' => 'Referring staff does not exist.',
             'receiving_staff_id.exists' => 'Receiving staff does not exist.',
             'referral_type.in' => 'Referral type must be either internal or external.',

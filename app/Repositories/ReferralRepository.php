@@ -10,13 +10,26 @@ use Illuminate\Support\Facades\Auth;
 
 class ReferralRepository implements ReferralRepositoryInterface
 {
+    private function baseLoads(): array
+    {
+        return [
+            'patient',
+            'facility',
+            'receivingFacility',
+            'referringStaff',
+            'receivingStaff',
+            'createdBy',
+            'updatedBy',
+        ];
+    }
+
     /**
      * Get all referrals with pagination.
      */
     public function getAllReferrals(array $filters = [], int $perPage = 15)
     {
         $query = Referral::query()
-            ->with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+            ->with($this->baseLoads())
             ->whereNull('deleted_at');
 
         $this->applyFilters($query, $filters);
@@ -29,7 +42,7 @@ class ReferralRepository implements ReferralRepositoryInterface
      */
     public function getReferralById(int $id)
     {
-        return Referral::with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+        return Referral::with($this->baseLoads())
             ->findOrFail($id);
     }
 
@@ -38,7 +51,7 @@ class ReferralRepository implements ReferralRepositoryInterface
      */
     public function getReferralByUuid(string $uuid)
     {
-        return Referral::with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+        return Referral::with($this->baseLoads())
             ->where('referral_uuid', $uuid)
             ->firstOrFail();
     }
@@ -73,7 +86,7 @@ class ReferralRepository implements ReferralRepositoryInterface
         }
 
         $referral->update($data);
-        return $referral->fresh();
+        return $referral->fresh()->load($this->baseLoads());
     }
 
     /**
@@ -92,7 +105,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     {
         $referral = Referral::findOrFail($id);
         $referral->accept($receivingStaffId);
-        return $referral->fresh();
+        return $referral->fresh()->load($this->baseLoads());
     }
 
     /**
@@ -102,7 +115,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     {
         $referral = Referral::findOrFail($id);
         $referral->reject($reason);
-        return $referral->fresh();
+        return $referral->fresh()->load($this->baseLoads());
     }
 
     /**
@@ -112,7 +125,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     {
         $referral = Referral::findOrFail($id);
         $referral->complete();
-        return $referral->fresh();
+        return $referral->fresh()->load($this->baseLoads());
     }
 
     /**
@@ -122,7 +135,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     {
         $referral = Referral::findOrFail($id);
         $referral->cancel($reason);
-        return $referral->fresh();
+        return $referral->fresh()->load($this->baseLoads());
     }
 
     /**
@@ -131,7 +144,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     public function getReferralsForPatient(int $patientId, array $filters = [], int $perPage = 15)
     {
         $query = Referral::query()
-            ->with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+            ->with($this->baseLoads())
             ->whereNull('deleted_at')
             ->where('patient_id', $patientId);
 
@@ -141,14 +154,47 @@ class ReferralRepository implements ReferralRepositoryInterface
     }
 
     /**
-     * Get referrals for a specific facility.
+     * Get referrals involving a facility (source or destination).
      */
     public function getReferralsForFacility(int $facilityId, array $filters = [], int $perPage = 15)
     {
         $query = Referral::query()
-            ->with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+            ->with($this->baseLoads())
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($facilityId) {
+                $q->where('facility_id', $facilityId)
+                  ->orWhere('receiving_facility_id', $facilityId);
+            });
+
+        $this->applyFilters($query, $filters);
+
+        return $query->paginate($perPage);
+    }
+
+    /**
+     * Get referrals originating from a specific facility.
+     */
+    public function getReferralsFromFacility(int $facilityId, array $filters = [], int $perPage = 15)
+    {
+        $query = Referral::query()
+            ->with($this->baseLoads())
             ->whereNull('deleted_at')
             ->where('facility_id', $facilityId);
+
+        $this->applyFilters($query, $filters);
+
+        return $query->paginate($perPage);
+    }
+
+    /**
+     * Get referrals destined for a specific facility.
+     */
+    public function getReferralsToFacility(int $facilityId, array $filters = [], int $perPage = 15)
+    {
+        $query = Referral::query()
+            ->with($this->baseLoads())
+            ->whereNull('deleted_at')
+            ->where('receiving_facility_id', $facilityId);
 
         $this->applyFilters($query, $filters);
 
@@ -161,7 +207,7 @@ class ReferralRepository implements ReferralRepositoryInterface
     public function getPendingReferrals(array $filters = [], int $perPage = 15)
     {
         $query = Referral::query()
-            ->with(['patient', 'facility', 'referringStaff', 'receivingStaff', 'createdBy', 'updatedBy'])
+            ->with($this->baseLoads())
             ->whereNull('deleted_at')
             ->where('status', 'pending');
 
@@ -195,6 +241,10 @@ class ReferralRepository implements ReferralRepositoryInterface
             $query->where('receiving_staff_id', $filters['receiving_staff_id']);
         }
 
+        if (isset($filters['receiving_facility_id'])) {
+            $query->where('receiving_facility_id', $filters['receiving_facility_id']);
+        }
+
         if (isset($filters['from_date'])) {
             $query->whereDate('referral_date', '>=', $filters['from_date']);
         }
@@ -215,6 +265,9 @@ class ReferralRepository implements ReferralRepositoryInterface
                       });
                   })
                   ->orWhereHas('facility', function ($qp) use ($search) {
+                      $qp->where('facility_name', 'like', "%{$search}%");
+                  })
+                  ->orWhereHas('receivingFacility', function ($qp) use ($search) {
                       $qp->where('facility_name', 'like', "%{$search}%");
                   });
             });

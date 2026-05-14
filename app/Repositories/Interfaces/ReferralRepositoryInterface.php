@@ -104,7 +104,7 @@ interface ReferralRepositoryInterface
     public function getReferralsForPatient(int $patientId, array $filters = [], int $perPage = 15): LengthAwarePaginator;
 
     /**
-     * Get referrals for a specific facility.
+     * Get referrals involving a facility (both source and destination).
      *
      * @param int $facilityId
      * @param array $filters
@@ -112,6 +112,26 @@ interface ReferralRepositoryInterface
      * @return LengthAwarePaginator
      */
     public function getReferralsForFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator;
+
+    /**
+     * Get referrals originating from a specific facility.
+     *
+     * @param int $facilityId
+     * @param array $filters
+     * @param int $perPage
+     * @return LengthAwarePaginator
+     */
+    public function getReferralsFromFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator;
+
+    /**
+     * Get referrals destined for a specific facility.
+     *
+     * @param int $facilityId
+     * @param array $filters
+     * @param int $perPage
+     * @return LengthAwarePaginator
+     */
+    public function getReferralsToFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator;
 
     /**
      * Get pending referrals.

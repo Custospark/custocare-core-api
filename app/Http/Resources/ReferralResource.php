@@ -19,6 +19,7 @@ class ReferralResource extends JsonResource
             'referral_uuid' => $this->referral_uuid,
             'patient_id' => $this->patient_id,
             'facility_id' => $this->facility_id,
+            'receiving_facility_id' => $this->receiving_facility_id,
             'referring_staff_id' => $this->referring_staff_id,
             'receiving_staff_id' => $this->receiving_staff_id,
             'referral_type' => $this->referral_type,
@@ -40,7 +41,7 @@ class ReferralResource extends JsonResource
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
             'deleted_at' => $this->deleted_at?->toISOString(),
-            
+
             // Relationships
             'patient' => fn() => $this->whenLoaded('patient', fn() => [
                 'id' => $this->patient->id,
@@ -51,23 +52,29 @@ class ReferralResource extends JsonResource
                 'date_of_birth' => $this->patient->date_of_birth?->toDateString(),
                 'gender_identity' => $this->patient->gender_identity,
             ]),
-            'facility' => fn() => $this->whenLoaded('facility', fn() => [
+            'referring_facility' => fn() => $this->whenLoaded('facility', fn() => [
                 'id' => $this->facility->id,
                 'facility_uuid' => $this->facility->facility_uuid,
                 'facility_name' => $this->facility->facility_name,
                 'facility_code' => $this->facility->facility_code,
             ]),
+            'receiving_facility' => fn() => $this->whenLoaded('receivingFacility', fn() => [
+                'id' => $this->receivingFacility->id ?? null,
+                'facility_uuid' => $this->receivingFacility->facility_uuid ?? null,
+                'facility_name' => $this->receivingFacility->facility_name ?? null,
+                'facility_code' => $this->receivingFacility->facility_code ?? null,
+            ]),
             'referring_staff' => fn() => $this->whenLoaded('referringStaff', fn() => [
-                'id' => $this->referringStaff->id,
-                'first_name' => $this->referringStaff->first_name,
-                'last_name' => $this->referringStaff->last_name,
-                'email' => $this->referringStaff->email,
+                'id' => $this->referringStaff->id ?? null,
+                'first_name' => $this->referringStaff->first_name ?? null,
+                'last_name' => $this->referringStaff->last_name ?? null,
+                'email' => $this->referringStaff->email ?? null,
             ]),
             'receiving_staff' => fn() => $this->whenLoaded('receivingStaff', fn() => [
-                'id' => $this->receivingStaff->id,
-                'first_name' => $this->receivingStaff->first_name,
-                'last_name' => $this->receivingStaff->last_name,
-                'email' => $this->receivingStaff->email,
+                'id' => $this->receivingStaff->id ?? null,
+                'first_name' => $this->receivingStaff->first_name ?? null,
+                'last_name' => $this->receivingStaff->last_name ?? null,
+                'email' => $this->receivingStaff->email ?? null,
             ]),
             'created_by' => fn() => $this->whenLoaded('createdBy', fn() => [
                 'id' => $this->createdBy->id,

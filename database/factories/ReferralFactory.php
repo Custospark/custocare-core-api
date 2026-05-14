@@ -15,22 +15,27 @@ class ReferralFactory extends Factory
 
     public function definition(): array
     {
-        // Get random existing records or create temporary ones for factory
         $facility = Facility::inRandomOrder()->first() ?? Facility::factory()->create();
         $patient = Patient::inRandomOrder()->first() ?? Patient::factory()->create();
         $referringStaff = Staff::inRandomOrder()->first() ?? Staff::factory()->create();
         $receivingStaff = Staff::inRandomOrder()->first() ?? Staff::factory()->create();
 
+        // 50% chance this is a cross-facility referral
+        $receivingFacility = $this->faker->boolean(50)
+            ? (Facility::inRandomOrder()->where('id', '!=', $facility->id)->first() ?? Facility::factory()->create())
+            : null;
+
         return [
             'referral_uuid' => (string) Str::uuid(),
             'patient_id' => $patient->id,
             'facility_id' => $facility->id,
-            'referring_staff_id' => $referringStaff->id,
-            'receiving_staff_id' => $receivingStaff->id,
-            'referral_type' => $this->faker->randomElement(['internal', 'external']),
+            'receiving_facility_id' => $receivingFacility?->id,
+            'referring_staff_id' => $this->faker->boolean(80) ? $referringStaff->id : null,
+            'receiving_staff_id' => $this->faker->boolean(60) ? $receivingStaff->id : null,
+            'referral_type' => $receivingFacility ? 'external' : 'internal',
             'referral_reason' => $this->faker->sentence(),
             'clinical_notes' => $this->faker->optional()->paragraph(),
-            'external_referral_id' => $this->faker->optional()->uuid(),
+            'external_referral_id' => $receivingFacility ? $this->faker->optional()->uuid() : null,
             'status' => $this->faker->randomElement(['pending', 'accepted', 'rejected', 'completed', 'cancelled']),
             'priority' => $this->faker->randomElement(['low', 'medium', 'high', 'urgent']),
             'referral_date' => $this->faker->dateTimeBetween('-6 months', 'now'),
@@ -45,6 +50,52 @@ class ReferralFactory extends Factory
             'created_by_staff_id' => $referringStaff->id,
             'updated_by_staff_id' => $referringStaff->id,
         ];
+    }
+
+    /**
+     * Same-facility referral (internal).
+     */
+    public function sameFacility(): static
+    {
+        return $this->state(function (array $attributes) {
+            return [
+                'receiving_facility_id' => $attributes['facility_id'] ?? null,
+                'referral_type' => 'internal',
+                'external_referral_id' => null,
+            ];
+        });
+    }
+
+    /**
+     * Cross-facility referral (external) with a different receiving facility.
+     */
+    public function crossFacility(): static
+    {
+        $receivingFacility = Facility::factory()->create();
+
+        return $this->state(function (array $attributes) use ($receivingFacility) {
+            return [
+                'receiving_facility_id' => $receivingFacility->id,
+                'referral_type' => 'external',
+            ];
+        });
+    }
+
+    /**
+     * Facility-to-facility (no specific staff on either end).
+     */
+    public function facilityToFacility(): static
+    {
+        $receivingFacility = Facility::factory()->create();
+
+        return $this->state(function (array $attributes) use ($receivingFacility) {
+            return [
+                'receiving_facility_id' => $receivingFacility->id,
+                'referring_staff_id' => null,
+                'receiving_staff_id' => null,
+                'referral_type' => 'external',
+            ];
+        });
     }
 
     public function pending(): static

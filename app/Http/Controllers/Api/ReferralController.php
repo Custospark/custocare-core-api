@@ -32,6 +32,7 @@ class ReferralController extends Controller
         $filters = $request->only([
             'status', 'priority', 'referral_type', 
             'referring_staff_id', 'receiving_staff_id',
+            'receiving_facility_id',
             'from_date', 'to_date', 'search'
         ]);
         
@@ -144,7 +145,7 @@ class ReferralController extends Controller
     }
 
     /**
-     * Get referrals for a specific facility.
+     * Get referrals involving a facility (source or destination).
      */
     public function facilityReferrals(int $facilityId, Request $request): ReferralCollection
     {
@@ -156,6 +157,36 @@ class ReferralController extends Controller
         $perPage = $request->query('per_page', 15);
         
         return $this->referralService->getReferralsForFacility($facilityId, $filters, $perPage);
+    }
+
+    /**
+     * Get referrals originating from a specific facility.
+     */
+    public function fromFacility(int $facilityId, Request $request): ReferralCollection
+    {
+        $filters = $request->only([
+            'status', 'priority', 'referral_type',
+            'from_date', 'to_date', 'search'
+        ]);
+        
+        $perPage = $request->query('per_page', 15);
+        
+        return $this->referralService->getReferralsFromFacility($facilityId, $filters, $perPage);
+    }
+
+    /**
+     * Get referrals destined for a specific facility.
+     */
+    public function toFacility(int $facilityId, Request $request): ReferralCollection
+    {
+        $filters = $request->only([
+            'status', 'priority', 'referral_type',
+            'from_date', 'to_date', 'search'
+        ]);
+        
+        $perPage = $request->query('per_page', 15);
+        
+        return $this->referralService->getReferralsToFacility($facilityId, $filters, $perPage);
     }
 
     /**

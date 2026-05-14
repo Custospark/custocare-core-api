@@ -108,7 +108,7 @@ class UpdateFacilitySettingsRequest extends FormRequest
             'has_cardiac_cath_lab'        => 'sometimes|boolean',
 
             // ── FinancialConfiguration ───────────────────────────────────────
-            'currency'                    => 'sometimes|string|size:3',
+            'currency'                    => 'sometimes|string|size:3|alpha',
             'tax_enabled'                 => 'sometimes|boolean',
             'tax_name'                    => 'sometimes|nullable|string|max:255',
             'tax_rate'                    => 'sometimes|nullable|numeric|min:0|max:100',
@@ -235,6 +235,11 @@ class UpdateFacilitySettingsRequest extends FormRequest
             if ($this->has($field) && is_string($this->{$field})) {
                 $this->merge([$field => trim($this->{$field})]);
             }
+        }
+
+        // Uppercase currency code (ISO 4217)
+        if ($this->has('currency') && is_string($this->currency)) {
+            $this->merge(['currency' => strtoupper(trim($this->currency))]);
         }
     }
 

@@ -98,3 +98,86 @@
 - [x] Dependency Inversion — services depend on interfaces, not concretions
 
 ---
+
+## Ambulance Services — 2026-05-14
+
+### Entities
+
+#### 1. Ambulance (Vehicle)
+- ambulance_uuid: string - UUID identifier
+- facility_id: FK → facilities (home base)
+- crew_team_lead_staff_id: FK → staff (nullable)
+- vehicle_identifier: string - License plate / fleet number (unique)
+- vehicle_type: string - bls, als, critical_care, patient_transport, type_i, type_ii, type_iii
+- equipment_level: string (nullable)
+- status: string - available, in_service, out_of_service, maintenance, decommissioned
+- last_service_date: date
+- next_service_due_date: date
+- current_mileage: integer
+- capacity: integer
+- features: json - Onboard equipment list
+- metadata: json
+
+#### 2. Ambulance Trip
+- trip_uuid: string - UUID identifier
+- facility_id: FK → facilities (dispatching)
+- patient_id: FK → patients
+- visit_id: FK → visits (nullable)
+- ambulance_id: FK → ambulances (nullable)
+- dispatch_staff_id: FK → staff
+- requesting_staff_id: FK → staff (nullable)
+- trip_type: string - emergency, non_emergency, inter_facility_transfer, standby, special_event
+- priority: string - low, medium, high, urgent
+- status: string - requested → dispatched → en_route → on_scene → transporting → at_destination → completed/cancelled
+- pickup_location / pickup_facility_id
+- destination_location / destination_facility_id
+- mileage: decimal
+- estimated_duration_minutes: integer
+- Timeline: dispatched_at, en_route_at, on_scene_at, patient_contact_at, depart_scene_at, at_destination_at, completed_at, cancelled_at
+
+#### 3. Ambulance Trip Log
+- trip_id: FK → ambulance_trips
+- event_type: string - status_change, location_update, patient_condition, note, handoff, delay
+- description: text
+- recorded_at: timestamp
+- recorded_by_staff_id: FK → staff
+
+#### 4. Ambulance Crew Member
+- ambulance_id: FK → ambulances (nullable)
+- staff_id: FK → staff
+- role: string - driver, attendant, paramedic, emt, nurse, doctor, crew_lead
+- is_primary_driver: boolean
+- certification_expiry: date (nullable)
+- active: boolean
+- assigned_at / unassigned_at: timestamps
+
+### Files Generated/Updated
+- [x] 4 Migrations (ambulances, trips, trip_logs, crew_members)
+- [x] 4 Models (Ambulance, AmbulanceTrip, AmbulanceTripLog, AmbulanceCrewMember)
+- [x] 4 Repository Interfaces
+- [x] 4 Repository Implementations
+- [x] 4 Service Interfaces
+- [x] 4 Service Implementations
+- [x] 7 Request files (Store + Update per entity, plus Store for TripLog)
+- [x] 8 Resource/Collection files
+- [x] 4 Controllers (Ambulance, Trip, TripLog, CrewMember)
+- [x] 3 Route files + api.php registration
+- [x] Service Provider: App\Providers\AmbulanceServiceProvider
+- [x] 4 Factories
+
+### Provider Bindings
+- AmbulanceRepositoryInterface → AmbulanceRepository
+- AmbulanceServiceInterface → AmbulanceService
+- AmbulanceTripRepositoryInterface → AmbulanceTripRepository
+- AmbulanceTripServiceInterface → AmbulanceTripService
+- AmbulanceTripLogRepositoryInterface → AmbulanceTripLogRepository
+- AmbulanceTripLogServiceInterface → AmbulanceTripLogService
+- AmbulanceCrewMemberRepositoryInterface → AmbulanceCrewMemberRepository
+- AmbulanceCrewMemberServiceInterface → AmbulanceCrewMemberService
+
+### Test Results
+- Lint: ✅ Passed (all 37 files)
+- Migration: ✅ All 4 migrations ran successfully
+- Routes: ✅ All 33 routes registered
+
+---

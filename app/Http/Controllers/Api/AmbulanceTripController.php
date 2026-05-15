@@ -17,7 +17,7 @@ class AmbulanceTripController extends Controller
 
     public function index(Request $request): AmbulanceTripCollection
     {
-        $filters = $request->only(['status', 'trip_type', 'priority', 'patient_id', 'ambulance_id', 'from_date', 'to_date', 'search']);
+        $filters = $request->only(['status', 'trip_type', 'priority', 'patient_id', 'visit_id', 'ambulance_id', 'from_date', 'to_date', 'search']);
         return $this->tripService->getAll($filters, $request->integer('per_page', 15));
     }
 

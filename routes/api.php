@@ -77,6 +77,7 @@ require __DIR__.'/api_v1/facilityTasks/_index.php';
 require __DIR__.'/api_v1/facilityShiftHandovers/_index.php';
 require __DIR__.'/api_v1/nursingMedication/_index.php';
 require __DIR__.'/api_v1/nursing/_index.php';
+require __DIR__.'/api_v1/ambulance/_index.php';
 require __DIR__.'/api_v1/ambulances/_index.php';
 require __DIR__.'/api_v1/ambulanceTrips/_index.php';
 require __DIR__.'/api_v1/ambulanceCrew/_index.php';

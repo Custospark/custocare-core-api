@@ -26,6 +26,7 @@ class Visit extends Model
         'billing',
         'nursing',
         'imaging',
+        'ambulance',
     ];
 
     /**
@@ -43,6 +44,7 @@ class Visit extends Model
         'billing' => 'billing',
         'nursing' => 'observation',
         'imaging' => 'procedures',
+        'ambulance' => 'treatment',
     ];
 
     /**

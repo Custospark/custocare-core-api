@@ -122,7 +122,7 @@ class AmbulanceTripRepository implements AmbulanceTripRepositoryInterface
 
     private function applyFilters(Builder $query, array $filters): void
     {
-        foreach (['status', 'trip_type', 'priority', 'patient_id', 'ambulance_id'] as $field) {
+        foreach (['status', 'trip_type', 'priority', 'patient_id', 'visit_id', 'ambulance_id'] as $field) {
             if (isset($filters[$field])) {
                 $query->where($field, $filters[$field]);
             }

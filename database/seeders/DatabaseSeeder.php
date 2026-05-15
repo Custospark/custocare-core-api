@@ -29,6 +29,8 @@ class DatabaseSeeder extends Seeder
             ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true],
             // ADD NEW PLATFORM ADMINISTRATION MODULE
             ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],
+            ['code' => 'ambulance', 'name' => 'Ambulance Services', 'description' => 'Fleet management, dispatch, and trip tracking', 'is_active' => true],
+            ['code' => 'referrals', 'name' => 'Referrals', 'description' => 'Patient referrals between facilities and providers', 'is_active' => true],
         ];
 
         foreach ($modules as $module) {
@@ -103,15 +105,15 @@ class DatabaseSeeder extends Seeder
         */
         $roleToModuleMap = [
             // Clinician-focused defaults: each role lands in its core workspace.
-            'medical-doctor' => ['account', 'clinical'],
+            'medical-doctor' => ['account', 'clinical', 'referrals'],
             'pharmacist' => ['account', 'pharmacy'],
-            'registered-nurse' => ['account', 'nursing'],
+            'registered-nurse' => ['account', 'nursing', 'referrals'],
             'laboratory-scientist' => ['account', 'laboratory'],
             'billing-officer' => ['account', 'billing'],
 
             // Front-desk and admin roles keep broad operational access.
             'receptionist' => ['account', 'medical_records'],
-            'facility-administrator' => ['account','clinical','pharmacy','nursing','medical_records','laboratory','billing','administration'],
+            'facility-administrator' => ['account','clinical','pharmacy','nursing','medical_records','laboratory','billing','administration','ambulance','referrals'],
         ];
 
         foreach ($roleToModuleMap as $roleCode => $moduleCodes) {
@@ -149,7 +151,7 @@ class DatabaseSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
         $spatieRoleToModuleMap = [
-            'super_admin' => ['account', 'platform_administration'], // Super admin gets platform admin + account
+            'super_admin' => ['account', 'platform_administration', 'ambulance', 'referrals'], // Super admin gets full access
             // Add other Spatie roles here if needed
             // 'global_viewer' => ['account', 'clinical_readonly'],
         ];

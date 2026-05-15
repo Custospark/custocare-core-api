@@ -1,5 +1,7 @@
 <?php
+
 use App\Http\Controllers\Api\ReferralController;
+use App\Http\Controllers\Api\ReferralDashboardController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('referrals')
@@ -9,7 +11,10 @@ Route::prefix('referrals')
         // Collection / custom routes FIRST
         Route::get('/', [ReferralController::class, 'index'])->name('index');
         Route::post('/', [ReferralController::class, 'store'])->name('store');
-        
+
+        Route::get('/facility/{facilityId}/dashboard', [ReferralDashboardController::class, 'show'])
+            ->name('dashboard');
+
         // Specific action routes
         Route::get('/pending', [ReferralController::class, 'pending'])->name('pending');
         Route::post('/{referral}/accept', [ReferralController::class, 'accept'])->name('accept');

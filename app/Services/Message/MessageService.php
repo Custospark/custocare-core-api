@@ -13,6 +13,7 @@ use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -947,42 +948,45 @@ public function downloadAttachment(User $user, int $attachmentId)
      */
     public function getStats(User $user): array
     {
-        try {
-            $rows = MessageUserState::query()
-                ->where('user_id', $user->id)
-                ->join('messages', 'messages.id', '=', 'message_user_states.message_id')
-                ->whereNull('messages.deleted_at')
-                ->select(
-                    'message_user_states.folder',
-                    DB::raw('COUNT(*) as total'),
-                    DB::raw('SUM(CASE WHEN message_user_states.is_read = 0 THEN 1 ELSE 0 END) as unread')
-                )
-                ->groupBy('message_user_states.folder')
-                ->get();
+        $cacheKey = 'message_stats_' . $user->id;
 
-            $stats = [];
-            foreach (self::FOLDERS as $folder) {
-                $stats[$folder] = ['total' => 0, 'unread' => 0];
+        return Cache::remember($cacheKey, 10, function () use ($user) {
+            try {
+                $rows = MessageUserState::query()
+                    ->where('user_id', $user->id)
+                    ->join('messages', 'messages.id', '=', 'message_user_states.message_id')
+                    ->whereNull('messages.deleted_at')
+                    ->select(
+                        'message_user_states.folder',
+                        DB::raw('COUNT(*) as total'),
+                        DB::raw('SUM(CASE WHEN message_user_states.is_read = 0 THEN 1 ELSE 0 END) as unread')
+                    )
+                    ->groupBy('message_user_states.folder')
+                    ->get();
+
+                $stats = [];
+                foreach (self::FOLDERS as $folder) {
+                    $stats[$folder] = ['total' => 0, 'unread' => 0];
+                }
+
+                foreach ($rows as $row) {
+                    $stats[$row->folder] = [
+                        'total' => (int) $row->total,
+                        'unread' => (int) $row->unread,
+                    ];
+                }
+
+                return $stats;
+
+            } catch (Throwable $e) {
+                Log::error('Failed to get message stats', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage()
+                ]);
+
+                return array_fill_keys(self::FOLDERS, ['total' => 0, 'unread' => 0]);
             }
-
-            foreach ($rows as $row) {
-                $stats[$row->folder] = [
-                    'total' => (int) $row->total,
-                    'unread' => (int) $row->unread,
-                ];
-            }
-
-            return $stats;
-            
-        } catch (Throwable $e) {
-            Log::error('Failed to get message stats', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage()
-            ]);
-            
-            // Return empty stats instead of throwing
-            return array_fill_keys(self::FOLDERS, ['total' => 0, 'unread' => 0]);
-        }
+        });
     }
 
     // ── Scheduled job ─────────────────────────────────────────────────────

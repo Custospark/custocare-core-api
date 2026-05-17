@@ -4,6 +4,7 @@ namespace App\Services\StaffPresence;
 
 use App\Models\StaffPresence;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class StaffPresenceService
@@ -56,6 +57,8 @@ class StaffPresenceService
             ]);
         }
         
+        Cache::forget('staff_presence_' . $staffId . '_' . $facilityId);
+
         return $presence->refresh();
     });
 }
@@ -65,12 +68,16 @@ class StaffPresenceService
      */
     public function getActivePresence(int $staffId, int $facilityId): ?StaffPresence
     {
-        return StaffPresence::query()
-            ->where('staff_id', $staffId)
-            ->where('facility_id', $facilityId)
-            ->whereNull('ended_at')
-            ->latest('started_at')
-            ->first();
+        $cacheKey = 'staff_presence_' . $staffId . '_' . $facilityId;
+
+        return Cache::remember($cacheKey, 15, function () use ($staffId, $facilityId) {
+            return StaffPresence::query()
+                ->where('staff_id', $staffId)
+                ->where('facility_id', $facilityId)
+                ->whereNull('ended_at')
+                ->latest('started_at')
+                ->first();
+        });
     }
 
     /**

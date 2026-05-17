@@ -7,6 +7,7 @@ use App\Models\StaffSpaceAssignment;
 use App\Models\Staff;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -167,47 +168,52 @@ class StaffSpaceAssignmentService
         array $filters = [],
         int $perPage = 20
     ): LengthAwarePaginator {
-        $query = FacilitySpace::query()
-            ->forFacility($facilityId)
-            ->active()
-            ->with([
-                'currentAssignment' => function ($query) use ($facilityId) {
-                    $query->with([
-                        'staff.user:id,first_name,last_name',
-                        'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
-                            $q->where('facility_id', $facilityId)
-                              ->where('assignment_status', 'active')
-                              ->with('facility:id,facility_name');
-                        },
-                        'assignedBy:id,first_name,last_name',
-                    ]);
-                },
-            ])
-            ->withCount('activeAssignments')
-            ->select([
-                'id',
-                'facility_id',
-                'name',
-                'type',
-                'floor',
-                'building',
-                'is_active',
-                'created_at',
-                'updated_at',
-            ]);
+        $page = request()->input('page', 1);
+        $cacheKey = 'spaces_occupancy_' . $facilityId . '_' . md5(serialize($filters)) . '_' . $perPage . '_' . $page;
 
-        // Apply filters using scopes
-        $query->byType($filters['space_type'] ?? null)
-              ->byFloor($filters['floor'] ?? null)
-              ->byBuilding($filters['building'] ?? null)
-              ->search($filters['search'] ?? null);
+        return Cache::remember($cacheKey, 30, function () use ($facilityId, $filters, $perPage) {
+            $query = FacilitySpace::query()
+                ->forFacility($facilityId)
+                ->active()
+                ->with([
+                    'currentAssignment' => function ($query) use ($facilityId) {
+                        $query->with([
+                            'staff.user:id,first_name,last_name',
+                            'staff.facilityStaffRoles' => function ($q) use ($facilityId) {
+                                $q->where('facility_id', $facilityId)
+                                  ->where('assignment_status', 'active')
+                                  ->with('facility:id,facility_name');
+                            },
+                            'assignedBy:id,first_name,last_name',
+                        ]);
+                    },
+                ])
+                ->withCount('activeAssignments')
+                ->select([
+                    'id',
+                    'facility_id',
+                    'name',
+                    'type',
+                    'floor',
+                    'building',
+                    'is_active',
+                    'created_at',
+                    'updated_at',
+                ]);
 
-        // Order by building, floor, name
-        $query->orderBy('building')
-              ->orderBy('floor')
-              ->orderBy('name');
+            // Apply filters using scopes
+            $query->byType($filters['space_type'] ?? null)
+                  ->byFloor($filters['floor'] ?? null)
+                  ->byBuilding($filters['building'] ?? null)
+                  ->search($filters['search'] ?? null);
 
-        return $query->paginate($perPage);
+            // Order by building, floor, name
+            $query->orderBy('building')
+                  ->orderBy('floor')
+                  ->orderBy('name');
+
+            return $query->paginate($perPage);
+        });
     }
 
     /**

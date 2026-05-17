@@ -43,8 +43,8 @@ return new class extends Migration
             $this->handleExistingTables();
         }
 
-        // Disable foreign key checks for safety
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        // Disable foreign key checks for safety (MySQL only — SQLite uses PRAGMA implicitly)
+        $this->disableForeignKeyChecks();
 
         try {
             // Drop if exists (now safe with disabled checks)
@@ -55,7 +55,7 @@ return new class extends Migration
             
         } finally {
             // Always re-enable foreign key checks
-            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            $this->enableForeignKeyChecks();
         }
     }
 
@@ -64,8 +64,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Disable foreign key checks
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        // Disable foreign key checks (MySQL only)
+        $this->disableForeignKeyChecks();
 
         try {
             // Drop foreign keys from dependent tables first
@@ -76,7 +76,7 @@ return new class extends Migration
             
         } finally {
             // Always re-enable foreign key checks
-            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+            $this->enableForeignKeyChecks();
         }
     }
 
@@ -291,5 +291,25 @@ return new class extends Migration
                 'message_user_states',
             ],
         ];
+    }
+
+    /**
+     * Disable foreign key checks (MySQL only; SQLite uses PRAGMA implicitly).
+     */
+    private function disableForeignKeyChecks(): void
+    {
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        }
+    }
+
+    /**
+     * Re-enable foreign key checks (MySQL only).
+     */
+    private function enableForeignKeyChecks(): void
+    {
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
     }
 };

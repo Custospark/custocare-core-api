@@ -3,6 +3,7 @@
 use App\Exceptions\MessageRecipientNotResolvedException;
 use App\Http\Middleware\EnsureAdminAccess;
 use App\Http\Middleware\EnsureFacilitySubscriptionIsActive;
+use App\Http\Middleware\EnsureStaffFacilityAccess;
 use App\Http\Middleware\ValidateActiveContext;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
@@ -25,10 +26,8 @@ return Application::configure(basePath: dirname(__DIR__))
             // 'validate.active.context'       => ValidateActiveContext::class, 
         ]);
 
-        // Append to API middleware group if needed
-        $middleware->api(append: [
-            // 'validate.active.context', // Uncomment if you want it on all API routes
-        ]);
+        // Global middleware — runs on every request, passes through when headers absent
+        $middleware->append(EnsureStaffFacilityAccess::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (MessageRecipientNotResolvedException $e, \Illuminate\Http\Request $request) {

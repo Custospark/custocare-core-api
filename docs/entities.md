@@ -181,3 +181,47 @@
 - Routes: ✅ All 33 routes registered
 
 ---
+
+## EnsureStaffFacilityAccess Middleware — 2026-05-18
+
+### Purpose
+Conditional gate that validates staff-facility assignments on every request. Passes through when headers are absent.
+
+### Behavior
+| Headers Present | Action |
+|----------------|--------|
+| None | Pass through |
+| `X-Staff-Id` only | Resolve staff record (404 if invalid), pass through |
+| `X-Staff-Id` + `X-Active-Facility-Id` (or `X-Facility-Id`) | Resolve staff (404), resolve facility (404), verify `facility_staff_roles` assignment with `assignment_status` in `['active', 'on_leave']` and dates in range (403 if none) |
+
+### HTTP Responses
+| Status | Condition |
+|--------|-----------|
+| 404 | Staff ID or Facility ID doesn't match any record |
+| 403 | Staff has no active/on-leave assignment at the facility |
+| 200 | Validation passes (or headers absent) |
+
+### Files
+- [x] Middleware: `app/Http/Middleware/EnsureStaffFacilityAccess.php`
+- [x] Registration: `bootstrap/app.php` — global middleware (appended to every request)
+- [x] Test: `tests/Feature/EnsureStaffFacilityAccessMiddlewareTest.php` (20 tests)
+
+### Test Results
+- PHP Syntax: ✅ Passed (all files)
+- PHPUnit: ✅ 20/20 tests passing
+
+### Security Test Coverage
+| Test | Scenario |
+|------|----------|
+| `test_rejects_non_numeric_staff_id` | UUID string sent as staff ID → 404 |
+| `test_rejects_non_numeric_facility_id` | UUID string sent as facility ID → 404 |
+| `test_sql_injection_in_staff_id_safely_returns_404` | SQL-injection-like staff ID safely cast to int → 404 |
+| `test_sql_injection_in_facility_id_safely_returns_404` | SQL-injection-like facility ID safely cast to int → 404 |
+| `test_rejects_expired_assignment_date` | Assignment's effective_to is in the past → 403 |
+| `test_rejects_future_effective_from` | Assignment hasn't started yet → 403 |
+| `test_passes_through_empty_header_values` | Empty header values treated as absent → 200 |
+| `test_rejects_negative_staff_id` | Negative staff ID → 404 |
+| `test_rejects_huge_integer_staff_id` | Overflow-sized staff ID → 404 |
+| `test_rejects_known_staff_at_wrong_facility_using_facility_uuid` | UUID instead of numeric facility ID → 404 |
+
+---

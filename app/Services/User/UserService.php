@@ -190,12 +190,26 @@ class UserService implements UserServiceInterface
 
     // ── Email verification gate ────────────────────────────────────────
     if (!$user->hasVerifiedEmail()) {
+        try {
+            $service = app(\App\Services\User\AccountRecoveryService::class);
+            $service->sendEmailVerification($user->id, 'email', ActionTypes::LOGIN_CONFIRMATION);
+
+            Log::info('Email verification OTP sent during login attempt', [
+                'user_id' => $user->id,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send email verification OTP during login', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
         return [
             'success'      => false,
             'code'         => 'EMAIL_NOT_VERIFIED',
-            'message'      => 'Please verify your email address before logging in.',
+            'message'      => 'Please verify your email address before logging in. A verification code has been sent to your email.',
             'requires_mfa' => false,
-            'user'         => null,
+            'user'         => $user,
             'token'        => null,
         ];
     }

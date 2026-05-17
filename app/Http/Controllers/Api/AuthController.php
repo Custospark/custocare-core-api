@@ -101,7 +101,7 @@ class AuthController extends Controller
         $statusCode = match ($result['code']) {
             'LOGIN_SUCCESS'        => 200,
             'MFA_REQUIRED'         => 200,
-            'EMAIL_NOT_VERIFIED'   => 403,
+            'EMAIL_NOT_VERIFIED'   => 200,
             'ACCOUNT_LOCKED'       => 423,
             'INVALID_CREDENTIALS',
             'INVALID_MFA'          => 401,

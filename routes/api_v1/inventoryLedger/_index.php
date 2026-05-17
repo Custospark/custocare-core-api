@@ -29,6 +29,9 @@ Route::middleware(['auth:sanctum', 'api'])->prefix('inventory')->name('inventory
     // Transaction-specific endpoints
     Route::post('/ledger/purchase', [InventoryLedgerController::class, 'recordPurchase'])->name('record-purchase');
     
+    // Item history endpoint (returns all ledger entries for an item — for timeline view)
+    Route::get('/ledger/item/{inventoryItemId}/history', [InventoryLedgerController::class, 'itemHistory'])->name('item-history');
+
     // Convenience endpoints (to be implemented as needed)
     Route::post('/ledger/consumption', [InventoryLedgerController::class, 'recordConsumption'])->name('record-consumption');
     Route::post('/ledger/adjustment', [InventoryLedgerController::class, 'recordAdjustment'])->name('record-adjustment');

@@ -73,9 +73,10 @@ interface InventoryLedgerRepositoryInterface
      * @param int $facilityId
      * @param int $inventoryItemId
      * @param array $filters
+     * @param array $with
      * @return Collection
      */
-    public function getByFacilityAndItem(int $facilityId, int $inventoryItemId, array $filters = []): Collection;
+    public function getByFacilityAndItem(int $facilityId, int $inventoryItemId, array $filters = [], array $with = []): Collection;
 
     /**
      * Get current balance for an inventory item at a facility.

@@ -404,10 +404,10 @@ class InventoryLedgerService implements InventoryLedgerServiceInterface
      * @param array $filters
      * @return Collection
      */
-    public function getInventoryHistory(int $facilityId, int $inventoryItemId, array $filters = []): Collection
+    public function getInventoryHistory(int $facilityId, int $inventoryItemId, array $filters = [], array $with = []): Collection
     {
         try {
-            return $this->repository->getByFacilityAndItem($facilityId, $inventoryItemId, $filters);
+            return $this->repository->getByFacilityAndItem($facilityId, $inventoryItemId, $filters, $with);
         } catch (\Exception $e) {
             Log::error('Failed to get inventory history in service', [
                 'error' => $e->getMessage(),

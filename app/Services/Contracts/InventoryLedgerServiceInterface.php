@@ -91,9 +91,10 @@ interface InventoryLedgerServiceInterface
      * @param int $facilityId
      * @param int $inventoryItemId
      * @param array $filters
+     * @param array $with
      * @return Collection
      */
-    public function getInventoryHistory(int $facilityId, int $inventoryItemId, array $filters = []): Collection;
+    public function getInventoryHistory(int $facilityId, int $inventoryItemId, array $filters = [], array $with = []): Collection;
 
     /**
      * Record a purchase transaction.

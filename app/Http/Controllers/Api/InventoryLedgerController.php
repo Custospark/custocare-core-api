@@ -322,6 +322,61 @@ class InventoryLedgerController extends Controller
     }
 
     /**
+     * Get full ledger history for a specific inventory item at a facility.
+     * Returns all entries ordered by transaction timestamp (newest first)
+     * with staff details eager loaded — designed for timeline/history modals.
+     *
+     * @param Request $request
+     * @param int $inventoryItemId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function itemHistory(Request $request, int $inventoryItemId): \Illuminate\Http\JsonResponse
+    {
+        try {
+            $request->validate([
+                'facility_id' => 'required|integer|exists:facilities,id',
+            ]);
+
+            $facilityId = $request->input('facility_id');
+            $filters = $request->only(['transaction_type', 'start_date', 'end_date']);
+
+            $entries = $this->inventoryLedgerService->getInventoryHistory(
+                $facilityId,
+                $inventoryItemId,
+                $filters,
+                ['performedByStaff.user', 'verifiedByStaff.user']
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => InventoryLedgerResource::collection($entries),
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Failed to retrieve inventory item history', [
+                'error' => $e->getMessage(),
+                'inventory_item_id' => $inventoryItemId,
+                'facility_id' => $facilityId ?? null,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve inventory history.',
+            ], 500);
+        }
+    }
+
+    /**
      * Record a purchase transaction.
      *
      * @param Request $request

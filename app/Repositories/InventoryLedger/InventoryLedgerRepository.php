@@ -222,10 +222,11 @@ class InventoryLedgerRepository implements InventoryLedgerRepositoryInterface
      * @param array $filters
      * @return Collection
      */
-    public function getByFacilityAndItem(int $facilityId, int $inventoryItemId, array $filters = []): Collection
+    public function getByFacilityAndItem(int $facilityId, int $inventoryItemId, array $filters = [], array $with = []): Collection
     {
         try {
-            $query = InventoryLedger::where('facility_id', $facilityId)
+            $query = InventoryLedger::with($with)
+                ->where('facility_id', $facilityId)
                 ->where('inventory_item_id', $inventoryItemId);
             
             if (!empty($filters['transaction_type'])) {
@@ -240,7 +241,7 @@ class InventoryLedgerRepository implements InventoryLedgerRepositoryInterface
                 $query->where('transaction_timestamp', '<=', $filters['end_date']);
             }
             
-            $query->orderBy('transaction_timestamp', 'asc');
+            $query->orderBy('transaction_timestamp', 'desc');
             
             return $query->get();
         } catch (\Exception $e) {

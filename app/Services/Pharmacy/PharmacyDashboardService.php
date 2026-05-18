@@ -229,7 +229,7 @@ class PharmacyDashboardService
             return [
                 $todayAmt,
                 $byDay,
-                'vs 30-day avg daily (billing: invoice_line_items.net_amount)',
+                'vs 30-day daily average',
             ];
         }
 
@@ -248,10 +248,10 @@ class PharmacyDashboardService
                 ->groupBy('d')
                 ->pluck('amt', 'd');
 
-            return [$todayAmt, $byDay, 'vs 30-day avg daily (medication_dispenses)'];
+            return [$todayAmt, $byDay, 'vs 30-day daily average'];
         }
 
-        return [0.0, collect(), 'revenue unavailable (create billing + inventory line items, or run dispense migrations)'];
+        return [0.0, collect(), 'Revenue data unavailable'];
     }
 
     protected function sumPharmacyInvoiceNetForDate(int $facilityId, string $date): float
@@ -575,8 +575,8 @@ class PharmacyDashboardService
                 'stock_growth_pct' => $growthPct,
                 'avg_daily_dispensed_units' => round($totalDispensedSeries / $days, 2),
                 'note' => $this->hasMedicationDispensesTable
-                    ? 'Dispensed units from medication_dispenses; inventory from ledger.'
-                    : 'Dispensed units estimated from pharmacy invoice_line_items.quantity; ledger when present.',
+                    ? 'Dispensed units from medication records; stock moves from inventory ledger.'
+                    : 'Dispensed units from billed pharmacy lines; stock moves from inventory ledger when recorded.',
             ],
         ];
     }

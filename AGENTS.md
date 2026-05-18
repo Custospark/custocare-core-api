@@ -43,12 +43,12 @@ Keep our interaction **conversational**—just like two teammates working side b
 
 | # | Rule |
 |---|------|
-| 1 | Always run lint/type checks (FE) OR `php -l` / `artisan` / `phpunit` (BE) after file changes. Report results. |
+| 1 | After file changes, run **Vera Fast** (`composer vera:fast` / `npm run vera:fast` on FE). Extended/full suite only when triggers match or Oscar asks. Report results. |
 | 2 | Be conversational, not robotic. Explain what you did and why. Compare before/after. |
 | 3 | Never assume. Unclear? Stop → Ask. |
 | 4 | Check existing files first. Update > Create. |
 | 5 | Backend always follows SOLID: interfaces for repos & services, provider bindings in `bootstrap/providers.php`. |
-| 6 | **Go/No-Go gate before commit.** After Code completes, run targeted checks on changed files only — BE: `php -l <files>`. Report results to me. If checks fail, do NOT commit. |
+| 6 | **Go/No-Go gate before commit.** After Code completes, run `composer vera:fast`. Extended only when triggers match. Report results to me. If checks fail, do NOT commit. |
 | 7 | **Architect trigger.** Run Blue only when the change touches 3+ files or crosses FE+BE boundaries. For single-file or single-stack changes (<=2 files), skip to Code directly after Planning. |
 | 8 | **Quill always documents.** Every feature, every change — no exceptions. Documentation is project memory, not optional. |
 
@@ -67,7 +67,7 @@ Mike (Orchestrator) → Sage → Blue* → Rex → Vera → Quill → Mike → O
 | 1 | **Sage** | **Planning** | Analyzes requirements, reads `docs/decisions.md`, checks existing BE files, identifies what's new vs. reusable, creates task manifest | Blue (or Rex if small change) |
 | 2 | **Blue** | **Architect** | Designs class hierarchy + provider bindings (BE), defines interfaces before any code | Rex |
 | 3 | **Rex** | **Code** | Generates new files or updates existing ones. Never duplicates — always checks first | Vera |
-| 4 | **Vera** | **Test** | Runs `php -l <files>`, verifies syntax + migrations. If any fail → reports to Mike, blocks commit | Quill (if pass) / Mike (if fail) |
+| 4 | **Vera** | **Test** | **Default:** `composer vera:fast`. **Extended** only when triggers match (see Vera Performance Protocol). Blocks commit on failure | Quill (if pass) / Mike (if fail) |
 | 5 | **Quill** | **Docs** | **Mandatory.** Documents all completed work: API endpoints, DB schema, route changes, and ADRs in `docs/decisions.md`. Never skipped — runs after every Vera pass. | Mike (back to orchestrator) |
 
 **Handoff rules:**
@@ -81,6 +81,56 @@ Mike (Orchestrator) → Sage → Blue* → Rex → Vera → Quill → Mike → O
 
 ---
 
+## Vera Performance Protocol (read this — Vera must stay fast)
+
+Vera was slowing the pipeline by running **full-project** checks (`route:list`, full PHPUnit, real `migrate`, `npm run build`). That is **not** the default anymore.
+
+### Two tiers
+
+| Tier | When | Command | Target time |
+|------|------|---------|-------------|
+| **Vera Fast** | **Default** — every handoff Rex → Vera → Quill | `composer vera:fast` or `npm run vera:fast` (from `Backend/`) | Usually &lt; 30s |
+| **Vera Extended** | Only when triggers below match | `composer vera:extended` or `npm run vera:extended` | Minutes, scoped |
+
+**Vera Fast** = `php -l` on **changed `.php` files only** (staged + unstaged vs `HEAD`).
+
+**Vera Extended** = Vera Fast, then **only if applicable**:
+- `php artisan migrate --pretend` — **only** when a file under `database/migrations/` changed
+- Extra `php -l` on changed `routes/*.php` — **not** `php artisan route:list`
+- `php artisan test --filter=<Name>` — **only** when a matching test or `app/` class name can be inferred from changed paths — **never** the full suite during agent work
+
+### Run FE + BE Vera in parallel
+
+When both stacks changed, Mike runs **both** fast commands concurrently, then reports one combined Vera line.
+
+### Pre-commit already covers syntax
+
+`husky` + `lint-staged` run `php -l` / `eslint --fix` on **staged** files before commit. Vera Fast on the same files is still allowed but should not re-run a full `npm run lint` or `eslint .`.
+
+### Never during agent Vera (defer to CI / manual / release)
+
+| Do not run | Why |
+|------------|-----|
+| `php artisan route:list` | Loads entire app; very slow |
+| `php artisan migrate` (without `--pretend`) | Mutates DB; not an agent gate |
+| `php artisan test` (no `--filter`) | Full suite belongs in CI |
+| `npm run lint` / `eslint .` | Whole repo; use `vera:fast` |
+| `npm run build` / `react:build` | Release/CI only |
+
+### Vera Extended triggers (any one → run extended on that stack)
+
+- New or edited migration
+- New Laravel entity scaffold (migration + model + controller + …)
+- New/edited API route registration
+- Oscar explicitly asks for full validation
+- Opening a PR / pre-merge (CI may run full `composer test`)
+
+### Report format (fast)
+
+`🧪 Vera: Fast pass — BE php -l (4 files), FE eslint (6 files). Extended skipped (no migration).`
+
+---
+
 ## Summary Format (Per Agent) — With Context
 
 | Agent (Name) | Role | Report Format |
@@ -88,7 +138,7 @@ Mike (Orchestrator) → Sage → Blue* → Rex → Vera → Quill → Mike → O
 | Sage | Planning | `📋 Sage: Done. Found 2 existing FE files, 1 existing BE file. Nothing to duplicate.` |
 | Blue | Architect | `🏗️ Blue: Done. Designed to reuse existing hook. New component will have 3 props.` |
 | Rex | Code | `💻 Rex: Done. Created 3 files, updated 4 files. No breaking changes.` |
-| Vera | Test | `🧪 Vera: Done. FE lint passed (0 errors). BE phpunit passed (12/12 tests).` |
+| Vera | Test | `🧪 Vera: Fast pass — BE php -l (7 files). Extended: migrate --pretend OK, Product filter 8/8.` |
 | Quill | Docs | `📄 Quill: Done. Updated docs/entities.md and docs/decisions.md with new API endpoints and DB schema.` |
 | Mike → Oscar | Final | `✅ Complete. Ready for next task, Oscar.` |
 
@@ -424,40 +474,19 @@ When you say: *"Create [EntityName] with fields: [fields]"*
 ### Step 4: Call Vera
 
 **What I do internally:**
-- Send all generated file paths to Vera
-- Vera runs lint checks, migration, and PHPUnit tests
+- Run `composer vera:fast` from `Backend/` (changed PHP only)
+- If this change included a **migration**, new **entity**, or **routes** → run `composer vera:extended`
+- Do **not** run full PHPUnit, `route:list`, or real `migrate` unless Oscar asks or it's PR/CI
 
 **What I report to you:**
 
-*"🧪 **Test complete***
+*"🧪 **Vera complete***
 
-*The Vera ran a full validation suite on all the generated code. Here are the results:*
+- *Fast: `composer vera:fast` — ✅ 10 PHP files, `php -l` clean*
+- *Extended: `migrate --pretend` — ✅ (migration present); `test --filter=Product` — ✅ 8/8*
+- *Skipped: full suite, `route:list`, `npm run build` (not agent gates)*
 
-***Syntax Checks (`php -l`):***
-- `app/Models/Product.php` — ✅ No syntax errors
-- `app/Repositories/Contracts/ProductRepositoryInterface.php` — ✅ Clean
-- `app/Repositories/Eloquent/ProductRepository.php` — ✅ Clean
-- `app/Services/Contracts/ProductServiceInterface.php` — ✅ Clean
-- `app/Services/ProductService.php` — ✅ Clean
-- `app/Http/Requests/ProductRequest.php` — ✅ Clean
-- `app/Http/Resources/ProductResource.php` — ✅ Clean
-- `app/Http/Resources/ProductCollection.php` — ✅ Clean
-- `app/Http/Controllers/Api/ProductController.php` — ✅ Clean
-- `app/Providers/ProductServiceProvider.php` — ✅ Clean
-
-*All 10 PHP files passed linting. No syntax issues.*
-
-***Migration:***
-- Ran `php artisan migrate` — ✅ Success
-- Products table created with all columns and indexes
-
-***PHPUnit Tests:***
-- Ran `php artisan test --filter=Product` — ✅ All tests passed
-- 8 tests executed: index, show, store (valid data), store (invalid data), update, delete, validation rules, resource transformation
-
-*Everything is green, Oscar. The entity is fully functional and tested.*
-
-*Now I'll update the documentation so we have a record of what was built..."*
+*Green for Quill, Oscar."*
 
 ---
 
@@ -572,7 +601,7 @@ The BE project has `husky` + `lint-staged` configured. Before every commit:
 - `php -l` runs on staged `.php` files — catches parse/syntax errors
 - Fixable issues are auto-corrected; unfixable ones block the commit
 
-This is a **fast guard** — it catches syntax errors before Vera runs. Vera still does the full gate before commit.
+This is a **fast guard** — it catches syntax errors before Vera runs. Vera runs **`vera:fast`** before handoff to Quill (extended only when triggers match).
 
 ---
 
@@ -626,16 +655,18 @@ If any agent fails, here's how I'll report it:
 
 ## Quality Gate (Vera MUST Verify)
 
-| Check | Command | What It Catches |
-|-------|---------|-----------------|
-| PHP Syntax | `php -l <changed files>` | Parse errors, syntax issues |
-| Migrations | `php artisan migrate --pretend` | Migration conflicts |
-| Routes | `php artisan route:list` | Route duplication, missing endpoints |
-| Unit Tests | `php artisan test --filter=[Entity]` | Logic errors, breaking changes |
+Use scripts — do not improvise slower commands.
 
-**Pre-commit hooks** (`husky` + `lint-staged`) run `php -l` on staged `.php` files automatically before every commit.
+| Tier | Command | What It Catches |
+|------|---------|-----------------|
+| **Fast (always)** | `composer vera:fast` | PHP parse errors on changed files |
+| **Extended (triggers only)** | `composer vera:extended` | Pretend migrate, route file syntax, filtered PHPUnit |
 
-**If any command fails:** → Mark entity as **INCOMPLETE** → Do **NOT** document → Report to Orchestrator → Orchestrator halts and reports to you.
+**Pre-commit hooks** (`husky` + `lint-staged`) run `php -l` on staged `.php` files before every commit.
+
+**If any command fails:** → Mark work as **INCOMPLETE** → Do **NOT** document → Report to Orchestrator → Orchestrator halts and reports to you.
+
+**Full suite:** `composer test` — CI, PR, or when Oscar requests — not every Rex → Vera handoff.
 
 ---
 

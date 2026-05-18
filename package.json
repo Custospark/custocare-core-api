@@ -4,7 +4,9 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+        "vera:fast": "php scripts/vera-fast.php",
+        "vera:extended": "php scripts/vera-extended.php"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\SpaceOccupancyChanged;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StaffSpace\AssignStaffSpaceRequest;
 use App\Http\Resources\StaffSpaceAssignmentResource;
@@ -249,6 +250,8 @@ class StaffSpaceAssignmentController extends Controller
                 note: $request->input('note')
             );
 
+            SpaceOccupancyChanged::dispatch($facilityId, $spaceId, 'assigned');
+
             // Load relationships for the resource
             $assignment->load([
                 'space',
@@ -306,6 +309,8 @@ class StaffSpaceAssignmentController extends Controller
                 note: $request->input('note')
             );
 
+            SpaceOccupancyChanged::dispatch($facilityId, $spaceId, 'assigned');
+
             // Load relationships for the resource
             $assignment->load([
                 'space',
@@ -361,8 +366,13 @@ class StaffSpaceAssignmentController extends Controller
 
             // Get current assignment before releasing
             $currentAssignment = $this->service->getCurrentSpaceForStaff($staffId, $facilityId);
+            $spaceId = $currentAssignment?->space_id;
             
             $this->service->releaseStaffSpace($staffId, $facilityId, $user->id);
+
+            if ($spaceId) {
+                SpaceOccupancyChanged::dispatch($facilityId, $spaceId, 'released');
+            }
             
             // Get the released assignment
             $releasedAssignment = StaffSpaceAssignment::query()
@@ -429,9 +439,14 @@ class StaffSpaceAssignmentController extends Controller
 
             // Get current assignment before releasing
             $currentAssignment = $this->service->getCurrentSpaceForStaff($staffId, $facilityId);
-            
+            $spaceId = $currentAssignment?->space_id;
+
             $this->service->releaseStaffSpace($staffId, $facilityId, Auth::id());
-            
+
+            if ($spaceId) {
+                SpaceOccupancyChanged::dispatch($facilityId, $spaceId, 'released');
+            }
+
             // Get the released assignment
             $releasedAssignment = StaffSpaceAssignment::query()
                 ->where('staff_id', $staffId)

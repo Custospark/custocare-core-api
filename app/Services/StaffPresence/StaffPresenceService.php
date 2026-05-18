@@ -2,6 +2,8 @@
 
 namespace App\Services\StaffPresence;
 
+use App\Events\StaffPresenceChanged;
+use App\Models\Staff;
 use App\Models\StaffPresence;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -58,6 +60,19 @@ class StaffPresenceService
         }
         
         Cache::forget('staff_presence_' . $staffId . '_' . $facilityId);
+
+        // Positional args only — named args are applied to dispatch(...$arguments), not the constructor.
+        $broadcastUserId = $updatedByUserId
+            ?? Staff::query()->whereKey($staffId)->value('user_id');
+
+        if ($broadcastUserId !== null) {
+            StaffPresenceChanged::dispatch(
+                (int) $broadcastUserId,
+                $staffId,
+                $facilityId,
+                $status
+            );
+        }
 
         return $presence->refresh();
     });

@@ -225,3 +225,52 @@ Conditional gate that validates staff-facility assignments on every request. Pas
 | `test_rejects_known_staff_at_wrong_facility_using_facility_uuid` | UUID instead of numeric facility ID → 404 |
 
 ---
+
+## Laravel Reverb Real-Time Events — 2026-05-18
+
+### Purpose
+Eliminate frontend polling by broadcasting real-time events over WebSockets when data changes.
+
+### Architecture
+```
+User Action → Controller/Service → Dispatch Event → Reverb → Echo Client → Invalidate React Query → Re-render
+```
+
+### Events
+
+| Event | Channel | Broadcast As | Fired From | Frontend Effect |
+|-------|---------|-------------|------------|-----------------|
+| `MessageStatsUpdated` | `user.{userId}` | `MessageStatsUpdated` | `MessageController@store`, `@destroy`, `@restore`, `@markRead`, `@markUnread`, `@send`, `@permanentDelete` | Invalidates `message-stats` query — replaces 20s polling |
+| `StaffPresenceChanged` | `user.{userId}` | `StaffPresenceChanged` | `StaffPresenceService@setPresence` | Invalidates `staff-presence` query |
+| `SpaceOccupancyChanged` | `facility.{facilityId}` | `SpaceOccupancyChanged` | `StaffSpaceAssignmentController@assignMySpace`, `@assignSpaceByAdmin`, `@releaseMySpace`, `@releaseSpaceByAdmin` | Invalidates `staff-space-assignment` occupancy query |
+
+### Channel Authorization (`routes/channels.php`)
+- `user.{id}` — Authenticated user ID must match the channel ID
+- `facility.{id}` — User must have an active or on-leave `facility_staff_roles` assignment at that facility
+
+### Files Created
+- [x] Event: `app/Events/MessageStatsUpdated.php` — `ShouldBroadcast`, private channel
+- [x] Event: `app/Events/StaffPresenceChanged.php` — `ShouldBroadcast`, private channel  
+- [x] Event: `app/Events/SpaceOccupancyChanged.php` — `ShouldBroadcast`, private channel
+
+### Files Modified
+- [x] `routes/channels.php` — Added `user.{id}` and `facility.{id}` channel auth
+- [x] `app/Http/Controllers/Api/MessageController.php` — Fires `MessageStatsUpdated` after mutations
+- [x] `app/Services/StaffPresence/StaffPresenceService.php` — Fires `StaffPresenceChanged` after presence change
+- [x] `app/Http/Controllers/Api/StaffSpaceAssignmentController.php` — Fires `SpaceOccupancyChanged` after assign/release
+- [x] `config/reverb.php` — Published (pre-existing, now active)
+
+### Frontend Changes
+- [x] Installed `laravel-echo` + `pusher-js`
+- [x] Created `echo.ts` — Echo instance configured for Reverb
+- [x] Created `useReverbListener.ts` — Subscribes to `user.{id}` + `facility.{id}` channels, invalidates React Query on events
+- [x] Mounted in `App.tsx` — Runs once app-wide
+- [x] Removed `refetchInterval: 20_000` from `useGetMessageStats` — Now event-driven
+- [x] Added `VITE_REVERB_*` env vars to `.env.development`
+
+### Requirements
+- Laravel Reverb server must be running: `php artisan reverb:start`
+- Frontend env vars must match backend Reverb credentials
+- Auth token must be present in localStorage for Echo private channel auth
+
+---

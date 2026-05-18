@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\MessageStatsUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\Message;
 use App\Models\MessageAttachment;
@@ -164,6 +165,7 @@ class MessageController extends Controller
         // Route to draft or send based on the `save_draft` flag
         if ($request->boolean('save_draft', false)) {
             $message = $this->service->saveDraft($user, $data);
+            MessageStatsUpdated::dispatch($user);
 
             return response()->json([
                 'message' => $message,
@@ -179,6 +181,8 @@ class MessageController extends Controller
         ]);
 
         $message = $this->service->sendMessage($user, $data);
+
+        MessageStatsUpdated::dispatch($user);
 
         $status = $message->scheduled_send_at ? 'scheduled' : 'sent';
 
@@ -249,6 +253,7 @@ class MessageController extends Controller
     public function destroy(int $id): JsonResponse
     {
         $this->service->trashMessage(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['status' => 'trashed']);
     }
@@ -261,6 +266,7 @@ class MessageController extends Controller
     public function send(int $id): JsonResponse
     {
         $message = $this->service->sendDraft(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['message' => $message, 'status' => 'sent']);
     }
@@ -273,6 +279,7 @@ class MessageController extends Controller
     public function restore(int $id): JsonResponse
     {
         $this->service->restoreFromTrash(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['status' => 'restored']);
     }
@@ -286,6 +293,7 @@ class MessageController extends Controller
     public function permanentDelete(int $id): JsonResponse
     {
         $this->service->permanentDelete(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['status' => 'permanently_deleted']);
     }
@@ -295,6 +303,7 @@ class MessageController extends Controller
     public function markRead(int $id): JsonResponse
     {
         $this->service->markRead(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['status' => 'read']);
     }
@@ -304,6 +313,7 @@ class MessageController extends Controller
     public function markUnread(int $id): JsonResponse
     {
         $this->service->markUnread(Auth::user(), $id);
+        MessageStatsUpdated::dispatch(Auth::user());
 
         return response()->json(['status' => 'unread']);
     }

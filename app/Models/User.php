@@ -262,6 +262,14 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
         return $this->hasOne(Staff::class, 'user_id');
     }
 
+    /**
+     * Check if the user has an associated staff profile.
+     */
+    public function isStaff(): bool
+    {
+        return $this->staff()->exists();
+    }
+
       public function notifications()
     {
         return $this->hasMany(Notification::class);

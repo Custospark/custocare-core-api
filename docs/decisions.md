@@ -35,3 +35,20 @@
 **Trade-offs:**
 - `php -l` only catches parse errors, not logic bugs — but that's the right scope for a pre-commit fast guard
 - Full test suite stays in Vera's domain; pre-commit is purely a syntax gate
+
+---
+
+## 2026-05-20: Added isStaff() Method to User Model
+
+**Context:** `GET /api/v1/patients/{patient}/medical-history` returned a 500 error with `Call to undefined method App\Models\User::isStaff()`. The error occurred in `PatientPolicy::view()` (line 31) and `UpdatePatientRequest` (line 93), which both called `$user->isStaff()`.
+
+The `staff()` relationship already existed on the User model, and the rest of the codebase already used `$user->staff` / `$user->staff()->exists()` directly — but the two policy/request files used a convenience method that hadn't been defined.
+
+**Decision:**
+- Added `isStaff(): bool` method to `App\Models\User` that delegates to `$this->staff()->exists()`
+- Placed it immediately after the `staff()` relationship for logical grouping
+- Follows the same pattern as the existing `isIdentityVerified()` and `isAccountLocked()` methods
+
+**Trade-offs:**
+- `staff()->exists()` is slightly more efficient than `$this->staff !== null` (issues COUNT query vs loading the model) when the relation isn't eager-loaded
+- No existing tests broke because the method simply didn't exist before — all three call sites would have failed identically

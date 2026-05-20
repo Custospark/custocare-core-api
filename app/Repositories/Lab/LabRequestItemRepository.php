@@ -427,13 +427,13 @@ public function updateStatus(LabRequestItem $item, string $status): bool
     {
         return $this->model->with([
             'labRequest',
-           'labTest',
+            'labTest.template',
             'collectedBy',
             'startedBy',
             'completedBy',
             'verifiedBy',
             'cancelledBy',
-            'createdBy',  // ← Make sure this is included
+            'createdBy',
             'results'
         ])->find($id);
     }

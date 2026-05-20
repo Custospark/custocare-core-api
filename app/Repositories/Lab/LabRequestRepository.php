@@ -54,6 +54,7 @@ class LabRequestRepository implements LabRequestRepositoryInterface
                 $query->where('status', '!=', 'cancelled')
                     ->with([
                         'labTest',
+                        'labTest.template',
                         'results' => function ($q) {
                             $q->orderBy('recorded_at', 'desc');
                         },
@@ -315,7 +316,7 @@ class LabRequestRepository implements LabRequestRepositoryInterface
         return $this->model->with([
             'items' => function ($query) {
                 $query->where('status', '!=', 'cancelled')
-                    ->with(['labTest', 'results']);
+                    ->with(['labTest', 'labTest.template', 'results']);
             }
         ])->find($id);
     }
@@ -328,7 +329,7 @@ class LabRequestRepository implements LabRequestRepositoryInterface
         return $this->model->with([
             'items' => function ($query) {
                 $query->where('status', '!=', 'cancelled')
-                    ->with(['labTest', 'results.templateField']);
+                    ->with(['labTest', 'labTest.template', 'results.templateField']);
             },
             'patient',
             'visit',

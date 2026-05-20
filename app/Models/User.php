@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
@@ -263,11 +264,28 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
     }
 
     /**
-     * Check if the user has an associated staff profile.
+     * Check if the user has an associated staff profile with active
+     * or on-leave facility assignment.
      */
     public function isStaff(): bool
     {
-        return $this->staff()->exists();
+        return $this->staff()
+            ->whereHas('facilityStaffRoles', function ($q) {
+                $q->whereIn('assignment_status', [
+                    FacilityStaffRole::STATUS_ACTIVE,
+                    FacilityStaffRole::STATUS_ON_LEAVE,
+                ]);
+            })
+            ->exists();
+    }
+
+    /**
+     * Check if the user has a specific permission.
+     * Delegates to Spatie's hasPermissionTo().
+     */
+    public function hasPermission(string $permission): bool
+    {
+        return $this->hasPermissionTo($permission);
     }
 
       public function notifications()

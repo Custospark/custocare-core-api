@@ -52,3 +52,17 @@ The `staff()` relationship already existed on the User model, and the rest of th
 **Trade-offs:**
 - `staff()->exists()` is slightly more efficient than `$this->staff !== null` (issues COUNT query vs loading the model) when the relation isn't eager-loaded
 - No existing tests broke because the method simply didn't exist before — all three call sites would have failed identically
+
+---
+
+## 2026-05-20: isStaff() Now Checks Active Facility Assignment; Added hasPermission()
+
+**Context:** The initial `isStaff()` implementation only checked `staff()->exists()`, which returned true even for staff without any active facility assignment (e.g., terminated or suspended). Additionally, `PatientPolicy` and ~220 other policy methods called `$user->hasPermission('view_patients')` which didn't exist — Spatie's trait provides `hasPermissionTo()` not `hasPermission()`.
+
+**Decisions:**
+1. **`isStaff()` now requires an active or on-leave `FacilityStaffRole` assignment.** The method chains through `staff()->whereHas('facilityStaffRoles', ...)` checking `assignment_status IN ('active', 'on_leave')`. A staff record alone is no longer sufficient — there must be at least one valid facility assignment.
+2. **Added `hasPermission(string $permission): bool`** to User model that delegates to Spatie's `hasPermissionTo()`. This resolves the 500 on medical history without touching any of the ~30 policy files that use the `hasPermission()` naming convention.
+
+**Trade-offs:**
+- `whereHas('facilityStaffRoles')` adds a JOIN/EXISTS query to every `isStaff()` call, but staff context is typically resolved once per request via middleware
+- `hasPermission()` → `hasPermissionTo()` mapping is thin but keeps the snake_case permission naming convention consistent across all existing policies

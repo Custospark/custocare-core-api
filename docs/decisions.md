@@ -65,4 +65,21 @@ The `staff()` relationship already existed on the User model, and the rest of th
 
 **Trade-offs:**
 - `whereHas('facilityStaffRoles')` adds a JOIN/EXISTS query to every `isStaff()` call, but staff context is typically resolved once per request via middleware
-- `hasPermission()` → `hasPermissionTo()` mapping is thin but keeps the snake_case permission naming convention consistent across all existing policies
+- `hasPermission()` delegates to `isStaff()` instead of Spatie — actively assigned staff are granted permissions; role-level refinement is handled by `hasRole()` via FacilityStaffRole.role_code
+
+---
+
+## 2026-05-20: Removed Spatie Traits; hasPermission()/hasRole() Use FacilityStaffRole
+
+**Context:** The previous `hasPermission()` delegated to `hasPermissionTo()` from Spatie's `HasPermissions` trait. Oscar directed to remove Spatie entirely and rely on facility assignment for authorization.
+
+**Decisions:**
+1. **Removed `HasRoles` and `HasPermissions` traits** from User model, along with Spatie imports.
+2. **`hasPermission()` now returns `$this->isStaff()`** — actively assigned staff are granted permissions. No Spatie involvement.
+3. **`hasRole(string|array $roles)`** queries `FacilityStaffRole.role_code` with `assignment_status IN ('active', 'on_leave')`. Replaces Spatie's role check.
+4. **`hasAnyRole(array $roles)`** delegates to `hasRole()`. Used by `EnsureAdminAccess` middleware and AuditLogPolicy.
+5. **`isStaff()`** unchanged — checks staff record + at least one active/on-leave facility assignment.
+
+**Trade-offs:**
+- `hasPermission()` is now coarse (true for all active staff). Role-level refinement is handled by `hasRole()` which was already the paired check in most policies.
+- `assignRole()` / `removeRole()` in UserRepository will need separate refactoring (admin-only feature, not in medical history path).

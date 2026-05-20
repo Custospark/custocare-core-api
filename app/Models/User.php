@@ -8,19 +8,16 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\HasApiTokens;
-use Spatie\Permission\Traits\HasPermissions;
-use Spatie\Permission\Traits\HasRoles;
 
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, SoftDeletes,HasApiTokens,HasRoles,HasPermissions;
+    use HasFactory, Notifiable, SoftDeletes,HasApiTokens;
 
     /**
      * The attributes that are mass assignable.
@@ -281,11 +278,36 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
 
     /**
      * Check if the user has a specific permission.
-     * Delegates to Spatie's hasPermissionTo().
+     * Staff with active facility assignment are granted permissions.
      */
     public function hasPermission(string $permission): bool
     {
-        return $this->hasPermissionTo($permission);
+        return $this->isStaff();
+    }
+
+    /**
+     * Check if the user has one or more roles via active facility assignment.
+     */
+    public function hasRole(string|array $roles): bool
+    {
+        $roles = (array) $roles;
+
+        return $this->staff()
+            ->whereHas('facilityStaffRoles', function ($q) use ($roles) {
+                $q->whereIn('assignment_status', [
+                    FacilityStaffRole::STATUS_ACTIVE,
+                    FacilityStaffRole::STATUS_ON_LEAVE,
+                ])->whereIn('role_code', $roles);
+            })
+            ->exists();
+    }
+
+    /**
+     * Check if the user has any of the given roles.
+     */
+    public function hasAnyRole(array $roles): bool
+    {
+        return $this->hasRole($roles);
     }
 
       public function notifications()

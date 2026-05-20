@@ -253,16 +253,24 @@ class PrescriptionService
             if (!empty($templateMedications)) {
                 // Delete existing items
                 $this->prescriptionItemRepository->deleteByPrescription($prescriptionId);
-                
-                // Create new items from template
+
+                // Create new items from template with defaults for safety
                 $items = [];
                 foreach ($templateMedications as $med) {
                     $med['prescription_id'] = $prescriptionId;
                     $med['created_by'] = $userId;
                     $med['updated_by'] = $userId;
+                    // Provide defaults for fields that may be missing from older templates
+                    $med['dosage_form'] ??= 'Tablet';
+                    $med['dosage_unit'] ??= 'tablet(s)';
+                    $med['duration_unit'] ??= 'Day(s)';
+                    $med['route'] ??= 'By mouth (Oral)';
+                    $med['administration_instructions'] ??= 'No special instructions';
+                    $med['refills'] ??= '0 refills - One time only';
+                    $med['substitution'] ??= 'Generic substitution allowed';
                     $items[] = $med;
                 }
-                
+
                 $this->prescriptionItemRepository->createMany($prescriptionId, $items);
             }
 

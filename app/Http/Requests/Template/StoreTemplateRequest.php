@@ -51,9 +51,12 @@ class StoreTemplateRequest extends FormRequest
             'patient_instructions' => ['nullable', 'string'],
             'default_medications' => ['nullable', 'array'],
             'default_medications.*.medication_name' => ['required_with:default_medications', 'string'],
+            'default_medications.*.dosage_form' => ['required_with:default_medications', 'string'],
             'default_medications.*.dosage_quantity' => ['required_with:default_medications', 'numeric', 'min:0.01'],
+            'default_medications.*.dosage_unit' => ['required_with:default_medications', 'string'],
             'default_medications.*.frequency' => ['required_with:default_medications', 'string'],
             'default_medications.*.duration_value' => ['required_with:default_medications', 'integer', 'min:1'],
+            'default_medications.*.duration_unit' => ['required_with:default_medications', 'string'],
             'visibility' => ['required', Rule::in([
                 'System Wide (All Facilities)',
                 'This Facility Only',

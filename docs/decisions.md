@@ -83,3 +83,18 @@ The `staff()` relationship already existed on the User model, and the rest of th
 **Trade-offs:**
 - `hasPermission()` is now coarse (true for all active staff). Role-level refinement is handled by `hasRole()` which was already the paired check in most policies.
 - `assignRole()` / `removeRole()` in UserRepository will need separate refactoring (admin-only feature, not in medical history path).
+
+---
+
+## 2026-05-20: Prescription Template — Validate dosage_form/dosage_unit/duration_unit on Store; Defaults on applyTemplate
+
+**Context:** Creating a prescription from a template failed because template items stored without `dosage_form`, `dosage_unit`, `duration_unit` were passed directly to `prescriptionItemRepository->createMany()`. The `StoreTemplateRequest` didn't validate these fields, and `applyTemplate()` didn't provide defaults.
+
+**Decisions:**
+1. Added `dosage_form`, `dosage_unit`, `duration_unit` to `StoreTemplateRequest` validation rules (all `required_with:default_medications`).
+2. Added `??=` defaults in `PrescriptionService::applyTemplate()` loop for all required-but-occasionally-missing item fields: `dosage_form`, `dosage_unit`, `duration_unit`, `route`, `administration_instructions`, `refills`, `substitution`. This covers existing templates in the database.
+
+**Files changed:** `StoreTemplateRequest.php`, `PrescriptionService.php`
+
+**Trade-offs:**
+- The `??=` defaults match the DB column defaults (`'Tablet'`, `'tablet(s)'`, `'Day(s)'`, etc.) — no behavioral change for properly populated templates.

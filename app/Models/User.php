@@ -13,11 +13,13 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\HasApiTokens;
+use Spatie\Permission\Traits\HasRoles;
+
 
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, SoftDeletes,HasApiTokens;
+    use HasFactory, Notifiable, SoftDeletes,HasApiTokens,HasRoles;
 
     /**
      * The attributes that are mass assignable.

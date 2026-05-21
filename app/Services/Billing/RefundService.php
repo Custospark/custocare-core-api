@@ -185,7 +185,8 @@ class RefundService
                     $restoredInventoryDetails = $this->restoreInventoryForRefundedLineItems(
                         $restorePlans,
                         $staffId,
-                        $adjustment->reference_number
+                        $adjustment->reference_number,
+                        'void_restoration'
                     );
 
                     $inventoryRestored = !empty($restoredInventoryDetails);
@@ -610,9 +611,17 @@ class RefundService
         $refundDiscountTotal = round((float) collect($plans)->sum('refund_discount'), 2);
         $refundNetTotal = round((float) collect($plans)->sum('refund_net'), 2);
         
-        // Cash refund amount is simply the sum of net refunds from each line item
-        // This represents the ACTUAL amount being refunded, not a calculated difference
         $cashRefundAmount = $refundNetTotal;
+
+        if ($originalTotalPaid > 0 && $cashRefundAmount > $originalTotalPaid) {
+            $cashRefundAmount = $originalTotalPaid;
+            Log::warning('Refund amount capped to original total paid', [
+                'billing_cycle_id' => $billingCycle->id ?? null,
+                'original_total_paid' => $originalTotalPaid,
+                'requested_refund' => $refundNetTotal,
+                'capped_to' => $cashRefundAmount,
+            ]);
+        }
 
         if ($refundSubtotal <= 0 || $cashRefundAmount <= 0) {
             return [
@@ -739,7 +748,7 @@ class RefundService
             'adjustment_reason' => $refundData['reason'],
             'reason_notes' => $refundData['reason_notes'] ?? null,
             'original_amount' => $originalGrandTotal,
-            'adjustment_amount' => $cashRefundAmount,  // ✅ ACTUAL refund amount (sum of refund_net)
+            'adjustment_amount' => round($patientRefundAmount + $insuranceRefundAmount, 2),
             'remaining_amount' => $finalGrandTotal,
             'patient_refund_amount' => $patientRefundAmount,
             'insurance_refund_amount' => $insuranceRefundAmount,
@@ -856,11 +865,12 @@ class RefundService
         $restoredInventoryDetails = [];
 
         if (($refundData['restore_inventory'] ?? false) === true) {
-            $restoredInventoryDetails = $this->restoreInventoryForRefundedLineItems(
-                $plans,
-                $staffId,
-                $adjustment->reference_number
-            );
+                $restoredInventoryDetails = $this->restoreInventoryForRefundedLineItems(
+                    $plans,
+                    $staffId,
+                    $adjustment->reference_number,
+                    'refund_restoration'
+                );
 
             $inventoryRestored = !empty($restoredInventoryDetails);
             $adjustment->inventory_restored = $restoredInventoryDetails;
@@ -1844,7 +1854,8 @@ private function splitRefundAcrossPayers(
     private function restoreInventoryForRefundedLineItems(
         array $plans,
         int $staffId,
-        string $referenceNumber
+        string $referenceNumber,
+        string $transactionCause = 'reconciliation'
     ): array {
         $restored = [];
         $facilityId = (int) (request()->header('X-Facility-Id') ?? request()->header('X-Active-Facility-Id') ?? 0);
@@ -1906,6 +1917,7 @@ private function splitRefundAcrossPayers(
                     'unit_of_measure' => $inventoryItem->unit_of_measure,
                     'performed_by_staff_id' => $staffId,
                     'transaction_notes' => "Stock restored via refund (ref: {$referenceNumber})",
+                    'transaction_cause' => $transactionCause,
                 ]);
 
                 $restored[] = [

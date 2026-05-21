@@ -471,9 +471,12 @@ class InventoryLedgerService implements InventoryLedgerServiceInterface
         
         $transactionData = array_merge($data, [
             'transaction_type' => $adjustmentType,
-            'transaction_cause' => 'reconciliation',
             'quantity_change' => $quantity,
         ]);
+
+        if (!isset($transactionData['transaction_cause'])) {
+            $transactionData['transaction_cause'] = 'reconciliation';
+        }
         
         return $this->createLedgerEntry($transactionData);
     }

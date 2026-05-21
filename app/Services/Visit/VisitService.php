@@ -1234,4 +1234,46 @@ public function createVisit(array $data, int $staffId): array
         json_decode($string);
         return json_last_error() === JSON_ERROR_NONE;
     }
+
+    /**
+     * Bulk reassign all active/in-progress visits from one staff to another within a facility.
+     *
+     * @return array{success: bool, reassigned_count: int, message: string}
+     */
+    public function bulkReassignStaff(int $fromStaffId, int $toStaffId, int $facilityId): array
+    {
+        try {
+            $count = Visit::query()
+                ->where('facility_id', $facilityId)
+                ->where('assigned_staff_id', $fromStaffId)
+                ->whereIn('status', ['active', 'in_progress'])
+                ->whereNull('cancelled_at')
+                ->whereNull('deleted_at')
+                ->update([
+                    'assigned_staff_id' => $toStaffId,
+                    'assigned_at' => now(),
+                ]);
+
+            return [
+                'success' => true,
+                'reassigned_count' => $count,
+                'message' => $count > 0
+                    ? "{$count} visit(s) reassigned successfully."
+                    : 'No active visits found for this staff member.',
+            ];
+        } catch (\Exception $e) {
+            Log::error('Failed to bulk reassign staff visits', [
+                'from_staff_id' => $fromStaffId,
+                'to_staff_id' => $toStaffId,
+                'facility_id' => $facilityId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'reassigned_count' => 0,
+                'message' => 'Failed to reassign visits. Please try again.',
+            ];
+        }
+    }
 }

@@ -182,4 +182,14 @@ interface VisitServiceInterface
      * @return array
      */
     public function registerVisit(string $uuid, array $registrationData, int $userId): array;
+
+    /**
+     * Bulk reassign all active/in-progress visits from one staff to another within a facility.
+     *
+     * @param int $fromStaffId
+     * @param int $toStaffId
+     * @param int $facilityId
+     * @return array{success: bool, reassigned_count: int, message: string}
+     */
+    public function bulkReassignStaff(int $fromStaffId, int $toStaffId, int $facilityId): array;
 }

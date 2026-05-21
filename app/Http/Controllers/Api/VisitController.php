@@ -844,6 +844,80 @@ class VisitController extends Controller
         }
     }
     /**
+     * Bulk reassign all active/in-progress visits from the current staff to another.
+     * Used by shift handover to transfer patient caseload.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function bulkReassignStaff(Request $request): JsonResponse
+    {
+        try {
+            $facilityId = (int) $request->header('X-Facility-Id');
+            if (!$facilityId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing X-Facility-Id header.',
+                ], 422);
+            }
+
+            $validated = $request->validate([
+                'to_staff_id' => 'required|integer|exists:staff,id',
+            ]);
+
+            $toStaffId = (int) $validated['to_staff_id'];
+            $userId = (int) Auth::id();
+
+            $fromStaffId = Staff::query()->where('user_id', $userId)->value('id');
+            if (!$fromStaffId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff profile not found for this user.',
+                ], 403);
+            }
+
+            if ($fromStaffId === $toStaffId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot reassign visits to yourself.',
+                ], 422);
+            }
+
+            $toStaffHasRole = \App\Models\FacilityStaffRole::query()
+                ->where('facility_id', $facilityId)
+                ->where('staff_id', $toStaffId)
+                ->where('assignment_status', 'active')
+                ->exists();
+
+            if (!$toStaffHasRole) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The receiving staff does not have an active role at this facility.',
+                ], 422);
+            }
+
+            $result = $this->visitService->bulkReassignStaff($fromStaffId, $toStaffId, $facilityId);
+
+            return response()->json($result, $result['success'] ? 200 : 500);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::error('Failed to bulk reassign staff', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred.',
+            ], 500);
+        }
+    }
+
+    /**
  * Get available staff for patient forwarding within the facility.
  * 
  * This method returns staff members who are:

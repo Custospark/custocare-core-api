@@ -264,11 +264,16 @@ public function createVisit(array $data, int $staffId): array
             ];
         }
 
-        // Check for existing active or in-progress visit for this patient at this facility
+        // Check for existing active or in-progress visit for this patient at this facility.
+        // Exclude fully-paid visits — billing is settled so a new visit should be created.
         $existingVisit = Visit::where('patient_id', $patient->id)
             ->where('facility_id', $data['facility_id'])
             ->whereIn('status', ['active', 'in_progress'])
             ->whereNull('deleted_at')
+            ->where(function ($q) {
+                $q->whereNull('payment_status')
+                  ->orWhere('payment_status', '!=', 'paid_in_full');
+            })
             ->orderBy('created_at', 'desc')
             ->first();
 

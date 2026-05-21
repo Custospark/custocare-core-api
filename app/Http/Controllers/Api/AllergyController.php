@@ -83,6 +83,32 @@ class AllergyController extends Controller
     }
 
     /**
+     * Get allergies scoped to a specific visit.
+     */
+    public function visitAllergies(int $visitId): JsonResponse
+    {
+        try {
+            $allergies = $this->allergyService->getAllergiesForVisit($visitId);
+
+            return response()->json([
+                'success' => true,
+                'data' => new AllergyCollection($allergies),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to get visit allergies', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve allergies.',
+                'data' => [],
+            ], 500);
+        }
+    }
+
+    /**
      * Store a new allergy for a patient.
      */
     public function store(StoreAllergyRequest $request, Patient $patient): JsonResponse

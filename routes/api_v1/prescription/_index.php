@@ -21,6 +21,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [PrescriptionController::class, 'index']);
         Route::get('/paginate', [PrescriptionController::class, 'paginate']);
         Route::post('/', [PrescriptionController::class, 'store']);
+        Route::get('/visit/{visitId}', [PrescriptionController::class, 'visitPrescriptions']);
         Route::get('/patient/{patientId}', [PrescriptionController::class, 'patientPrescriptions']);
         Route::post('/{id}/apply-template', [PrescriptionController::class, 'applyTemplate']);
         Route::post('/{id}/cancel', [PrescriptionController::class, 'cancel']);

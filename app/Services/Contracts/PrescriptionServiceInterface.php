@@ -35,6 +35,8 @@ interface PrescriptionServiceInterface
      */
     public function getPatientPrescriptions(int $patientId, array $filters = [], int $perPage = 20): LengthAwarePaginator;
 
+    public function getVisitPrescriptions(int $visitId): Collection;
+
     /**
      * Create new prescription with validation
      *

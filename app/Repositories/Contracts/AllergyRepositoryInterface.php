@@ -11,6 +11,7 @@ interface AllergyRepositoryInterface
 {
     public function find(int $id): ?Allergy;
     public function findAllForPatient(int $patientId): Collection;
+    public function findAllForVisit(int $visitId): Collection;
     public function getActiveForPatient(int $patientId): Collection;
     public function getAllPaginated(int $perPage = 15): LengthAwarePaginator;
     public function create(array $data): Allergy;

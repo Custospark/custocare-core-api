@@ -25,6 +25,14 @@ class AllergyRepository implements AllergyRepositoryInterface
             ->get();
     }
 
+    public function findAllForVisit(int $visitId): Collection
+    {
+        return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])
+            ->where('visit_id', $visitId)
+            ->orderBy('created_at', 'desc')
+            ->get();
+    }
+
     public function getActiveForPatient(int $patientId): Collection
     {
         return Allergy::with(['patient.user', 'recordedBy', 'visit.facility'])

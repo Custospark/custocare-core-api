@@ -11,6 +11,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 interface AllergyServiceInterface
 {
     public function getAllergiesForPatient(Patient $patient): Collection;
+    public function getAllergiesForVisit(int $visitId): Collection;
     public function getActiveAllergiesForPatient(Patient $patient): Collection;
     public function getAllPaginated(int $perPage = 15): LengthAwarePaginator;
     public function createAllergy(Patient $patient, array $data): Allergy;

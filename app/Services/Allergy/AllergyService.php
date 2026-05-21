@@ -37,6 +37,19 @@ class AllergyService implements AllergyServiceInterface
         }
     }
 
+    public function getAllergiesForVisit(int $visitId): Collection
+    {
+        try {
+            return $this->allergyRepository->findAllForVisit($visitId);
+        } catch (\Exception $e) {
+            Log::error('Failed to get allergies for visit', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+            ]);
+            return new Collection();
+        }
+    }
+
     public function getActiveAllergiesForPatient(Patient $patient): Collection
     {
         try {

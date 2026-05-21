@@ -88,6 +88,24 @@ class PrescriptionController extends Controller
     }
 
     /**
+     * Get prescriptions scoped to a specific visit.
+     */
+    public function visitPrescriptions(int $visitId): JsonResponse
+    {
+        $prescriptions = $this->prescriptionService->getVisitPrescriptions($visitId);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Visit prescriptions retrieved successfully',
+            'data' => PrescriptionResource::collection($prescriptions),
+            'meta' => [
+                'visit_id' => $visitId,
+                'total' => $prescriptions->count(),
+            ],
+        ]);
+    }
+
+    /**
      * Get patient's prescriptions
      */
     public function patientPrescriptions(int $patientId, Request $request): JsonResponse

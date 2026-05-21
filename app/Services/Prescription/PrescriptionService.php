@@ -48,6 +48,11 @@ class PrescriptionService
         return $this->prescriptionRepository->getByPatient($patientId, $statuses);
     }
 
+    public function getVisitPrescriptions(int $visitId): Collection
+    {
+        return $this->prescriptionRepository->getByVisit($visitId);
+    }
+
     public function getActivePrescriptionsForBilling(int $patientId): Collection
     {
         return $this->prescriptionRepository->getReadyForBilling($patientId);

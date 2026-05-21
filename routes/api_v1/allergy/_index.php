@@ -15,3 +15,6 @@ Route::prefix('patients/{patient}')->middleware(['auth:sanctum'])->group(functio
     Route::post('allergies/{allergy}/resolve', [AllergyController::class, 'resolve']);
     Route::post('allergies/{allergy}/restore', [AllergyController::class, 'restore']);
 });
+
+// Visit-scoped allergy route
+Route::get('/allergies/visit/{visitId}', [AllergyController::class, 'visitAllergies'])->middleware(['auth:sanctum']);

@@ -39,7 +39,7 @@ class NursingMedicationService
                 'patient:id,user_id',
                 'patient.user:id,display_name,first_name,last_name',
                 'prescription:id,prescription_number,patient_id',
-                'prescriptionItem:id,prescription_id,medication_name,strength,dosage_quantity,dosage_unit,route',
+                'prescriptionItem:id,prescription_id,medication_name,strength,dosage_form,dosage_quantity,dosage_unit,frequency,duration_value,duration_unit,route,instructions',
                 'ward:id,name,code',
             ]);
 
@@ -155,7 +155,7 @@ class NursingMedicationService
                 'patient:id,user_id',
                 'patient.user:id,display_name,first_name,last_name',
                 'prescription:id,prescription_number',
-                'prescriptionItem:id,prescription_id,medication_name,strength',
+                'prescriptionItem:id,prescription_id,medication_name,strength,dosage_form,dosage_quantity,dosage_unit,frequency,duration_value,duration_unit,route,instructions',
                 'ward:id,name,code',
             ]);
 

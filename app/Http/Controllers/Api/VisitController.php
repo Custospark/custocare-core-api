@@ -886,7 +886,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             'department_id' => 'nullable|integer',
             'presence_status' => 'nullable|in:on_duty,busy',
             'search' => 'nullable|string|max:100',
-            'limit' => 'nullable|integer|min:1|max:100',
+            'limit' => 'nullable|integer|min:1|max:150',
             'exclude_current_staff' => 'nullable|boolean',
         ]);
 
@@ -941,7 +941,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.type as current_space_type',
                 'fs.floor as current_space_floor',
 
-                DB::raw('COALESCE(vcounts.current_patient_count, 0) as current_patient_count'),
+                DB::raw('ANY_VALUE(vcounts.current_patient_count) as current_patient_count'),
             ])
             ->join('users', 'staff.user_id', '=', 'users.id')
             ->join('facility_staff_roles as fsr', function ($join) use ($facilityId) {

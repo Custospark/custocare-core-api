@@ -73,7 +73,7 @@ class VisitRepository implements VisitRepositoryInterface
         try {
             $query = $this->model->with([
                 'facility:id,name,code',
-                'patient:id,first_name,last_name,medical_record_number',
+                'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                 'currentDepartment:id,name,code',
             ]);
 
@@ -124,7 +124,7 @@ class VisitRepository implements VisitRepositoryInterface
         try {
             $query = $this->model->where('facility_id', $facilityId)
                 ->with([
-                    'patient:id,first_name,last_name,medical_record_number',
+                    'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                     'currentDepartment:id,name,code',
                 ]);
 
@@ -334,7 +334,7 @@ class VisitRepository implements VisitRepositoryInterface
             }
 
             return $query->with([
-                'patient:id,first_name,last_name',
+                'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                 'currentDepartment:id,name',
             ])->get();
         } catch (\Exception $e) {
@@ -356,7 +356,7 @@ class VisitRepository implements VisitRepositoryInterface
             return $this->model->where('current_department_id', $departmentId)
                 ->where('status', 'active')
                 ->with([
-                    'patient:id,first_name,last_name,date_of_birth',
+                    'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                     'facility:id,name',
                 ])
                 ->orderBy('acuity_score', 'asc')
@@ -380,7 +380,7 @@ class VisitRepository implements VisitRepositoryInterface
             $query = $this->model->where('status', $status)
                 ->with([
                     'facility:id,name',
-                    'patient:id,first_name,last_name',
+                    'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                 ]);
 
             // Apply additional filters
@@ -421,7 +421,7 @@ class VisitRepository implements VisitRepositoryInterface
             $query = $this->model->whereBetween('arrived_at', [$startDate, $endDate])
                 ->with([
                     'facility:id,name',
-                    'patient:id,first_name,last_name',
+                    'patient:id,user_id,patient_uuid,medical_record_number,date_of_birth,biological_sex,status',
                     'currentDepartment:id,name',
                 ]);
 

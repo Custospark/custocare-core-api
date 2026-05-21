@@ -86,11 +86,7 @@ class NursingMedicationService
 
         $visitsQuery = Visit::query()
             ->where('facility_id', $facilityId)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->whereHas('prescriptions', function ($q) use ($facilityId) {
-                $q->where('facility_id', $facilityId)
-                  ->where('status', 'active');
-            });
+            ->whereIn('status', ['active', 'in_progress']);
 
         if ($visitId) {
             $visitsQuery->whereKey((int) $visitId);
@@ -105,7 +101,7 @@ class NursingMedicationService
                 $prescriptions = Prescription::query()
                     ->where('patient_id', $visit->patient_id)
                     ->where('facility_id', $facilityId)
-                    ->where('status', 'active')
+                    ->whereIn('status', ['Active - Ready for Dispensing', 'Partially Dispensed'])
                     ->pluck('id');
 
                 if ($prescriptions->isEmpty()) continue;
@@ -132,7 +128,6 @@ class NursingMedicationService
                         'prescription_item_id' => $item->id,
                         'scheduled_for' => now(),
                         'status' => 'pending',
-                        'ward_id' => $visit->ward_id ?? null,
                     ]);
                 }
             }

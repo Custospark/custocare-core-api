@@ -18,12 +18,19 @@ class NursingMedicationService
 {
     /**
      * Medication schedule board — doses in a datetime window.
+     * When filtering by status=pending, auto-generates dose records
+     * from active prescription items that don't have doses yet.
      *
      * @param  array<string, mixed>  $filters
      */
     public function paginateDoses(int $facilityId, array $filters, int $perPage = 25): LengthAwarePaginator
     {
         $perPage = min(100, max(1, $perPage));
+
+        $status = $filters['status'] ?? null;
+        if ($status === 'pending') {
+            $this->ensurePendingDosesExist($facilityId, $filters);
+        }
 
         $q = NursingMedicationDose::query()
             ->where('facility_id', $facilityId)
@@ -69,6 +76,70 @@ class NursingMedicationService
     }
 
     /**
+     * Auto-generate pending dose records for prescription items that don't have one yet.
+     * Only for active/in-progress visits with active prescriptions at this facility.
+     */
+    protected function ensurePendingDosesExist(int $facilityId, array $filters): void
+    {
+        $visitId = $filters['visit_id'] ?? null;
+        $patientId = $filters['patient_id'] ?? null;
+
+        $visitsQuery = Visit::query()
+            ->where('facility_id', $facilityId)
+            ->whereIn('status', ['active', 'in_progress'])
+            ->whereHas('prescriptions', function ($q) use ($facilityId) {
+                $q->where('facility_id', $facilityId)
+                  ->where('status', 'active');
+            });
+
+        if ($visitId) {
+            $visitsQuery->whereKey((int) $visitId);
+        }
+
+        if ($patientId) {
+            $visitsQuery->where('patient_id', (int) $patientId);
+        }
+
+        $visitsQuery->chunk(50, function ($visits) use ($facilityId) {
+            foreach ($visits as $visit) {
+                $prescriptions = Prescription::query()
+                    ->where('patient_id', $visit->patient_id)
+                    ->where('facility_id', $facilityId)
+                    ->where('status', 'active')
+                    ->pluck('id');
+
+                if ($prescriptions->isEmpty()) continue;
+
+                $items = PrescriptionItem::query()
+                    ->whereIn('prescription_id', $prescriptions)
+                    ->get();
+
+                foreach ($items as $item) {
+                    $exists = NursingMedicationDose::query()
+                        ->where('facility_id', $facilityId)
+                        ->where('visit_id', $visit->id)
+                        ->where('prescription_item_id', $item->id)
+                        ->where('status', 'pending')
+                        ->exists();
+
+                    if ($exists) continue;
+
+                    NursingMedicationDose::query()->create([
+                        'facility_id' => $facilityId,
+                        'visit_id' => $visit->id,
+                        'patient_id' => $visit->patient_id,
+                        'prescription_id' => $item->prescription_id,
+                        'prescription_item_id' => $item->id,
+                        'scheduled_for' => now(),
+                        'status' => 'pending',
+                        'ward_id' => $visit->ward_id ?? null,
+                    ]);
+                }
+            }
+        });
+    }
+
+    /**
      * Doses that are still pending and past their scheduled time (missed / overdue for action).
      *
      * @param  array<string, mixed>  $filters
@@ -77,6 +148,8 @@ class NursingMedicationService
     {
         $perPage = min(100, max(1, $perPage));
         $asOf = $filters['as_of'] ?? now()->toDateTimeString();
+
+        $this->ensurePendingDosesExist($facilityId, $filters);
 
         $q = NursingMedicationDose::query()
             ->where('facility_id', $facilityId)

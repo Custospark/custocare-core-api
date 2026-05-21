@@ -86,6 +86,47 @@ The `staff()` relationship already existed on the User model, and the rest of th
 
 ---
 
+## 2026-05-21: Visit Lifecycle Changes — Billing No Longer Completes Visits, Fully-Paid Excluded from Reuse
+
+**Context:** Three bugs in the visit lifecycle and clinical data scoping chain:
+
+1. **Billing auto-completed visits** — Full payment set `status = 'completed'` and `current_phase = 'discharged'`, preventing further clinical work on the same visit (medication, lab, etc.).
+2. **Fully-paid visits reused** — When creating a new visit, the system reused existing `active` visits without checking `payment_status`, so a fully-paid visit could be silently reused.
+3. **No visit-scoped prescription endpoint** — Frontend was fetching all patient prescriptions and filtering in-memory, which was inefficient and could pull draft data from previous visits.
+
+**Decisions:**
+
+**1. BillingProcessor.php — Remove visit completion on full payment**
+- Removed `$visit->status = 'completed'` and `$visit->current_phase = 'discharged'` after successful payment processing.
+- Visit stays `active` with phase `billing` after payment.
+- Staff can still perform clinical actions on that visit.
+
+**2. BillingService.php — Updated response message**
+- Changed from "Payment successfully settled. Visit has been completed." to "Payment successfully settled." — reflects that the visit is no longer auto-completed.
+
+**3. VisitService.php — Exclude fully-paid visits from reuse**
+- Added `->where('payment_status', '!=', 'paid_in_full')` to the existing-visit query chain.
+- Combined with existing `status = 'active'` and strict same-facility scoping.
+- A fully-paid visit will never be silently reused; a new visit record is created instead.
+
+**4. PrescriptionController.php — New visit-scoped endpoint**
+- Added `visitPrescriptions(int $visitId)` method returning prescriptions filtered by `visit_id`.
+- Route: `GET /api/v1/prescriptions/visit/{visitId}`.
+- `PrescriptionResource.php`: Added `visit_id` and `patient_id` to serialized output.
+
+**Files changed:**
+- `app/Services/Billing/Processing/BillingProcessor.php` — removed status change
+- `app/Services/Billing/BillingService.php` — updated response message
+- `app/Services/Visit/VisitService.php` — added payment_status filter
+- `app/Http/Controllers/Api/PrescriptionController.php` — new method
+- `app/Http/Resources/PrescriptionResource.php` — added visit_id, patient_id
+
+**Trade-offs:**
+- Visit stays in `billing` phase after payment — no automatic phase progression. If auto-progression to a "post-billing" phase is needed later, it should be an explicit workflow step, not a side effect of payment processing.
+- The `payment_status != 'paid_in_full'` filter is strict — even a visit with a full refund that was re-paid would have `paid_in_full` status and be excluded from reuse. In practice this is correct because a fully-paid visit should not be reused regardless of payment history.
+
+---
+
 ## 2026-05-20: Prescription Template — Validate dosage_form/dosage_unit/duration_unit on Store; Defaults on applyTemplate
 
 **Context:** Creating a prescription from a template failed because template items stored without `dosage_form`, `dosage_unit`, `duration_unit` were passed directly to `prescriptionItemRepository->createMany()`. The `StoreTemplateRequest` didn't validate these fields, and `applyTemplate()` didn't provide defaults.

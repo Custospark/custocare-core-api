@@ -1,3 +1,21 @@
+## Prescriptions — 2026-05-21
+
+### API Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/prescriptions/visit/{visitId}` | Get all prescriptions for a specific visit |
+
+**Note:** The visit-scoped endpoint returns `PrescriptionResource[]` wrapped in the standard `{ success, message, data }` response format. Each resource now includes `visit_id` and `patient_id` fields.
+
+### Files
+- `app/Http/Controllers/Api/PrescriptionController.php` — `visitPrescriptions()` method added
+- `app/Http/Resources/PrescriptionResource.php` — returns `visit_id`, `patient_id`
+
+### Provider Bindings
+No new bindings — uses existing `PrescriptionRepositoryInterface` → `PrescriptionRepository` with `getByVisit()` method.
+
+---
+
 ## Referral - 2026-05-13 00:00:00
 
 ### Fields

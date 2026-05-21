@@ -198,7 +198,7 @@ class BillingService
             return [
                 'success' => true,
                 'message' => !empty($finalState['is_fully_paid'])
-                    ? 'Payment successfully settled. Visit has been completed.'
+                    ? 'Payment successfully settled.'
                     : ($wasExistingCycleUpdated
                         ? 'Existing billing cycle updated successfully.'
                         : 'Billing saved successfully.'),

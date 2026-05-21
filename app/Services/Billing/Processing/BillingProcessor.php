@@ -626,10 +626,8 @@ protected function createOrUpdateLineItems(
 
         if ($isFullyPaid) {
             $visit->payment_status = 'paid_in_full';
-            $visit->current_phase = 'discharged';
-            $visit->status = 'completed';
-            $visit->clinical_care_ended_at = $visit->clinical_care_ended_at ?? now();
-            $visit->discharged_at = $visit->discharged_at ?? now();
+            $visit->current_phase = 'billing';
+            $visit->status = 'active';
         } else {
             $visit->payment_status = $totalPaid > 0 ? 'partially_paid' : 'pending';
 
@@ -682,17 +680,6 @@ protected function createOrUpdateLineItems(
             'payment_status' => $visit->payment_status,
             'billing_status' => $billingCycle->billing_status,
         ];
-
-        if ($isFullyPaid) {
-            $metadata['visit_completion'] = [
-                'completed_at' => now()->toIso8601String(),
-                'completed_by_staff_id' => $staffId,
-                'completion_reason' => 'billing_fully_paid',
-                'final_balance' => $balance,
-                'billing_cycle_id' => $billingCycle->id,
-                'receipt_number' => "REC-{$billingCycle->id}",
-            ];
-        }
 
         $visit->metadata = $metadata;
         $visit->save();

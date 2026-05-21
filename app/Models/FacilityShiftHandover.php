@@ -31,6 +31,11 @@ class FacilityShiftHandover extends Model
         'updated_by_user_id',
     ];
 
+    protected $appends = [
+        'summary',
+        'handed_over_to_user_id',
+    ];
+
     protected $casts = [
         'shift_date' => 'date',
         'handed_over_at' => 'datetime',
@@ -52,6 +57,11 @@ class FacilityShiftHandover extends Model
         return $this->belongsTo(User::class, 'handed_over_by_user_id');
     }
 
+    public function handedOverTo(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'received_by_user_id');
+    }
+
     public function receivedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'received_by_user_id');
@@ -65,5 +75,15 @@ class FacilityShiftHandover extends Model
     public function updatedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by_user_id');
+    }
+
+    public function getSummaryAttribute(): string
+    {
+        return $this->outgoing_summary;
+    }
+
+    public function getHandedOverToUserIdAttribute(): ?int
+    {
+        return $this->received_by_user_id;
     }
 }

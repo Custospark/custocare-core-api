@@ -26,7 +26,7 @@ class FacilityShiftHandoverService
             ->with([
                 'ward:id,name,code',
                 'handedOverBy:id,display_name,first_name,last_name',
-                'receivedBy:id,display_name,first_name,last_name',
+                'handedOverTo:id,display_name,first_name,last_name',
                 'createdBy:id,display_name',
                 'updatedBy:id,display_name',
             ])
@@ -43,7 +43,7 @@ class FacilityShiftHandoverService
             ->with([
                 'ward:id,name,code',
                 'handedOverBy:id,display_name,first_name,last_name',
-                'receivedBy:id,display_name,first_name,last_name',
+                'handedOverTo:id,display_name,first_name,last_name',
             ]);
 
         if (! empty($filters['ward_id'])) {
@@ -82,7 +82,7 @@ class FacilityShiftHandoverService
             $row = FacilityShiftHandover::query()->create([
                 'facility_id' => (int) $data['facility_id'],
                 'ward_id' => $data['ward_id'] ?? null,
-                'shift_date' => $data['shift_date'],
+                'shift_date' => $data['shift_date'] ?? today()->toDateString(),
                 'shift_slot' => $data['shift_slot'] ?? 'morning',
                 'shift_label' => $data['shift_label'] ?? null,
                 'outgoing_summary' => $data['outgoing_summary'],
@@ -91,6 +91,7 @@ class FacilityShiftHandoverService
                 'equipment_issues' => $data['equipment_issues'] ?? null,
                 'staffing_notes' => $data['staffing_notes'] ?? null,
                 'handed_over_by_user_id' => $data['handed_over_by_user_id'] ?? $actorUserId,
+                'received_by_user_id' => $data['received_by_user_id'] ?? null,
                 'handed_over_at' => ($data['status'] ?? 'draft') === 'submitted' ? ($data['handed_over_at'] ?? now()) : ($data['handed_over_at'] ?? null),
                 'status' => $data['status'] ?? 'draft',
                 'created_by_user_id' => $actorUserId,
@@ -100,6 +101,7 @@ class FacilityShiftHandoverService
             return $row->fresh([
                 'ward:id,name,code',
                 'handedOverBy:id,display_name,first_name,last_name',
+                'handedOverTo:id,display_name,first_name,last_name',
             ]);
         });
     }
@@ -141,7 +143,7 @@ class FacilityShiftHandoverService
             return $handover->fresh([
                 'ward:id,name,code',
                 'handedOverBy:id,display_name,first_name,last_name',
-                'receivedBy:id,display_name,first_name,last_name',
+                'handedOverTo:id,display_name,first_name,last_name',
             ]);
         });
     }

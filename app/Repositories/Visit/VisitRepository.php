@@ -130,7 +130,11 @@ class VisitRepository implements VisitRepositoryInterface
 
             // Apply additional filters
             if (!empty($filters['status'])) {
-                $query->where('status', $filters['status']);
+                $statuses = is_array($filters['status'])
+                    ? $filters['status']
+                    : explode(',', $filters['status']);
+                $statuses = array_map('trim', $statuses);
+                $query->whereIn('status', $statuses);
             }
 
             if (!empty($filters['visit_type'])) {

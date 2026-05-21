@@ -896,7 +896,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
         $userId = Auth::id();
 
         $excludeStaffIds = [];
-        if ($excludeCurrentStaff || $userId) {
+        if ($excludeCurrentStaff && $userId) {
             $excludeStaffIds = Staff::query()
                 ->where('user_id', $userId)
                 ->pluck('id')
@@ -1014,7 +1014,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.type',
                 'fs.floor',
 
-                'vcounts.current_patient_count',
+                'users.id',
             ])
             ->orderBy('users.first_name')
             ->orderBy('users.last_name')
@@ -1034,6 +1034,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
             return [
                 'staff_id' => $staff->id,
                 'staff_uuid' => $staff->staff_uuid,
+                'user_id' => (int) $staff->user_id,
                 'employee_id' => $staff->employee_id,
                 'professional_title' => $staff->professional_title,
                 'global_role_level' => $staff->global_role_level,

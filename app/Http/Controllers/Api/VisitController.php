@@ -1015,6 +1015,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.type as current_space_type',
                 'fs.floor as current_space_floor',
 
+                'users.id as user_id',
                 DB::raw('ANY_VALUE(vcounts.current_patient_count) as current_patient_count'),
             ])
             ->join('users', 'staff.user_id', '=', 'users.id')

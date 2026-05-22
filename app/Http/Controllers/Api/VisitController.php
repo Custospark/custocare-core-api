@@ -1016,7 +1016,7 @@ public function getStaffForPatientForwarding(Request $request): JsonResponse
                 'fs.floor as current_space_floor',
 
                 'users.id as user_id',
-                DB::raw('ANY_VALUE(vcounts.current_patient_count) as current_patient_count'),
+                DB::raw('MAX(vcounts.current_patient_count) as current_patient_count'),
             ])
             ->join('users', 'staff.user_id', '=', 'users.id')
             ->join('facility_staff_roles as fsr', function ($join) use ($facilityId) {

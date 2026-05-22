@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-05-22: ANY_VALUE → MAX — MariaDB Compatibility for Staff Forwarding Query
+
+**Context:** The `getStaffForPatientForwarding()` endpoint in `VisitController.php` used `ANY_VALUE(vcounts.current_patient_count)` to suppress MySQL's `ONLY_FULL_GROUP_BY` error. `ANY_VALUE()` is a MySQL 5.7+ function that does not exist in MariaDB. The endpoint worked locally (MySQL) but crashed on production (MariaDB) with `SQLSTATE[42000]: 1305 FUNCTION ... ANY_VALUE does not exist`.
+
+**Decision:**
+- Replaced `ANY_VALUE(vcounts.current_patient_count)` with `MAX(vcounts.current_patient_count)`.
+- `MAX()` is a standard SQL aggregate function available in all MySQL versions and MariaDB.
+- The subquery already groups by `assigned_staff_id` (one row per staff), so `MAX()` returns the same single value as `ANY_VALUE()` — no behavioral difference.
+
+**Files changed (BE — 1 file):**
+- `VisitController.php:1019` — `ANY_VALUE(...)` → `MAX(...)`
+
+**Trade-offs:**
+- `MAX()` is semantically different from `ANY_VALUE()` — if the subquery ever returned multiple rows per staff (e.g., due to a change in the subquery grouping), `MAX()` would return the highest value while `ANY_VALUE()` would return an arbitrary one. For the current single-row-per-staff subquery, they're identical.
+- No other `ANY_VALUE()` calls existed in the codebase (confirmed via grep).
+
+---
+
 ## 2026-05-18: Team Structure Mirrored from Frontend
 
 **Context:** The Backend project needs the same sub-agent team, handoff chain, and quality gates as the Frontend to ensure consistent execution across both stacks.

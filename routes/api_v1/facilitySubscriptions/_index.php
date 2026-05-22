@@ -94,7 +94,7 @@ Route::middleware(['auth:sanctum'])
 | POST /reject  → rejects with mandatory reason
 |──────────────────────────────────────────────────────────────────────────────
 */
-Route::middleware(['auth:sanctum', 'admin.access'])
+Route::middleware(['auth:sanctum',])
     ->prefix('admin/billing')
     ->name('admin.billing.')
     ->group(function () {

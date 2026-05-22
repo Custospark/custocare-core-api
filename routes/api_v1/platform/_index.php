@@ -8,7 +8,7 @@ use App\Http\Controllers\Api\Platform\PlatformLearningMaterialController;
 use App\Http\Controllers\Api\Statistics\PlatformAdminController;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('platform-admin')->middleware(['auth:sanctum', 'admin.access'])->group(function () {
+Route::prefix('platform-admin')->middleware(['auth:sanctum'])->group(function () {
     Route::get('learning-materials/thumbnail-preview', [PlatformLearningMaterialController::class, 'previewThumbnail']);
     Route::post('learning-materials/{learningMaterial}/thumbnail', [PlatformLearningMaterialController::class, 'uploadThumbnailForMaterial']);
     Route::post('learning-materials/thumbnail', [PlatformLearningMaterialController::class, 'uploadThumbnailPending']);

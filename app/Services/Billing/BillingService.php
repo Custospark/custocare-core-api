@@ -229,9 +229,8 @@ class BillingService
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while submitting billing. Please try again.',
+                'message' => $e->getMessage() ?: 'An unexpected error occurred while submitting billing. Please try again.',
                 'errors' => ['system' => ['Billing transaction failed. All changes have been rolled back.']],
-                'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }

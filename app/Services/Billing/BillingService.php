@@ -1155,9 +1155,8 @@ protected function getRefundedItemsFromAdjustments(
 
             return [
                 'success' => false,
-                'message' => 'An unexpected error occurred while adjusting the billing item.',
+                'message' => $e->getMessage() ?: 'An unexpected error occurred while adjusting the billing item.',
                 'errors' => ['system' => ['Billing adjustment failed.']],
-                'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }
     }

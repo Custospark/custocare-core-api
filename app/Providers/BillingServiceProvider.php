@@ -15,11 +15,13 @@ use App\Repositories\Billing\SubscriptionRepository;
 use App\Services\Billing\Contracts\InvoiceServiceInterface;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
+use App\Services\Billing\Contracts\UsageServiceInterface;
 use App\Services\Billing\Gateways\GatewayManager;
 use App\Services\Billing\Gateways\GatewayService;
 use App\Services\Billing\InvoiceService;
 use App\Services\Billing\PaymentService;
 use App\Services\Billing\SubscriptionService;
+use App\Services\Billing\UsageService;
 use Illuminate\Support\ServiceProvider;
 
 class BillingServiceProvider extends ServiceProvider
@@ -36,6 +38,7 @@ class BillingServiceProvider extends ServiceProvider
         $this->app->bind(SubscriptionServiceInterface::class, SubscriptionService::class);
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
         $this->app->bind(InvoiceServiceInterface::class, InvoiceService::class);
+        $this->app->bind(UsageServiceInterface::class, UsageService::class);
 
         // ── Gateway infrastructure ────────────────────────────────────────
         // GatewayManager is a singleton — one instance per request lifecycle,

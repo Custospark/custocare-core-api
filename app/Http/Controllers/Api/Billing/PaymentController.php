@@ -3,47 +3,62 @@
 namespace App\Http\Controllers\Api\Billing;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Http\Requests\Billing\StorePaymentRequest;
+use App\Http\Resources\Billing\PaymentResource;
+use App\Models\Subscription;
+use App\Services\Billing\Contracts\PaymentServiceInterface;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 
 class PaymentController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
-    {
-        //
-    }
+    public function __construct(
+        private readonly PaymentServiceInterface $paymentService
+    ) {}
 
     /**
-     * Store a newly created resource in storage.
+     * Record a payment for the active facility's subscription.
+     * Expects the active facility context via X-Active-Facility-Id header.
      */
-    public function store(Request $request)
+    public function store(StorePaymentRequest $request): JsonResponse
     {
-        //
-    }
+        $facilityId = $request->header('X-Active-Facility-Id');
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
-    {
-        //
-    }
+        if (!$facilityId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active facility selected.',
+                'errors'  => ['facility' => ['X-Active-Facility-Id header is required.']],
+                'data'    => null,
+            ], 400);
+        }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
-    {
-        //
-    }
+        $subscription = Subscription::where('facility_id', $facilityId)
+            ->whereIn('status', ['trial', 'active', 'past_due'])
+            ->latest()
+            ->first();
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
+        if (!$subscription) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active subscription found for this facility.',
+                'errors'  => ['subscription' => ['Create a subscription first.']],
+                'data'    => null,
+            ], 404);
+        }
+
+        $receipt = $request->file('receipt');
+        $payment = $this->paymentService->recordPayment(
+            $subscription,
+            $request->validated(),
+            $receipt
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Payment recorded. Awaiting admin approval.',
+            'data'    => new PaymentResource($payment),
+            'errors'  => null,
+        ], 201);
     }
 }

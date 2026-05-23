@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Billing\InvoiceController;
 use App\Http\Controllers\Api\Billing\PaymentController;
 use App\Http\Controllers\Api\Billing\PlanController;
 use App\Http\Controllers\Api\Billing\SubscriptionController;
+use App\Http\Controllers\Api\Billing\UsageController;
 use App\Http\Controllers\Api\Billing\Admin;
 use Illuminate\Support\Facades\Route;
 
@@ -94,6 +95,12 @@ Route::middleware(['auth:sanctum'])
                 Route::get('/',          [InvoiceController::class, 'index'])->name('index');
                 Route::get('/{invoice}', [InvoiceController::class, 'show']) ->name('show');
             });
+
+        /*
+        |── Usage ───────────────────────────────────────────────────────────
+        | GET    /facilities/{facility}/usage               → current usage counts
+        */
+        Route::get('/usage', [UsageController::class, 'index'])->name('usage');
     });
 
 /*

@@ -6,6 +6,8 @@ use App\Models\Facility;
 use App\Models\FacilityOwner;
 use App\Repositories\Contracts\FacilityRepositoryInterface;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
+use App\Models\Plan;
+use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Contracts\FacilityServiceInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
 use App\Services\Contracts\StaffServiceInterface;
@@ -35,15 +37,18 @@ class FacilityService implements FacilityServiceInterface
     protected FacilityRepositoryInterface $facilityRepository;
     protected FacilityStaffRoleServiceInterface $facilityStaffRoleService;
     protected StaffServiceInterface $staffService;
+    protected SubscriptionServiceInterface $subscriptionService;
 
     public function __construct(
         FacilityRepositoryInterface $facilityRepository,
         FacilityStaffRoleServiceInterface $facilityStaffRoleService,
-        StaffServiceInterface $staffService
+        StaffServiceInterface $staffService,
+        SubscriptionServiceInterface $subscriptionService
     ) {
         $this->facilityRepository = $facilityRepository;
         $this->facilityStaffRoleService = $facilityStaffRoleService;
         $this->staffService = $staffService;
+        $this->subscriptionService = $subscriptionService;
     }
     /**
      * Get all facilities with optional filters.
@@ -244,7 +249,6 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
          * 4️⃣ Create Facility
          */
         $facility = $this->facilityRepository->create($data);
-        
 
         /**
          * 4.1️⃣ Create Facility Owner (creator becomes primary owner)
@@ -272,6 +276,20 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
                 'owner_record_created' => true,
             ],
         ]);
+
+        /**
+         * 6️⃣ Create Subscription (if plan_id provided)
+         */
+        if (!empty($data['plan_id'])) {
+            $plan = Plan::find($data['plan_id']);
+            if (!$plan) {
+                throw new \RuntimeException('Selected plan not found.');
+            }
+            $this->subscriptionService->createSubscription($facility, $plan, [
+                'notes' => 'Plan selected during facility onboarding',
+                'metadata' => ['source' => 'onboarding', 'plan_name' => $plan->name],
+            ]);
+        }
 
         return $facility;
     });

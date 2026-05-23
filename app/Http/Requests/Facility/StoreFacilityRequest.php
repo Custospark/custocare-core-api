@@ -97,6 +97,8 @@ class StoreFacilityRequest extends FormRequest
             'patient_satisfaction_score' => 'nullable|numeric|min:0|max:5',
             'monthly_patient_volume' => 'nullable|integer|min:0',
             
+            'plan_id' => 'nullable|integer|exists:plans,id',
+
             'operational_status' => 'required|in:fully_operational,limited_services,emergency_only,temporarily_closed,permanently_closed,under_construction',
             
             'metadata' => 'nullable|array',

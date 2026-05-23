@@ -23,11 +23,11 @@ class PlanSeeder extends Seeder
             [
                 'name'                   => 'Essential',
                 'slug'                   => 'essential',
-                'description'            => 'Perfect for small clinics and primary care facilities getting started with Custocare.',
-                'price_usd'              => 65.00,
-                'price_ugx'              => 240_000.00,
-                'onboarding_fee_usd'     => 50.00,
-                'onboarding_fee_ugx'     => 185_000.00,
+                'description'            => 'For independent clinics and small practices. Full clinical workflows — order tests, prescribe, and manage patients from the visit screen.',
+                'price_usd'              => 39.00,
+                'price_ugx'              => 144_000.00,
+                'onboarding_fee_usd'     => 0.00,
+                'onboarding_fee_ugx'     => 0.00,
                 'billing_cycle'          => 'monthly',
                 'trial_days'             => 7,
                 'max_staff'              => 10,
@@ -58,16 +58,16 @@ class PlanSeeder extends Seeder
             [
                 'name'                   => 'Professional',
                 'slug'                   => 'professional',
-                'description'            => 'For growing healthcare facilities that need advanced modules and integrations.',
-                'price_usd'              => 120.00,
-                'price_ugx'              => 440_000.00,
-                'onboarding_fee_usd'     => 100.00,
-                'onboarding_fee_ugx'     => 370_000.00,
+                'description'            => 'For growing hospitals and full-care facilities. Everything in Essential, plus dedicated departmental workspaces.',
+                'price_usd'              => 149.00,
+                'price_ugx'              => 550_000.00,
+                'onboarding_fee_usd'     => 99.00,
+                'onboarding_fee_ugx'     => 366_000.00,
                 'billing_cycle'          => 'monthly',
                 'trial_days'             => 7,
                 'max_staff'              => 50,
                 'max_departments'        => 10,
-                'max_patients_per_month' => 2000,
+                'max_patients_per_month' => 3000,
                 'features'               => [
                     'patient_dashboard'       => true,
                     'medical_records'         => true,
@@ -85,7 +85,7 @@ class PlanSeeder extends Seeder
                     'audit_logs'              => true,
                 ],
                 'sort_order'             => 2,
-                'is_popular'             => true,   // Highlighted on pricing page
+                'is_popular'             => true,
                 'is_active'              => true,
             ],
 
@@ -93,16 +93,16 @@ class PlanSeeder extends Seeder
             [
                 'name'                   => 'Enterprise',
                 'slug'                   => 'enterprise',
-                'description'            => 'For hospitals and multi-branch networks requiring unlimited capacity and dedicated support.',
-                'price_usd'              => 250.00,
-                'price_ugx'              => 925_000.00,
-                'onboarding_fee_usd'     => 200.00,
-                'onboarding_fee_ugx'     => 740_000.00,
+                'description'            => 'For large hospitals, groups, and health systems. Everything in Professional, plus logistics and network management.',
+                'price_usd'              => 399.00,
+                'price_ugx'              => 1_475_000.00,
+                'onboarding_fee_usd'     => 249.00,
+                'onboarding_fee_ugx'     => 920_000.00,
                 'billing_cycle'          => 'monthly',
                 'trial_days'             => 7,
-                'max_staff'              => null,    // Unlimited
-                'max_departments'        => null,    // Unlimited
-                'max_patients_per_month' => null,    // Unlimited
+                'max_staff'              => null,
+                'max_departments'        => null,
+                'max_patients_per_month' => null,
                 'features'               => [
                     'patient_dashboard'       => true,
                     'medical_records'         => true,

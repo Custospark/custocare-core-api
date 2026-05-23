@@ -249,7 +249,6 @@ class WalkInCustomerService
     {
         return DB::transaction(function () use ($facilityId, $staffId) {
             $walkin = $this->getOrCreateFacilityWalkInPatient($facilityId, $staffId);
-            Log::info("Walk In User", $walkin);
             $staffId = Staff::where('user_id', Auth::id())->value('id');
 
             if (!$staffId) {

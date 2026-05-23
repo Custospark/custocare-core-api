@@ -23,7 +23,7 @@ class PlanSeeder extends Seeder
             [
                 'name'                   => 'Essential',
                 'slug'                   => 'essential',
-                'description'            => 'For independent clinics and small practices. Full clinical workflows — order tests, prescribe, and manage patients from the visit screen.',
+                'description'            => 'For independent clinics,labs,pharmacies and small practices. Full clinical workflows — order tests, prescribe, and manage patients from the visit screen.',
                 'price_usd'              => 39.00,
                 'price_ugx'              => 144_000.00,
                 'onboarding_fee_usd'     => 0.00,

@@ -108,4 +108,12 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
             ->where('trial_ends_at', '<', now())
             ->get();
     }
+
+    public function hasEverHadTrial(int $facilityId): bool
+    {
+        return Subscription::where('facility_id', $facilityId)
+            ->whereNotNull('trial_ends_at')
+            ->withTrashed()
+            ->exists();
+    }
 }

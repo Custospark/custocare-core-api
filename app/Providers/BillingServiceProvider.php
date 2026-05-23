@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Repositories\Billing\Contracts\InvoiceRepositoryInterface;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Repositories\Billing\Contracts\PlanRepositoryInterface;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
+use App\Repositories\Billing\InvoiceRepository;
 use App\Repositories\Billing\PaymentRepository;
 use App\Repositories\Billing\PlanRepository;
 use App\Repositories\Billing\SubscriptionRepository;
+use App\Services\Billing\Contracts\InvoiceServiceInterface;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Billing\Gateways\GatewayManager;
 use App\Services\Billing\Gateways\GatewayService;
+use App\Services\Billing\InvoiceService;
 use App\Services\Billing\PaymentService;
 use App\Services\Billing\SubscriptionService;
 use Illuminate\Support\ServiceProvider;
@@ -26,10 +30,12 @@ class BillingServiceProvider extends ServiceProvider
         $this->app->bind(PlanRepositoryInterface::class, PlanRepository::class);
         $this->app->bind(SubscriptionRepositoryInterface::class, SubscriptionRepository::class);
         $this->app->bind(PaymentRepositoryInterface::class, PaymentRepository::class);
+        $this->app->bind(InvoiceRepositoryInterface::class, InvoiceRepository::class);
 
         // ── Services ──────────────────────────────────────────────────────
         $this->app->bind(SubscriptionServiceInterface::class, SubscriptionService::class);
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
+        $this->app->bind(InvoiceServiceInterface::class, InvoiceService::class);
 
         // ── Gateway infrastructure ────────────────────────────────────────
         // GatewayManager is a singleton — one instance per request lifecycle,

@@ -20,4 +20,5 @@ interface SubscriptionRepositoryInterface
     public function getSubscriptionsNeedingGrace(): Collection;
     public function getSubscriptionsGraceExpired(): Collection;
     public function getTrialSubscriptionsExpired(): Collection;
+    public function hasEverHadTrial(int $facilityId): bool;
 }

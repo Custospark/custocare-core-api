@@ -14,6 +14,7 @@ use App\Models\Plan;
 use App\Models\User;
 use App\Models\Subscription;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
+use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
@@ -26,7 +27,8 @@ class SubscriptionService implements SubscriptionServiceInterface
     private const GRACE_PERIOD_DAYS = 7;
 
     public function __construct(
-        private readonly SubscriptionRepositoryInterface $subscriptionRepo
+        private readonly SubscriptionRepositoryInterface $subscriptionRepo,
+        private readonly PaymentRepositoryInterface $paymentRepo,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -43,13 +45,26 @@ class SubscriptionService implements SubscriptionServiceInterface
     {
         return DB::transaction(function () use ($facility, $plan, $options) {
 
-            // ── Guard: one active/trial subscription per facility ──────────
+            // ── Guard: one active/trial/pending payment subscription per facility ──
             $existing = $this->subscriptionRepo->findByFacility($facility->id);
 
             if ($existing && ! in_array($existing->status, [
                 SubscriptionStatus::CANCELLED,
                 SubscriptionStatus::SUSPENDED,
             ])) {
+                // If there's already a pending payment, just update the plan
+                $pendingPayments = $this->paymentRepo->findPendingByFacility($facility->id);
+                if (!empty($pendingPayments) && $existing->status === SubscriptionStatus::TRIAL) {
+                    $updated = $this->subscriptionRepo->update($existing, [
+                        'plan_id' => $plan->id,
+                    ]);
+                    Log::info('[Billing] Subscription plan updated (pending payment exists)', [
+                        'subscription_id' => $existing->id,
+                        'new_plan'        => $plan->name,
+                    ]);
+                    return $updated;
+                }
+
                 throw new \Exception(
                     "Facility already has a {$existing->status->value} subscription (ID #{$existing->id}). " .
                     'Cancel or wait for it to be suspended before creating a new one.',
@@ -59,12 +74,21 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             $now = Carbon::now();
 
+            // ── Check if facility has ever had a trial before (anti-abuse) ──
+            $hasUsedTrialBefore = $this->subscriptionRepo->hasEverHadTrial($facility->id);
+
+            $status = $hasUsedTrialBefore
+                ? SubscriptionStatus::PAST_DUE->value
+                : SubscriptionStatus::TRIAL->value;
+
+            $trialEndsAt = $hasUsedTrialBefore ? null : $now->copy()->addDays($plan->trial_days);
+
             // ── Build the subscription payload ────────────────────────────
             $subscription = $this->subscriptionRepo->create([
                 'facility_id'        => $facility->id,
                 'plan_id'            => $plan->id,
-                'status'             => SubscriptionStatus::TRIAL->value,
-                'trial_ends_at'      => $now->copy()->addDays($plan->trial_days),
+                'status'             => $status,
+                'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
                 'ends_at'            => $now->copy()->addMonth(),
                 'next_billing_date'  => $now->copy()->addMonth(),
@@ -73,11 +97,11 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'metadata'           => $options['metadata'] ?? null,
             ]);
 
-            Log::info('[Billing] Subscription created in trial', [
+            Log::info('[Billing] Subscription created', [
                 'facility_id'     => $facility->id,
                 'subscription_id' => $subscription->id,
                 'plan'            => $plan->name,
-                'trial_ends_at'   => $subscription->trial_ends_at,
+                'status'          => $status,
             ]);
 
             return $subscription;

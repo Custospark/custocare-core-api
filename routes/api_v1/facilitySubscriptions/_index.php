@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\Billing\InvoiceController;
 use App\Http\Controllers\Api\Billing\PaymentController;
 use App\Http\Controllers\Api\Billing\PlanController;
 use App\Http\Controllers\Api\Billing\SubscriptionController;
@@ -80,6 +81,18 @@ Route::middleware(['auth:sanctum'])
                 Route::get('/',          [PaymentController::class, 'index'])->name('index');
                 Route::post('/',         [PaymentController::class, 'store'])->name('store');
                 Route::get('/{payment}', [PaymentController::class, 'show']) ->name('show');
+            });
+
+        /*
+        |── Invoices ────────────────────────────────────────────────────────
+        | GET    /facilities/{facility}/invoices             → list invoices
+        | GET    /facilities/{facility}/invoices/{invoice}   → show invoice
+        */
+        Route::prefix('invoices')
+            ->name('invoices.')
+            ->group(function () {
+                Route::get('/',          [InvoiceController::class, 'index'])->name('index');
+                Route::get('/{invoice}', [InvoiceController::class, 'show']) ->name('show');
             });
     });
 
@@ -174,5 +187,21 @@ Route::middleware(['auth:sanctum',])
 
                 Route::post('/{payment}/reject', [Admin\PaymentController::class, 'reject'])
                     ->name('reject');
+            });
+
+        /*
+        |── Invoice Management (Admin) ─────────────────────────────────────
+        | GET    /admin/billing/invoices                    → list all invoices
+        | GET    /admin/billing/invoices/{invoice}          → show invoice
+        | POST   /admin/billing/invoices/{invoice}/mark-paid→ mark as paid
+        | POST   /admin/billing/invoices/{invoice}/cancel   → cancel invoice
+        */
+        Route::prefix('invoices')
+            ->name('invoices.')
+            ->group(function () {
+                Route::get('/',                   [Admin\InvoiceController::class, 'index'])->name('index');
+                Route::get('/{invoice}',           [Admin\InvoiceController::class, 'show'])->name('show');
+                Route::post('/{invoice}/mark-paid',[Admin\InvoiceController::class, 'markPaid'])->name('mark-paid');
+                Route::post('/{invoice}/cancel',   [Admin\InvoiceController::class, 'cancel'])->name('cancel');
             });
     });

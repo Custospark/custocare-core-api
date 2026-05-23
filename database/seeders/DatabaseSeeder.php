@@ -184,6 +184,13 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        $this->command->info('✅ Database seeded: Modules, Facility Roles, Spatie Roles, and RoleModuleDefaults successfully.');
+        /*
+        |--------------------------------------------------------------------------
+        | 6️⃣ Seed Subscription Plans
+        |--------------------------------------------------------------------------
+        */
+        $this->call(PlanSeeder::class);
+
+        $this->command->info('✅ Database seeded: Modules, Facility Roles, Spatie Roles, RoleModuleDefaults, and Plans successfully.');
     }
 }

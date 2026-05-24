@@ -134,4 +134,28 @@ class Payment extends Model
 
         return asset('storage/' . $this->receipt_path);
     }
+
+    public function receiptDownloadUrl(): ?string
+    {
+        if (! $this->receipt_path) {
+            return null;
+        }
+
+        return route('facilities.payments.receipt', [
+            'facility' => $this->facility_id,
+            'payment' => $this->id,
+        ]);
+    }
+
+    public function adminReceiptDownloadUrl(): ?string
+    {
+        if (! $this->receipt_path) {
+            return null;
+        }
+
+        return route('admin.billing.payments.receipt', [
+            'payment' => $this->id,
+        ]);
+    }
 }
+

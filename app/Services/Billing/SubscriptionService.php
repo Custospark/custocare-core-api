@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Models\Subscription;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
+use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
@@ -29,6 +30,7 @@ class SubscriptionService implements SubscriptionServiceInterface
     public function __construct(
         private readonly SubscriptionRepositoryInterface $subscriptionRepo,
         private readonly PaymentRepositoryInterface $paymentRepo,
+        private readonly FacilityStaffRoleModuleSyncServiceInterface $moduleSyncService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -145,6 +147,8 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'approved_by'     => $approvedBy->id,
             ]);
 
+            $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
+
             return $updated;
         });
     }
@@ -182,6 +186,8 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'new_ends_at'     => $newEndsAt->toDateTimeString(),
                 'approved_by'     =>$approvedBy? $approvedBy->id: null,
             ]);
+
+            $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
 
             return $updated;
         });

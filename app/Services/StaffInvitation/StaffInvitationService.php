@@ -5,9 +5,11 @@ namespace App\Services\StaffInvitation;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
 use App\Models\StaffInvitation;
+use App\Models\FacilityOwner;
 use App\Services\Contracts\StaffInvitationServiceInterface;
 use App\Repositories\Contracts\StaffInvitationRepositoryInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
+use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use App\Services\FacilityStaffService;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -15,6 +17,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class StaffInvitationService implements StaffInvitationServiceInterface
 {
@@ -28,15 +31,19 @@ class StaffInvitationService implements StaffInvitationServiceInterface
      */
     protected FacilityStaffRoleServiceInterface $facilityStaffService;
 
+    protected PlanLimitServiceInterface $planLimitService;
+
     /**
      * Create a new service instance.
      */
     public function __construct(
         StaffInvitationRepositoryInterface $repository,
-        FacilityStaffRoleServiceInterface $facilityStaffService
+        FacilityStaffRoleServiceInterface $facilityStaffService,
+        PlanLimitServiceInterface $planLimitService,
     ) {
         $this->repository = $repository;
         $this->facilityStaffService = $facilityStaffService;
+        $this->planLimitService = $planLimitService;
     }
 
     /**
@@ -134,6 +141,8 @@ class StaffInvitationService implements StaffInvitationServiceInterface
             throw new \Exception($message);
         }
 
+        $this->assertPlanLimitsForInvitation($facilityId, $staffId, $data);
+
         // 5) Defaults
         $data['expires_at'] ??= now()->addDays(7);
         $data['invitation_uuid'] ??= (string) Str::uuid();
@@ -224,6 +233,15 @@ class StaffInvitationService implements StaffInvitationServiceInterface
                 ? 'This invitation has expired.' 
                 : 'This invitation cannot be accepted in its current state.';
             throw new \Exception($message);
+        }
+
+        try {
+            $this->planLimitService->assertCanAddStaff(
+                (int) $invitation->facility_id,
+                (int) $invitation->staff_id
+            );
+        } catch (ValidationException $e) {
+            throw new \Exception(collect($e->errors())->flatten()->first() ?? 'Staff limit reached.');
         }
 
         // 3. Check if staff already has an active assignment at this facility
@@ -538,5 +556,39 @@ class StaffInvitationService implements StaffInvitationServiceInterface
     {
         // return $this->facilityStaffService->staffHasActiveAssignment($staffId, $facilityId);
         return true;
+    }
+
+    /**
+     * Enforce subscription staff limits and plan module access for invitations.
+     */
+    protected function assertPlanLimitsForInvitation(int $facilityId, int $staffId, array &$data): void
+    {
+        try {
+            $this->planLimitService->assertCanAddStaff($facilityId, $staffId);
+        } catch (ValidationException $e) {
+            throw new \Exception(collect($e->errors())->flatten()->first() ?? 'Staff limit reached.');
+        }
+
+        if (! array_key_exists('module_code', $data)) {
+            return;
+        }
+
+        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+        $inviterIsOwner = FacilityOwner::query()
+            ->where('facility_id', $facilityId)
+            ->where('staff_id', (int) ($data['invited_by_staff_id'] ?? 0))
+            ->exists();
+
+        try {
+            $this->planLimitService->assertModulesAllowed($facilityId, $modules, $inviterIsOwner);
+        } catch (ValidationException $e) {
+            throw new \Exception(collect($e->errors())->flatten()->first() ?? 'Invalid module selection.');
+        }
+
+        $data['module_code'] = $this->planLimitService->filterModulesForPlan(
+            $facilityId,
+            $modules,
+            $inviterIsOwner
+        );
     }
 }

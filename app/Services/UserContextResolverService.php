@@ -2,9 +2,11 @@
 
 namespace App\Services;
 
+use App\Constants\Billing\PlanFeatures;
 use App\Models\User;
 use App\Models\Patient;
 use App\Models\Staff;
+use App\Models\FacilityOwner;
 use App\Models\FacilityStaffRole;
 use App\Models\RoleModuleDefault;
 use App\Models\Module;
@@ -281,37 +283,52 @@ class UserContextResolverService
  */
 protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $allModules): array
 {
-    $facilityRoles = FacilityStaffRole::with('facility')
+    $facilityRoles = FacilityStaffRole::with(['facility.subscription.plan'])
         ->where('staff_id', $staffId)
         ->where('assignment_status', 'active')
-        ->where(function($query) {
+        ->where(function ($query) {
             $query->whereNull('effective_to')
                   ->orWhere('effective_to', '>=', now());
         })
         ->get();
 
+    $ownedFacilityIds = FacilityOwner::query()
+        ->where('staff_id', $staffId)
+        ->pluck('facility_id')
+        ->all();
+
     $facilities = [];
-    $hasActiveFacility = false;
 
     foreach ($facilityRoles as $role) {
         $facility = $role->facility;
-        
-        // Check if facility is suspended or banned
-        $isFacilityRestricted = !$facility || in_array($facility->status, ['suspended', 'banned']);
-        
-        $moduleCodes = $this->extractModuleCodes($role->module_code);
-        
-        // For restricted facilities, ONLY give account module
-        if ($isFacilityRestricted) {
-            $moduleCodes = ['account'];
+        $isFacilityOwner = in_array($role->facility_id, $ownedFacilityIds, true);
+
+        $isFacilityRestricted = ! $facility || in_array($facility->status, ['suspended', 'banned'], true);
+        $subscription = $facility?->subscription;
+        $hasSubscriptionAccess = ! $isFacilityRestricted
+            && $subscription
+            && $subscription->hasAccess();
+
+        if ($isFacilityRestricted || ! $hasSubscriptionAccess) {
+            $moduleCodes = $isFacilityOwner
+                ? PlanFeatures::ownerRestrictedModuleCodes()
+                : PlanFeatures::restrictedModuleCodes();
         } else {
-            $hasActiveFacility = true;
-            // Ensure account is always in module codes for active facilities
-            if (!in_array('account', $moduleCodes)) {
-                $moduleCodes[] = 'account';
+            $planModuleCodes = PlanFeatures::enabledModuleCodes($subscription->plan?->features);
+
+            if ($isFacilityOwner) {
+                $moduleCodes = PlanFeatures::ensureOwnerAdministration($planModuleCodes);
+            } else {
+                $roleModuleCodes = $this->extractModuleCodes($role->module_code);
+
+                if (PlanFeatures::isRestrictedOnlyModuleSet($roleModuleCodes)) {
+                    $roleModuleCodes = $this->resolveRoleDefaultModulesForCode($role->role_code);
+                }
+
+                $moduleCodes = PlanFeatures::intersectRoleModulesWithPlan($roleModuleCodes, $planModuleCodes);
             }
         }
-        
+
         $facilities[] = [
             'facility_id' => $role->facility_id,
             'facility_name' => $facility->facility_name ?? null,
@@ -366,7 +383,10 @@ protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $a
             'timezone' => $facility->timezone ?? null,
             'data_residency_region' => $facility->data_residency_region ?? null,
             'role_code' => $role->role_code,
-            'is_restricted' => $isFacilityRestricted ?? false, // Add flag to indicate restricted access
+            'is_facility_owner' => $isFacilityOwner,
+            'has_subscription_access' => $hasSubscriptionAccess,
+            'subscription_status' => $subscription?->status?->value ?? null,
+            'is_restricted' => $isFacilityRestricted,
             'status' => $facility->status ?? null, 
             'status_reason' => $facility->status_reason ?? null, 
             'status_set_at' => $facility->status_set_at ?? null, 
@@ -377,6 +397,32 @@ protected function resolveStaffFacilitiesWithModules(int $staffId, Collection $a
 
     return $facilities;
 }
+
+    /**
+     * Role default modules from role_module_defaults (assignment-time source of truth).
+     *
+     * @return list<string>
+     */
+    protected function resolveRoleDefaultModulesForCode(string $roleCode): array
+    {
+        $activeModuleCodes = Module::query()
+            ->where('is_active', true)
+            ->pluck('code')
+            ->all();
+
+        $default = RoleModuleDefault::query()
+            ->where('role_code', $roleCode)
+            ->where('default_access', true)
+            ->first();
+
+        if (! $default || empty($default->module_code)) {
+            return [];
+        }
+
+        $roleModules = is_array($default->module_code) ? $default->module_code : [];
+
+        return array_values(array_intersect($roleModules, $activeModuleCodes));
+    }
 
     /**
      * Extract module codes from JSON column
@@ -425,7 +471,7 @@ protected function resolveFacilityRoles(int $userId): array
     $staff = Staff::where('user_id', $userId)->first();
     if (!$staff) return [];
 
-    $roles = FacilityStaffRole::with('facility')
+    $roles = FacilityStaffRole::with(['facility.subscription'])
         ->where('staff_id', $staff->id)
         ->where('assignment_status', 'active')
         ->where(function($query) {
@@ -434,17 +480,30 @@ protected function resolveFacilityRoles(int $userId): array
         })
         ->get();
 
-    return $roles->map(function ($role) {
+    $ownedFacilityIds = FacilityOwner::query()
+        ->where('staff_id', $staff->id)
+        ->pluck('facility_id')
+        ->all();
+
+    return $roles->map(function ($role) use ($ownedFacilityIds) {
         $facility = $role->facility;
-        $isRestricted = !$facility || in_array($facility->status, ['suspended', 'banned']);
-        
+        $isFacilityRestricted = ! $facility || in_array($facility->status, ['suspended', 'banned'], true);
+        $isFacilityOwner = in_array($role->facility_id, $ownedFacilityIds, true);
+        $subscription = $facility?->subscription;
+        $hasSubscriptionAccess = ! $isFacilityRestricted
+            && $subscription
+            && $subscription->hasAccess();
+
         return [
             'facility_id' => $role->facility_id,
             'facility_name' => $facility->facility_name ?? null,
             'facility_code' => $facility->facility_code ?? null,
             'role_code' => $role->role_code,
             'is_primary_facility' => $role->is_primary_facility,
-            'is_restricted' => $isRestricted ?? false, // Add flag to indicate restricted access
+            'is_facility_owner' => $isFacilityOwner,
+            'has_subscription_access' => $hasSubscriptionAccess,
+            'subscription_status' => $subscription?->status?->value ?? null,
+            'is_restricted' => $isFacilityRestricted,
             'status' => $facility->status ?? null, 
             'status_reason' => $facility->status_reason ?? null, 
             'status_set_at' => $facility->status_set_at ?? null, 

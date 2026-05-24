@@ -9,6 +9,7 @@ use App\Models\RoleModuleDefault;
 use App\Models\Staff;
 use App\Repositories\Contracts\FacilityStaffRoleRepositoryInterface;
 use App\Services\Contracts\FacilityStaffRoleServiceInterface;
+use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use App\Support\HealthcareIdGenerator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -30,14 +31,17 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
      */
     protected $repository;
 
+    protected PlanLimitServiceInterface $planLimitService;
+
     /**
      * Constructor
-     *
-     * @param FacilityStaffRoleRepositoryInterface $repository
      */
-    public function __construct(FacilityStaffRoleRepositoryInterface $repository)
-    {
+    public function __construct(
+        FacilityStaffRoleRepositoryInterface $repository,
+        PlanLimitServiceInterface $planLimitService,
+    ) {
         $this->repository = $repository;
+        $this->planLimitService = $planLimitService;
     }
 
     /**
@@ -200,6 +204,11 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
 
         return DB::transaction(function () use ($data) {
 
+            $this->planLimitService->assertCanAddStaff(
+                (int) $data['facility_id'],
+                isset($data['staff_id']) ? (int) $data['staff_id'] : null
+            );
+
             /**
              * 3️⃣ Prevent duplicate active assignments
              */
@@ -229,6 +238,23 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
             if (!array_key_exists('module_code', $data) || empty($data['module_code'])) {
                 $data['module_code'] = $this->resolveDefaultModulesForRole($data['role_code']);
             }
+
+            $targetStaffId = (int) $data['staff_id'];
+            $isFacilityOwner = FacilityOwner::query()
+                ->where('facility_id', (int) $data['facility_id'])
+                ->where('staff_id', $targetStaffId)
+                ->exists();
+
+            $this->planLimitService->assertModulesAllowed(
+                (int) $data['facility_id'],
+                is_array($data['module_code']) ? $data['module_code'] : [],
+                $isFacilityOwner,
+            );
+            $data['module_code'] = $this->planLimitService->filterModulesForPlan(
+                (int) $data['facility_id'],
+                is_array($data['module_code']) ? $data['module_code'] : [],
+                $isFacilityOwner,
+            );
 
             /**
              * 6️⃣ Enforce system ownership
@@ -378,6 +404,33 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
                 'data'    => null,
             ];
         }
+    }
+
+    $editorIsOwner = $authStaffId > 0 && FacilityOwner::query()
+        ->where('facility_id', $facilityId)
+        ->where('staff_id', $authStaffId)
+        ->exists();
+
+    if (array_key_exists('module_code', $data)) {
+        $modules = is_array($data['module_code']) ? $data['module_code'] : [];
+        $modules = array_values(array_filter(array_map('strval', $modules)));
+
+        try {
+            $this->planLimitService->assertModulesAllowed($facilityId, $modules, $editorIsOwner);
+        } catch (ValidationException $e) {
+            return [
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?? 'Invalid module selection.',
+                'errors'  => $e->errors(),
+                'data'    => null,
+            ];
+        }
+
+        $data['module_code'] = $this->planLimitService->filterModulesForPlan(
+            $facilityId,
+            $modules,
+            $editorIsOwner,
+        );
     }
 
     /**

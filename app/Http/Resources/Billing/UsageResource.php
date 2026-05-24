@@ -15,6 +15,7 @@ class UsageResource extends JsonResource
             'staff'       => (int) ($this['staff'] ?? 0),
             'departments' => (int) ($this['departments'] ?? 0),
             'visits'      => (int) ($this['visits'] ?? 0),
+            'limits'      => $this['limits'] ?? null,
         ];
     }
 }

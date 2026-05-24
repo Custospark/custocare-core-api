@@ -45,6 +45,17 @@ class PaymentService implements PaymentServiceInterface
         ?UploadedFile $receipt = null
     ): Payment {
         return DB::transaction(function () use ($subscription, $data, $receipt) {
+            $hasPendingProof = Payment::query()
+                ->where('subscription_id', $subscription->id)
+                ->where('status', PaymentStatus::PENDING->value)
+                ->exists();
+
+            if ($hasPendingProof) {
+                throw new \DomainException(
+                    'A payment proof is already pending approval. Wait for the platform admin to review it before submitting another.',
+                    422
+                );
+            }
 
             // ── Store receipt file if provided ────────────────────────────
             $receiptPath = null;

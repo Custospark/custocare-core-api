@@ -5,8 +5,10 @@ namespace App\Services\Department;
 use App\Models\Department;
 use App\Repositories\Contracts\DepartmentRepositoryInterface;
 use App\Services\Contracts\DepartmentServiceInterface;
+use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class DepartmentService implements DepartmentServiceInterface
 {
@@ -17,14 +19,17 @@ class DepartmentService implements DepartmentServiceInterface
      */
     protected DepartmentRepositoryInterface $repository;
 
+    protected PlanLimitServiceInterface $planLimitService;
+
     /**
      * Constructor.
-     *
-     * @param DepartmentRepositoryInterface $repository
      */
-    public function __construct(DepartmentRepositoryInterface $repository)
-    {
+    public function __construct(
+        DepartmentRepositoryInterface $repository,
+        PlanLimitServiceInterface $planLimitService,
+    ) {
         $this->repository = $repository;
+        $this->planLimitService = $planLimitService;
     }
 
     /**
@@ -108,6 +113,19 @@ class DepartmentService implements DepartmentServiceInterface
                 if (!$validationResult['success']) {
                     DB::rollBack();
                     return $validationResult;
+                }
+
+                try {
+                    $this->planLimitService->assertCanAddDepartment((int) $data['facility_id']);
+                } catch (ValidationException $e) {
+                    DB::rollBack();
+
+                    return [
+                        'success' => false,
+                        'message' => collect($e->errors())->flatten()->first() ?? 'Department limit reached.',
+                        'errors' => $e->errors(),
+                        'status' => 422,
+                    ];
                 }
 
                 // -------------------------------

@@ -14,12 +14,18 @@ use App\Repositories\Billing\PlanRepository;
 use App\Repositories\Billing\SubscriptionRepository;
 use App\Services\Billing\Contracts\InvoiceServiceInterface;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
+use App\Services\Billing\AssignableModuleService;
+use App\Services\Billing\Contracts\AssignableModuleServiceInterface;
+use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
+use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Billing\Contracts\UsageServiceInterface;
 use App\Services\Billing\Gateways\GatewayManager;
 use App\Services\Billing\Gateways\GatewayService;
+use App\Services\Billing\FacilityStaffRoleModuleSyncService;
 use App\Services\Billing\InvoiceService;
 use App\Services\Billing\PaymentService;
+use App\Services\Billing\PlanLimitService;
 use App\Services\Billing\SubscriptionService;
 use App\Services\Billing\UsageService;
 use Illuminate\Support\ServiceProvider;
@@ -39,6 +45,15 @@ class BillingServiceProvider extends ServiceProvider
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
         $this->app->bind(InvoiceServiceInterface::class, InvoiceService::class);
         $this->app->bind(UsageServiceInterface::class, UsageService::class);
+        $this->app->bind(PlanLimitServiceInterface::class, PlanLimitService::class);
+        $this->app->bind(
+            FacilityStaffRoleModuleSyncServiceInterface::class,
+            FacilityStaffRoleModuleSyncService::class,
+        );
+        $this->app->bind(
+            AssignableModuleServiceInterface::class,
+            AssignableModuleService::class,
+        );
 
         // ── Gateway infrastructure ────────────────────────────────────────
         // GatewayManager is a singleton — one instance per request lifecycle,

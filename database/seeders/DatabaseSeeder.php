@@ -19,18 +19,19 @@ class DatabaseSeeder extends Seeder
         |--------------------------------------------------------------------------
         */
         $modules = [
-            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => true],
-            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => true],
-            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => true],
             ['code' => 'medical_records', 'name' => 'Medical Records', 'description' => 'Medical Records, Patient Registration & workflows', 'is_active' => true],
             ['code' => 'administration', 'name' => 'Administration', 'description' => 'Facility administration and management', 'is_active' => true],
-            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
             ['code' => 'billing', 'name' => 'Billing', 'description' => 'Billing, invoices, and insurance', 'is_active' => true],
-            ['code' => 'account','name' => 'Account','description' => 'Manage profile, security, invitations, messages, and preferences','is_active' => true],
-            // ADD NEW PLATFORM ADMINISTRATION MODULE
-            ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],
-            ['code' => 'ambulance', 'name' => 'Ambulance Services', 'description' => 'Fleet management, dispatch, and trip tracking', 'is_active' => true],
+            ['code' => 'account', 'name' => 'Account', 'description' => 'Manage profile, security, invitations, messages, and preferences', 'is_active' => true],
+            ['code' => 'patient_dashboard', 'name' => 'Patient Portal', 'description' => 'Patient self-service dashboard and health records', 'is_active' => true],
+            ['code' => 'custocare_hub', 'name' => 'Custocare Hub', 'description' => 'Learning, community, support, and product feedback', 'is_active' => true],
+            ['code' => 'nursing', 'name' => 'Nursing', 'description' => 'Nursing care and patient monitoring', 'is_active' => true],
+            ['code' => 'clinical', 'name' => 'Clinical', 'description' => 'Clinical workflows and patient care', 'is_active' => true],
+            ['code' => 'laboratory', 'name' => 'Laboratory', 'description' => 'Lab tests and diagnostics', 'is_active' => true],
+            ['code' => 'pharmacy', 'name' => 'Pharmacy', 'description' => 'Prescriptions and pharmaceutical inventory', 'is_active' => true],
             ['code' => 'referrals', 'name' => 'Referrals', 'description' => 'Patient referrals between facilities and providers', 'is_active' => true],
+            ['code' => 'ambulance', 'name' => 'Ambulance Services', 'description' => 'Fleet management, dispatch, and trip tracking', 'is_active' => true],
+            ['code' => 'platform_administration', 'name' => 'Platform Administration', 'description' => 'Global platform settings, system configuration, user management across all facilities', 'is_active' => true],
         ];
 
         foreach ($modules as $module) {
@@ -150,10 +151,34 @@ class DatabaseSeeder extends Seeder
         | module_code = JSON ARRAY
         |--------------------------------------------------------------------------
         */
+        $capabilityRoleToModuleMap = [
+            'patient' => ['account', 'patient_dashboard', 'custocare_hub'],
+            'staff'   => ['account', 'custocare_hub'],
+        ];
+
+        foreach ($capabilityRoleToModuleMap as $roleCode => $moduleCodes) {
+            $validModules = Module::whereIn('code', $moduleCodes)
+                ->where('is_active', true)
+                ->pluck('code')
+                ->values()
+                ->toArray();
+
+            if (empty($validModules)) {
+                Log::warning("⚠️ No valid modules for capability role: {$roleCode}");
+                continue;
+            }
+
+            RoleModuleDefault::updateOrCreate(
+                ['role_code' => $roleCode],
+                [
+                    'module_code'    => $validModules,
+                    'default_access' => true,
+                ]
+            );
+        }
+
         $spatieRoleToModuleMap = [
-            'super_admin' => ['account', 'platform_administration', 'ambulance', 'referrals'], // Super admin gets full access
-            // Add other Spatie roles here if needed
-            // 'global_viewer' => ['account', 'clinical_readonly'],
+            'super_admin' => ['account', 'platform_administration', 'custocare_hub'],
         ];
 
         foreach ($spatieRoleToModuleMap as $roleName => $moduleCodes) {

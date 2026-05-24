@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\Billing\AssignableModuleController;
 use App\Http\Controllers\Api\Billing\InvoiceController;
 use App\Http\Controllers\Api\Billing\PaymentController;
 use App\Http\Controllers\Api\Billing\PlanController;
@@ -81,7 +82,8 @@ Route::middleware(['auth:sanctum'])
             ->group(function () {
                 Route::get('/',          [PaymentController::class, 'index'])->name('index');
                 Route::post('/',         [PaymentController::class, 'store'])->name('store');
-                Route::get('/{payment}', [PaymentController::class, 'show']) ->name('show');
+                Route::get('/{payment}', [PaymentController::class, 'show'])->name('show');
+                Route::get('/{payment}/receipt', [PaymentController::class, 'receipt'])->name('receipt');
             });
 
         /*
@@ -101,6 +103,9 @@ Route::middleware(['auth:sanctum'])
         | GET    /facilities/{facility}/usage               → current usage counts
         */
         Route::get('/usage', [UsageController::class, 'index'])->name('usage');
+
+        Route::get('/assignable-modules', [AssignableModuleController::class, 'index'])
+            ->name('assignable-modules');
     });
 
 /*
@@ -187,6 +192,9 @@ Route::middleware(['auth:sanctum',])
 
                 Route::get('/{payment}', [Admin\PaymentController::class, 'show'])
                     ->name('show');
+
+                Route::get('/{payment}/receipt', [Admin\PaymentController::class, 'receipt'])
+                    ->name('receipt');
 
                 // ── Core manual billing approval endpoints ────────────────
                 Route::post('/{payment}/approve', [Admin\PaymentController::class, 'approve'])

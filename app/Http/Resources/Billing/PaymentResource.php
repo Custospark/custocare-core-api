@@ -25,6 +25,10 @@ class PaymentResource extends JsonResource
             'status_label'          => $this->status->label(),
             'transaction_reference' => $this->transaction_reference,
             'receipt_url'           => $this->receiptUrl(),
+            'receipt_download_url'  => $request->routeIs('admin.billing.*')
+                ? $this->adminReceiptDownloadUrl()
+                : $this->receiptDownloadUrl(),
+            'receipt_path'          => $this->receipt_path,
             'receipt_notes'         => $this->receipt_notes,
             'paid_at'               => $this->paid_at?->toISOString(),
             'approved_at'           => $this->approved_at?->toISOString(),

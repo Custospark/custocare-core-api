@@ -562,7 +562,8 @@ class StaffInvitationController extends Controller
         if (str_contains($message, 'duplicate') || 
             str_contains($message, 'already exists') ||
             str_contains($message, 'cannot update') ||
-            str_contains($message, 'cannot delete')) {
+            str_contains($message, 'cannot delete') ||
+            str_contains($message, 'limit reached')) {
             return 422;
         }
         

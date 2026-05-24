@@ -7,11 +7,13 @@ use App\Models\Staff;
 use App\Models\Visit;
 use App\Repositories\Contracts\VisitRepositoryInterface;
 use App\Services\Contracts\VisitServiceInterface;
+use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Auth as FacadesAuth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Visit Service Implementation
@@ -26,6 +28,8 @@ class VisitService implements VisitServiceInterface
      * @var VisitRepositoryInterface
      */
     protected $visitRepository;
+
+    protected PlanLimitServiceInterface $planLimitService;
 
     /**
      * Valid visit types
@@ -91,9 +95,12 @@ class VisitService implements VisitServiceInterface
      *
      * @param VisitRepositoryInterface $visitRepository
      */
-    public function __construct(VisitRepositoryInterface $visitRepository)
-    {
+    public function __construct(
+        VisitRepositoryInterface $visitRepository,
+        PlanLimitServiceInterface $planLimitService,
+    ) {
         $this->visitRepository = $visitRepository;
+        $this->planLimitService = $planLimitService;
     }
 
     /**
@@ -298,6 +305,18 @@ public function createVisit(array $data, int $staffId): array
         }
 
         // No existing active visit - create new one
+        try {
+            $this->planLimitService->assertCanCreateVisit((int) $data['facility_id']);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+
+            return [
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first() ?? 'Monthly visit limit reached.',
+                'errors' => $e->errors(),
+            ];
+        }
+
         // Set required fields
         $data['patient_id'] = $patient->id;
         $data['created_by_staff_id'] = $staffId;

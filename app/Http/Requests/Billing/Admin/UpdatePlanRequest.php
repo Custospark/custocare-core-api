@@ -26,6 +26,7 @@ class UpdatePlanRequest extends FormRequest
             'price_ugx'              => 'sometimes|numeric|min:0',
             'onboarding_fee_usd'     => 'nullable|numeric|min:0',
             'onboarding_fee_ugx'     => 'nullable|numeric|min:0',
+            'billing_cycle'          => 'sometimes|in:monthly',
             'trial_days'             => 'nullable|integer|min:0|max:90',
             'features'               => 'nullable|array',
             'features.*'             => 'boolean',

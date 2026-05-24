@@ -37,7 +37,12 @@ class PlanRepository implements PlanRepositoryInterface
     {
         return Plan::query()
             ->when(isset($filters['is_active']), fn($q) => $q->where('is_active', $filters['is_active']))
-            ->when(isset($filters['search']), fn($q) => $q->where('name', 'like', "%{$filters['search']}%"))
+            ->when(isset($filters['search']), function ($q) use ($filters) {
+                $term = '%'.$filters['search'].'%';
+                $q->where(fn ($inner) => $inner
+                    ->where('name', 'like', $term)
+                    ->orWhere('slug', 'like', $term));
+            })
             ->ordered()
             ->paginate($perPage);
     }

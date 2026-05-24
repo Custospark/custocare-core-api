@@ -7,6 +7,7 @@ namespace App\Services\Billing\Contracts;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Models\User;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 
 interface PaymentServiceInterface

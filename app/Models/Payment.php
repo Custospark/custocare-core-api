@@ -31,7 +31,7 @@ use Illuminate\Support\Carbon;
  * @property string|null    $receipt_notes
  * @property Carbon|null    $paid_at
  * @property Carbon|null    $approved_at
- * @property int|null       $approved_by_staff_id
+ * @property int|null       $approved_by_user_id
  * @property string|null    $rejection_reason
  * @property string|null    $gateway_name
  * @property string|null    $gateway_transaction_id
@@ -55,7 +55,7 @@ class Payment extends Model
         'receipt_notes',
         'paid_at',
         'approved_at',
-        'approved_by_staff_id',
+        'approved_by_user_id',
         'rejection_reason',
         'gateway_name',
         'gateway_transaction_id',
@@ -90,7 +90,7 @@ class Payment extends Model
 
     public function approvedBy(): BelongsTo
     {
-        return $this->belongsTo(Staff::class, 'approved_by_staff_id');
+        return $this->belongsTo(User::class, 'approved_by_user_id');
     }
 
     // ─────────────────────────────────────────────────────────────────────────

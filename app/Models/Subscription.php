@@ -31,7 +31,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null              $suspended_at
  * @property Carbon|null              $cancelled_at
  * @property Carbon|null              $approved_at
- * @property int|null                 $approved_by_staff_id
+ * @property int|null                 $approved_by_user_id
  * @property bool                     $onboarding_fee_paid
  * @property string|null              $notes
  * @property array|null               $metadata
@@ -52,7 +52,7 @@ class Subscription extends Model
         'suspended_at',
         'cancelled_at',
         'approved_at',
-        'approved_by_staff_id',
+        'approved_by_user_id',
         'onboarding_fee_paid',
         'notes',
         'metadata',
@@ -92,7 +92,7 @@ class Subscription extends Model
     /** Staff member who initially approved this subscription. */
     public function approvedBy(): BelongsTo
     {
-        return $this->belongsTo(Staff::class, 'approved_by_staff_id');
+        return $this->belongsTo(User::class, 'approved_by_user_id');
     }
 
     /** All payments recorded against this subscription. */

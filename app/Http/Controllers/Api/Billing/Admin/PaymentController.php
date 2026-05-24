@@ -72,17 +72,10 @@ class PaymentController extends Controller
     ): JsonResponse {
         try {
             $adminUser = $request->attributes->get('admin_user') ?? Auth::user();
-            $adminStaff = $adminUser?->staff()->first();
-            if (!$adminStaff) {
-                $adminStaff = app(\App\Services\Contracts\StaffServiceInterface::class)->createStaff([
-                    'user_id' => $adminUser->id,
-                    'employment_status' => 'active',
-                ]);
-            }
 
             $approved = $this->paymentService->approvePayment(
                 payment:    $payment,
-                approvedBy: $adminStaff,
+                approvedBy: $adminUser,
                 notes:      $request->input('notes')
             );
 

@@ -30,7 +30,7 @@ class PaymentResource extends JsonResource
             'approved_at'           => $this->approved_at?->toISOString(),
             'approved_by'           => $this->whenLoaded('approvedBy', function () {
                 return [
-                    'staff_id' => $this->approvedBy?->id,
+                    'user_id' => $this->approvedBy?->id,
                 ];
             }),
             'rejection_reason'      => $this->rejection_reason,

@@ -133,7 +133,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'grace_period_ends_at' => null,
                 'suspended_at'        => null,
                 'approved_at'         => $now,
-                'approved_by_staff_id' => $approvedBy ? $approvedBy->id :null,
+                'approved_by_user_id' => $approvedBy ? $approvedBy->id : null,
                 'onboarding_fee_paid' => $payment->payment_type === PaymentType::ONBOARDING
                     ? true
                     : $subscription->onboarding_fee_paid,

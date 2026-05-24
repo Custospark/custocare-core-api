@@ -7,8 +7,8 @@ namespace App\Services\Billing;
 use App\Enums\Billing\PaymentStatus;
 use App\Enums\Billing\PaymentType;
 use App\Models\Payment;
-use App\Models\Staff;
 use App\Models\Subscription;
+use App\Models\User;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
@@ -95,7 +95,7 @@ class PaymentService implements PaymentServiceInterface
      */
     public function approvePayment(
         Payment $payment,
-        Staff $approvedBy,
+        User $approvedBy,
         ?string $notes = null
     ): Payment {
         return DB::transaction(function () use ($payment, $approvedBy, $notes) {
@@ -111,7 +111,7 @@ class PaymentService implements PaymentServiceInterface
             $payment = $this->paymentRepo->update($payment, [
                 'status'               => PaymentStatus::APPROVED->value,
                 'approved_at'          => Carbon::now(),
-                'approved_by_staff_id' => $approvedBy->id,
+                'approved_by_user_id'  => $approvedBy->id,
                 'receipt_notes'        => $notes
                     ? ($payment->receipt_notes ? $payment->receipt_notes . "\nAdmin: $notes" : $notes)
                     : $payment->receipt_notes,
@@ -121,17 +121,12 @@ class PaymentService implements PaymentServiceInterface
             $subscription = $payment->subscription;
 
             match ($payment->payment_type) {
-                // ── Onboarding fee ────────────────────────────────────────
                 PaymentType::ONBOARDING => $this->subscriptionService->activateSubscription(
                     $subscription, $payment, $approvedBy
                 ),
-
-                // ── Initial subscription payment ──────────────────────────
                 PaymentType::SUBSCRIPTION => $this->subscriptionService->activateSubscription(
                     $subscription, $payment, $approvedBy
                 ),
-
-                // ── Renewal payment ───────────────────────────────────────
                 PaymentType::RENEWAL => $this->subscriptionService->renewSubscription(
                     $subscription, $payment, $approvedBy
                 ),
@@ -158,7 +153,7 @@ class PaymentService implements PaymentServiceInterface
      */
     public function rejectPayment(
         Payment $payment,
-        Staff $rejectedBy,
+        User $rejectedBy,
         string $reason
     ): Payment {
         if (! $payment->isPending()) {
@@ -170,8 +165,8 @@ class PaymentService implements PaymentServiceInterface
 
         $updated = $this->paymentRepo->update($payment, [
             'status'               => PaymentStatus::REJECTED->value,
-            'approved_at'          => Carbon::now(),   // re-use field as "actioned_at"
-            'approved_by_staff_id' => $rejectedBy->id,
+            'approved_at'          => Carbon::now(),
+            'approved_by_user_id'  => $rejectedBy->id,
             'rejection_reason'     => $reason,
         ]);
 

@@ -17,6 +17,12 @@ class AssignableModuleService implements AssignableModuleServiceInterface
         'platform_administration',
     ];
 
+    /** Always grant access regardless of plan tier (patient portal + hub). */
+    private const ALWAYS_ACCESSIBLE_MODULE_CODES = [
+        'patient_dashboard',
+        'custocare_hub',
+    ];
+
     public function __construct(
         private readonly PlanLimitServiceInterface $planLimitService,
         private readonly SubscriptionRepositoryInterface $subscriptionRepository,
@@ -29,10 +35,13 @@ class AssignableModuleService implements AssignableModuleServiceInterface
             $includeOwnerAdministration,
         );
 
-        $invitationCodes = array_values(array_filter(
-            $assignableCodes,
-            fn (string $code) => ! in_array($code, self::EXCLUDED_INVITATION_MODULE_CODES, true),
-        ));
+        $invitationCodes = array_values(array_unique(array_merge(
+            array_values(array_filter(
+                $assignableCodes,
+                fn (string $code) => ! in_array($code, self::EXCLUDED_INVITATION_MODULE_CODES, true),
+            )),
+            self::ALWAYS_ACCESSIBLE_MODULE_CODES,
+        )));
 
         $modules = Module::query()
             ->where('is_active', true)

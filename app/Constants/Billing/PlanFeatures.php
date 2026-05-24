@@ -40,6 +40,7 @@ final class PlanFeatures
     public const ALWAYS_AVAILABLE_MODULES = [
         'account',
         'custocare_hub',
+        'patient_dashboard',
     ];
 
     /**

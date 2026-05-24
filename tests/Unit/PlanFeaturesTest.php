@@ -54,7 +54,7 @@ class PlanFeaturesTest extends TestCase
             ['medical_records'],
         );
 
-        $this->assertSame(['medical_records', 'account', 'custocare_hub'], $result);
+        $this->assertSame(['medical_records', 'account', 'custocare_hub', 'patient_dashboard'], $result);
     }
 
     public function test_is_restricted_only_module_set_detects_owner_and_staff_fallbacks(): void

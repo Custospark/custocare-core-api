@@ -12,6 +12,7 @@ use App\Models\Payment;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 /**
@@ -70,11 +71,18 @@ class PaymentController extends Controller
         Payment $payment
     ): JsonResponse {
         try {
-            $adminUser = $request->attributes->get('admin_user');
+            $adminUser = $request->attributes->get('admin_user') ?? Auth::user();
+            $adminStaff = $adminUser?->staff()->first();
+            if (!$adminStaff) {
+                $adminStaff = app(\App\Services\Contracts\StaffServiceInterface::class)->createStaff([
+                    'user_id' => $adminUser->id,
+                    'employment_status' => 'active',
+                ]);
+            }
 
             $approved = $this->paymentService->approvePayment(
                 payment:    $payment,
-                approvedBy: $adminUser,
+                approvedBy: $adminStaff,
                 notes:      $request->input('notes')
             );
 

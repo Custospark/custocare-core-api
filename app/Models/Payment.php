@@ -11,8 +11,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Filesystem\FilesystemAdapter;
 /**
  * Class Payment
  *
@@ -134,9 +132,6 @@ class Payment extends Model
             return null;
         }
 
-        /** @var FilesystemAdapter $disk */
-        $disk = Storage::disk('public');
-
-        return $disk->url($this->receipt_path);
-}
+        return asset('storage/' . $this->receipt_path);
+    }
 }

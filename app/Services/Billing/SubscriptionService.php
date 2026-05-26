@@ -97,6 +97,11 @@ class SubscriptionService implements SubscriptionServiceInterface
             $selectedCycle = $options['billing_cycle'] ?? $plan->billing_cycle ?? 'monthly';
             $monthsToAdd = BillingCycle::tryFrom($selectedCycle)?->monthsToAdd() ?? 1;
 
+            // Billing period starts after trial ends so users enjoy full trial days
+            $billingStartsFrom = $trialEndsAt && $trialEndsAt->isFuture()
+                ? $trialEndsAt->copy()
+                : $now->copy();
+
             // ── Build the subscription payload ────────────────────────────
             $subscription = $this->subscriptionRepo->create([
                 'facility_id'        => $facility->id,
@@ -105,8 +110,8 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'status'             => $status,
                 'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
-                'ends_at'            => $now->copy()->addMonths($monthsToAdd),
-                'next_billing_date'  => $now->copy()->addMonths($monthsToAdd),
+                'ends_at'            => $billingStartsFrom->copy()->addMonths($monthsToAdd),
+                'next_billing_date'  => $billingStartsFrom->copy()->addMonths($monthsToAdd),
                 'onboarding_fee_paid' => false,
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,

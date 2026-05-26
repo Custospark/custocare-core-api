@@ -292,3 +292,39 @@ User Action → Controller/Service → Dispatch Event → Reverb → Echo Client
 - Auth token must be present in localStorage for Echo private channel auth
 
 ---
+
+## Message Center — `messages` body encryption at rest — 2026-05-26
+
+### Purpose
+Store message **body** ciphertext in the database; API consumers still send/receive plaintext `body` over HTTPS. **Subject** stays plaintext for folder search and alphabetical sort.
+
+### Storage
+
+| Column | Role |
+|--------|------|
+| `body_encrypted` | Laravel `encrypt()` ciphertext (AES-256-CBC, `APP_KEY`) |
+| `body` | Legacy plaintext — cleared on write; used only as decrypt fallback for unmigrated rows |
+
+### API (unchanged contract)
+
+| Method | Path | Body field |
+|--------|------|------------|
+| POST | `/api/messages` | Request/response `body` is plaintext JSON |
+| PUT | `/api/messages/{id}` | Same |
+| GET | `/api/messages`, `/api/messages/{id}` | Decrypted `body` in JSON |
+
+### Search behaviour
+- Folder search matches **subject**, sender name, recipient email/phone/name, labels.
+- **Body text is not searchable** while encrypted (v1 trade-off).
+
+### Implementation
+- `App\Services\Message\MessageBodyCipher` — `encrypt()` / `decrypt()` helpers
+- `App\Models\Message` — `body` accessor/mutator; `body_encrypted` hidden from serialization
+- Migration `2026_05_26_120000_add_body_encrypted_to_messages_table` — adds column + backfills existing rows
+
+### Operations
+```bash
+php artisan migrate
+```
+
+---

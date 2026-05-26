@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Services\Message\MessageBodyCipher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -19,6 +20,7 @@ use Illuminate\Support\Str;
  * @property int         $sender_id
  * @property string|null $subject
  * @property string|null $body
+ * @property string|null $body_encrypted
  * @property string      $body_type         plain|html|markdown
  * @property string      $status            draft|scheduled|sending|sent|failed
  * @property string      $priority          low|normal|high
@@ -64,6 +66,7 @@ class Message extends Model
         'sender_id',
         'subject',
         'body',
+        'body_encrypted',
         'body_type',
         'status',
         'priority',
@@ -77,6 +80,10 @@ class Message extends Model
         'character_count',
         'last_auto_saved_at',
         'metadata',
+    ];
+
+    protected $hidden = [
+        'body_encrypted',
     ];
 
     protected $casts = [
@@ -105,12 +112,36 @@ class Message extends Model
 
         // Recompute body metrics on every save
         static::saving(function (self $model): void {
-            if ($model->isDirty('body') && $model->body !== null) {
-                $plain               = strip_tags($model->body);
-                $model->word_count   = str_word_count($plain);
+            if (($model->isDirty('body') || $model->isDirty('body_encrypted')) && $model->body !== null) {
+                $plain                  = strip_tags($model->body);
+                $model->word_count      = str_word_count($plain);
                 $model->character_count = mb_strlen($plain);
             }
         });
+    }
+
+    /**
+     * Plaintext body for API output (decrypted from body_encrypted).
+     */
+    public function getBodyAttribute(): ?string
+    {
+        return MessageBodyCipher::decrypt(
+            $this->attributes['body_encrypted'] ?? null,
+            $this->attributes['body'] ?? null,
+        );
+    }
+
+    /**
+     * Persist body only as ciphertext; clear legacy plaintext column.
+     *
+     * @param  string|null  $value
+     */
+    public function setBodyAttribute($value): void
+    {
+        $this->attributes['body_encrypted'] = MessageBodyCipher::encrypt(
+            is_string($value) ? $value : null,
+        );
+        $this->attributes['body'] = null;
     }
 
     // ── Relationships ────────────────────────────────────────────────────

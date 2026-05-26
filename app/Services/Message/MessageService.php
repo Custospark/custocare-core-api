@@ -165,7 +165,6 @@ class MessageService
         
         return $query->where(function (Builder $q) use ($term, $user) {
             $q->where('messages.subject', 'LIKE', $term)
-              ->orWhere('messages.body', 'LIKE', $term)
               ->orWhereHas('message.sender', function (Builder $sq) use ($term) {
                   $sq->where('display_name', 'LIKE', $term)
                      ->orWhere('first_name', 'LIKE', $term)

@@ -404,7 +404,9 @@ class SubscriptionService implements SubscriptionServiceInterface
                     'cancel_at_period_end' => false,
                     'access_ends_at'       => null,
                     'pending_upgrade_plan_id' => null,
-                    'billing_period_price_usd' => round((float) $plan->price_usd, 2),
+                    'billing_period_price_usd' => $subscription->billing_cycle === 'yearly'
+                        ? round((float) $plan->price_usd * 10, 2)
+                        : round((float) $plan->price_usd, 2),
                     'billing_period_price_locked_at' => Carbon::now()->toISOString(),
                 ]),
                 'notes'    => $this->appendNote(

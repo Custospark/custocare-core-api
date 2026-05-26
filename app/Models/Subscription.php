@@ -236,7 +236,13 @@ class Subscription extends Model
             return (float) $this->metadata['billing_period_price_usd'];
         }
 
-        return (float) ($this->plan?->price_usd ?? 0);
+        $price = (float) ($this->plan?->price_usd ?? 0);
+
+        if ($this->billing_cycle === 'yearly') {
+            return round($price * 10, 2);
+        }
+
+        return $price;
     }
 
     /** Calendar days until trial end or current period end. */

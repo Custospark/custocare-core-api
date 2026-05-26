@@ -27,7 +27,7 @@ final class SubscriptionProrationCalculator
         $now = Carbon::now()->startOfDay();
         $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
         $endsAt = ($subscription->currentPeriodEndsAt() ?? $now->copy()->addMonths($monthsToAdd))->copy()->startOfDay();
-        $startsAt = ($subscription->starts_at ?? $now->copy()->subMonth())->copy()->startOfDay();
+        $startsAt = ($subscription->starts_at ?? $now->copy()->subMonths($monthsToAdd))->copy()->startOfDay();
 
         $daysInPeriod = max(1, (int) $startsAt->diffInDays($endsAt));
         $daysRemaining = $endsAt->lte($now)
@@ -35,7 +35,10 @@ final class SubscriptionProrationCalculator
             : (int) $now->diffInDays($endsAt);
 
         $oldPrice = $subscription->billingPeriodPriceUsd();
-        $newPrice = (float) $targetPlan->price_usd;
+        $isYearly = $subscription->billing_cycle === 'yearly';
+        $newPrice = $isYearly
+            ? round((float) $targetPlan->price_usd * 10, 2)
+            : (float) $targetPlan->price_usd;
 
         $creditUnused = round($oldPrice * ($daysRemaining / $daysInPeriod), 2);
         $chargeNew = round($newPrice * ($daysRemaining / $daysInPeriod), 2);

@@ -16,6 +16,13 @@ class InvoiceRepository implements InvoiceRepositoryInterface
         return Invoice::with(['subscription.plan', 'facility'])->find($id);
     }
 
+    public function findByPaymentId(int $paymentId): ?Invoice
+    {
+        return Invoice::with(['subscription.plan', 'facility', 'payment'])
+            ->where('payment_id', $paymentId)
+            ->first();
+    }
+
     public function findByInvoiceNumber(string $invoiceNumber): ?Invoice
     {
         return Invoice::with(['subscription.plan', 'facility'])
@@ -37,7 +44,15 @@ class InvoiceRepository implements InvoiceRepositoryInterface
     public function getForFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         return Invoice::forFacility($facilityId)
-            ->with(['subscription.plan'])
+            ->with(['subscription.plan', 'payment'])
+            ->when(
+                ! empty($filters['payable_only']),
+                fn ($q) => $q->whereIn('status', [
+                    InvoiceStatus::UNPAID,
+                    InvoiceStatus::OVERDUE,
+                    InvoiceStatus::PARTIALLY_PAID,
+                ])
+            )
             ->when(
                 isset($filters['status']),
                 fn($q) => $q->where('status', $filters['status'])

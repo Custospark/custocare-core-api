@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\Billing\AssignableModuleController;
+use App\Http\Controllers\Api\Billing\BillingDocumentController;
 use App\Http\Controllers\Api\Billing\InvoiceController;
 use App\Http\Controllers\Api\Billing\PaymentController;
 use App\Http\Controllers\Api\Billing\PlanController;
@@ -100,6 +101,20 @@ Route::middleware(['auth:sanctum'])
             ->group(function () {
                 Route::get('/',          [InvoiceController::class, 'index'])->name('index');
                 Route::get('/{invoice}', [InvoiceController::class, 'show']) ->name('show');
+            });
+
+        /*
+        |── Billing documents (invoices & payment receipts) ─────────────────
+        */
+        Route::prefix('billing-documents')
+            ->name('billing-documents.')
+            ->group(function () {
+                Route::get('/invoices', [BillingDocumentController::class, 'invoices'])->name('invoices.index');
+                Route::get('/invoices/{invoice}', [BillingDocumentController::class, 'invoice'])->name('invoices.show');
+                Route::get('/invoices/{invoice}/pdf', [BillingDocumentController::class, 'invoicePdf'])->name('invoices.pdf');
+                Route::get('/receipts', [BillingDocumentController::class, 'receipts'])->name('receipts.index');
+                Route::get('/receipts/{payment}', [BillingDocumentController::class, 'receipt'])->name('receipts.show');
+                Route::get('/receipts/{payment}/pdf', [BillingDocumentController::class, 'receiptPdf'])->name('receipts.pdf');
             });
 
         /*

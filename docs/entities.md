@@ -38,6 +38,9 @@ Resolved by `SubscriptionPaymentActionResolver` on each subscription show:
 | `label` | string\|null | e.g. "Complete payment" |
 | `message` | string\|null | Facility-facing guidance |
 
+### Billing logic — trial day carry-forward
+- `SubscriptionService::activateSubscription()` calculates remaining trial days when a facility pays mid-trial and adds them to the billing period: `next_billing_date = now + 30 days + remaining_trial_days`. Prevents losing unused trial time on early payment.
+
 ### Services & bindings (`BillingServiceProvider`)
 - `SubscriptionScheduledChangeRepositoryInterface` → `SubscriptionScheduledChangeRepository`
 - `SubscriptionScheduledChangeServiceInterface` → `SubscriptionScheduledChangeService`
@@ -380,5 +383,153 @@ Store message **body** ciphertext in the database; API consumers still send/rece
 ```bash
 php artisan migrate
 ```
+
+---
+
+## PDF Billing Documents (Invoices & Receipts) — 2026-05-26
+
+### Purpose
+Generate server-side PDF files for billing invoices and receipts, replacing the previous `.html` file download.
+
+### Stack
+- `barryvdh/laravel-dompdf` (^3.1) — PHP PDF rendering engine
+- Blade templates with dompdf-compatible CSS (DejaVu Sans font, float-based layout, `@page` margins)
+
+### Blade Templates (`resources/views/pdf/billing/`)
+| Template | Visual |
+|----------|--------|
+| `invoice.blade.php` | Blue header banner, bill-to section, line items table, totals with balance due, footer |
+| `receipt.blade.php` | Emerald header banner, received-from section, payment details box, totals, footer |
+
+Both templates reuse the same data shape from `SubscriptionBillingDocumentServiceInterface` (`buildInvoiceDocument()` / `buildReceiptDocument()`).
+
+### Service Interface → Implementation
+| Interface | Implementation |
+|-----------|---------------|
+| `SubscriptionBillingPdfServiceInterface` | `SubscriptionBillingPdfService` |
+
+### Service Methods
+| Method | Input | Returns |
+|--------|-------|---------|
+| `downloadInvoicePdf()` | `Invoice` model | `BinaryFileResponse` (PDF download) |
+| `downloadReceiptPdf()` | `Payment` model | `BinaryFileResponse` (PDF download) |
+
+Each method loads the Blade template via `Pdf::loadView()`, passing the document data array, and streams the rendered PDF as a downloadable response.
+
+### API Endpoints (facility, under `/facilities/{facility}/billing-documents`)
+| Method | Path | Name | Notes |
+|--------|------|------|-------|
+| GET | `/invoices/{invoice}/pdf` | `billing-documents.invoices.pdf` | Validates facility ownership |
+| GET | `/receipts/{payment}/pdf` | `billing-documents.receipts.pdf` | Validates facility ownership + `approved` status |
+
+### Controller Methods (`BillingDocumentController`)
+- `invoicePdf()` — Validates facility ownership, streams PDF download
+- `receiptPdf()` — Validates facility ownership + approved status, streams PDF download
+- Both inject `SubscriptionBillingPdfServiceInterface` as `$pdfService`
+
+### Provider Binding (`BillingServiceProvider`)
+```php
+SubscriptionBillingPdfServiceInterface::class => SubscriptionBillingPdfService::class
+```
+
+### Data Flow
+```
+User clicks Download → BillingDocumentPreviewModal.handleDownload()
+  → axiosInstance GET /facilities/{id}/billing-documents/invoices/{id}/pdf
+  → BillingDocumentController.invoicePdf()
+    → SubscriptionBillingPdfService.downloadInvoicePdf()
+      → SubscriptionBillingDocumentService.buildInvoiceDocument()
+      → Pdf::loadView('pdf.billing.invoice', $data)->download()
+  → FE creates blob URL → <a download="Invoice-{number}.pdf"> click
+```
+
+### Error Handling
+- FE falls back to HTML download if the PDF endpoint returns an error
+
+---
+
+## Billing Email Notifications — 2026-05-26
+
+### Purpose
+Send automated email notifications to facility owners for six billing events: subscription activation, payment submission, payment approval, upgrade now, schedule plan change, and scheduled change applied.
+
+### Email Events
+
+| Event | Trigger Point | Subject | Attachment | Sent By |
+|-------|--------------|---------|------------|---------|
+| Trial activated | `SubscriptionService::activateSubscription()` | "Your [Plan] subscription is now active" | Invoice PDF (from `generateInvoicePdfContent()`) | `NotificationService::sendBillingToFacility()` |
+| Payment submitted | `PaymentService::recordPayment()` | "Payment proof received — pending review" | None | `NotificationService::sendBillingToFacility()` |
+| Payment approved | `PaymentService::approvePayment()` | "Payment approved — receipt #[number]" | Receipt PDF (from `generateReceiptPdfContent()`) | `NotificationService::sendBillingToFacility()` |
+| Upgrade (immediate) | `SubscriptionService::upgradeNow()` | "Your plan has been upgraded to [Plan]" | None | `NotificationService::sendBillingToFacility()` |
+| Schedule change | `SubscriptionScheduledChangeService::schedulePlanChange()` | "Your [upgrade/plan change] to [Plan] has been scheduled" | None | `NotificationService::sendBillingToFacility()` |
+| Scheduled change applied | `SubscriptionScheduledChangeService::applyScheduledPlanChange()` | "Your plan has been changed to [Plan]" | None | `NotificationService::sendBillingToFacility()` |
+
+### Bug Fix — Invoice on Payment, Not Subscription
+
+The trial activation email originally accessed `$updated->invoice`, but the `Subscription` model has no `invoice` relationship — it's on the `Payment` model. Fixed to load `$payment->loadMissing('invoice')` and use `$payment->invoice`.
+
+### Email Template Redesign (`resources/views/emails/standard.blade.php`)
+
+- Removed blue-to-emerald gradient header background (`linear-gradient(90deg, #2563eb 0%, #059669 100%)`)
+- Header now white background with "Custospark" brand name in blue-500 (`#3b82f6`)
+- Single blue horizontal divider (`2px solid #3b82f6`) below the brand section
+- Title (`h1`) moved below the divider with light gray top border
+- Brand text (`parent-brand`, `tagline`) changed to gray
+- Logo border changed from white-on-white to `#e5e7eb` (visible)
+- Body content, CTA tip, and footer remain unchanged
+
+### New/Modified Files
+
+| File | Change |
+|------|--------|
+| `app/Mail/StandardEmail.php` | Added `$fileAttachments` constructor param (`array`, default `[]`); `attachments()` maps entries via `Attachment::fromData()` with MIME type |
+| `app/Services/Notification/NotificationService.php` | Added `sendBillingToFacility()` method |
+| `app/Services/Billing/SubscriptionBillingPdfService.php` | Added `generateInvoicePdfContent()` and `generateReceiptPdfContent()`; existing `download*` methods refactored to delegate to content generators |
+| `app/Services/Billing/SubscriptionService.php` | Injected `SubscriptionBillingPdfServiceInterface` + `NotificationService`; calls `sendBillingToFacility()` after `activateSubscription()`; fixed invoice lookup (`$updated->invoice` → `$payment->invoice`); added email after `upgradeNow()` |
+| `app/Services/Billing/PaymentService.php` | Injected `SubscriptionBillingPdfServiceInterface` + `NotificationService`; calls `sendBillingToFacility()` after `recordPayment()` and `approvePayment()` |
+| `app/Services/Billing/SubscriptionScheduledChangeService.php` | Injected `NotificationService`; sends confirmation email in `schedulePlanChange()` and notification in `applyScheduledPlanChange()` |
+| `resources/views/emails/standard.blade.php` | Header redesign (white background, Custospark brand, blue divider, gray text) |
+
+### `SubscriptionBillingPdfServiceInterface` — New Methods
+
+| Method | Input | Returns | Used By |
+|--------|-------|---------|---------|
+| `generateInvoicePdfContent(Invoice $invoice): string` | Invoice model | Raw PDF binary string | `StandardEmail` attachment |
+| `generateReceiptPdfContent(Payment $payment): string` | Payment model | Raw PDF binary string | `StandardEmail` attachment |
+
+### `NotificationService::sendBillingToFacility()` — Behaviour
+
+1. Sends to `$facility->email` directly if set (direct facility email)
+2. Queries facility owners via `facility_owners → staff → users` relationship chain
+3. Decrypts owner emails, deduplicates recipients
+4. Sends via `StandardEmail` with optional PDF attachment (Invoice or Receipt)
+5. Logs success/failure per recipient — failures don't break the calling transaction
+
+### `StandardEmail` — New `$fileAttachments` Param
+
+```php
+new StandardEmail(
+    subject: '...',
+    body: '...',
+    fileAttachments: [
+        ['data' => $pdfBinary, 'name' => 'Invoice-INV-2026-0001.pdf', 'mime' => 'application/pdf']
+    ]
+)
+```
+
+Each attachment array must contain: `data` (raw binary), `name` (filename string), `mime` (MIME type string). The `attachments()` method creates `Attachment::fromData()` instances — no temp files are written to disk.
+
+### Data Flow
+
+```
+Subscription activated / Payment recorded / Payment approved
+  → injected service calls $notificationService->sendBillingToFacility()
+    → resolves recipient emails (facility direct + owner staff → user)
+    → creates StandardEmail with optional PDF content from PdfService
+    → Mail::send() per unique recipient (try/catch per address)
+```
+
+### Provider Bindings
+No new bindings — uses existing `SubscriptionBillingPdfServiceInterface` → `SubscriptionBillingPdfService` binding in `BillingServiceProvider`.
 
 ---

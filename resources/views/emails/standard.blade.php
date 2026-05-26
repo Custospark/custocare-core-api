@@ -37,9 +37,7 @@
         }
 
         .email-header {
-            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
-            color: #ffffff;
-            padding: 32px 24px 24px;
+            padding: 32px 24px 0;
             text-align: center;
         }
 
@@ -49,21 +47,28 @@
             margin-bottom: 12px;
             background-color: white;
             padding: 4px;
-            border: 2px solid rgba(255, 255, 255, 0.2);
+            border: 2px solid #e5e7eb;
         }
 
-        .brand-section { margin-bottom: 16px; }
-        .parent-brand { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; opacity: .9; margin-bottom: 4px; }
-        .brand-name { font-size: 24px; font-weight: 700; color: white; margin-bottom: 4px; line-height: 1.2; }
-        .tagline { font-size: 14px; opacity: .9; font-weight: 400; margin-bottom: 20px; }
+        .brand-section { margin-bottom: 12px; }
+        .parent-brand { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #9ca3af; margin-bottom: 4px; }
+        .brand-name { font-size: 24px; font-weight: 700; color: #3b82f6; margin-bottom: 4px; line-height: 1.2; }
+        .tagline { font-size: 14px; color: #6b7280; font-weight: 400; margin-bottom: 0; }
+
+        .brand-divider {
+            border: 0;
+            height: 2px;
+            background: #3b82f6;
+            margin: 16px 24px;
+        }
 
         .email-header h1 {
-            margin: 20px 0 0;
+            margin: 20px 24px 0;
+            padding: 20px 0 0;
             font-size: 20px;
             font-weight: 500;
-            opacity: .95;
-            border-top: 1px solid rgba(255, 255, 255, 0.2);
-            padding-top: 20px;
+            color: #111827;
+            border-top: 1px solid #e5e7eb;
         }
 
         .email-body {
@@ -125,7 +130,6 @@
 
         {{-- ── Header ──────────────────────────────────────────────────── --}}
         <div class="email-header">
-            {{-- FIX 1: Check if logoPath exists and file exists before embedding --}}
             @php
                 $logoToUse = $logoPath ?? public_path('images/continuousLogoLight.png');
                 $logoExists = file_exists($logoToUse);
@@ -136,8 +140,7 @@
                      alt="{{ config('app.name') }}"
                      class="logo-rounded">
             @else
-                {{-- Fallback to text logo if image doesn't exist --}}
-                <div style="font-size: 32px; font-weight: bold; margin-bottom: 12px;">📧</div>
+                <div style="font-size: 32px; font-weight: bold; margin-bottom: 12px; color: #3b82f6;">📧</div>
             @endif
 
             <div class="brand-section">
@@ -145,6 +148,8 @@
                 <div class="brand-name">Custospark</div>
                 <div class="tagline">Innovation That Powers Excellence</div>
             </div>
+
+            <hr class="brand-divider">
 
             <h1>{{ $title }}</h1>
         </div>

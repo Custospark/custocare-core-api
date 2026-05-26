@@ -10,6 +10,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 interface InvoiceRepositoryInterface
 {
     public function findById(int $id): ?Invoice;
+    public function findByPaymentId(int $paymentId): ?Invoice;
     public function findByInvoiceNumber(string $invoiceNumber): ?Invoice;
     public function create(array $data): Invoice;
     public function update(Invoice $invoice, array $data): Invoice;

@@ -15,6 +15,7 @@ class InvoiceResource extends JsonResource
             'id'             => $this->id,
             'facility_id'    => $this->facility_id,
             'subscription_id'=> $this->subscription_id,
+            'payment_id'     => $this->payment_id,
             'invoice_number' => $this->invoice_number,
             'invoice_type'   => $this->invoice_type->value,
             'invoice_type_label' => $this->invoice_type->label(),

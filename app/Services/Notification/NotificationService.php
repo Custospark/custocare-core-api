@@ -6,9 +6,11 @@ declare(strict_types=1);
 namespace App\Services\Notification;
 
 use App\Mail\StandardEmail;
+use App\Models\Facility;
 use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -54,6 +56,73 @@ class NotificationService
 
         if (in_array($channel, ['email', 'both'], true)) {
             $this->dispatchEmail($user, $title, $body);
+        }
+    }
+
+    /**
+     * Send a billing email to a facility's owner(s) and the facility's direct email.
+     *
+     * @param  Facility                                            $facility
+     * @param  string                                              $subject
+     * @param  string                                              $body        HTML body
+     * @param  array<int, array{data: string, name: string, mime: string}>  $attachments
+     */
+    public function sendBillingToFacility(
+        Facility $facility,
+        string   $subject,
+        string   $body,
+        array    $attachments = [],
+    ): void {
+        $emails = [];
+
+        // Facility's direct email
+        if ($facility->email) {
+            $emails[] = $facility->email;
+        }
+
+        // Facility owners' emails (facility_owners → staff → users)
+        $owners = DB::table('facility_owners')
+            ->join('staff', 'facility_owners.staff_id', '=', 'staff.id')
+            ->join('users', 'staff.user_id', '=', 'users.id')
+            ->where('facility_owners.facility_id', $facility->id)
+            ->whereNotNull('users.email_encrypted')
+            ->select('users.id', 'users.email_encrypted')
+            ->get();
+
+        foreach ($owners as $owner) {
+            try {
+                $emails[] = decrypt($owner->email_encrypted);
+            } catch (\Exception $e) {
+                Log::warning('sendBillingToFacility: failed to decrypt owner email', [
+                    'user_id'     => $owner->id,
+                    'facility_id' => $facility->id,
+                ]);
+            }
+        }
+
+        $emails = array_unique(array_filter($emails));
+
+        foreach ($emails as $email) {
+            try {
+                Mail::to($email)->send(new StandardEmail(
+                    title:           $subject,
+                    mailBody:        $body,
+                    isHtml:          true,
+                    fileAttachments: $attachments,
+                ));
+
+                Log::info('Billing email sent', [
+                    'email'       => $email,
+                    'facility_id' => $facility->id,
+                    'subject'     => $subject,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Billing email failed', [
+                    'email'       => $email,
+                    'facility_id' => $facility->id,
+                    'error'       => $e->getMessage(),
+                ]);
+            }
         }
     }
 

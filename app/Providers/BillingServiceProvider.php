@@ -20,10 +20,14 @@ use App\Services\Billing\AssignableModuleService;
 use App\Services\Billing\Contracts\AssignableModuleServiceInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\PlanLimitServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionBillingDocumentServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionBillingPdfServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Billing\Contracts\UsageServiceInterface;
+use App\Services\Billing\SubscriptionBillingDocumentService;
+use App\Services\Billing\SubscriptionBillingPdfService;
 use App\Services\Billing\SubscriptionPaymentQuoteService;
 use App\Services\Billing\SubscriptionScheduledChangeService;
 use App\Services\Billing\Gateways\GatewayManager;
@@ -50,6 +54,14 @@ class BillingServiceProvider extends ServiceProvider
         // ── Services ──────────────────────────────────────────────────────
         $this->app->bind(SubscriptionScheduledChangeServiceInterface::class, SubscriptionScheduledChangeService::class);
         $this->app->bind(SubscriptionPaymentQuoteServiceInterface::class, SubscriptionPaymentQuoteService::class);
+        $this->app->bind(
+            SubscriptionBillingDocumentServiceInterface::class,
+            SubscriptionBillingDocumentService::class,
+        );
+        $this->app->bind(
+            SubscriptionBillingPdfServiceInterface::class,
+            SubscriptionBillingPdfService::class,
+        );
         $this->app->bind(SubscriptionServiceInterface::class, SubscriptionService::class);
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
         $this->app->bind(InvoiceServiceInterface::class, InvoiceService::class);

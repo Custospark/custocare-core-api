@@ -157,3 +157,109 @@ The `staff()` relationship already existed on the User model, and the rest of th
 
 **Trade-offs:**
 - The `??=` defaults match the DB column defaults (`'Tablet'`, `'tablet(s)'`, `'Day(s)'`, etc.) — no behavioral change for properly populated templates.
+
+---
+
+## 2026-05-26: Subscription Billing — Remaining Trial Days Carried Forward on Activation
+
+**Context:** `activateSubscription()` in `SubscriptionService.php` unconditionally set `next_billing_date = now + 1 month` when a facility paid during their trial period. This meant paying on day 10 of a 14-day trial lost the remaining 4 trial days — the facility paid for a full month but got only 20 days of access.
+
+**Decision:**
+- Calculate remaining trial days when activating: `$remainingTrialDays = $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture() ? max(0, $now->diffInDays($subscription->trial_ends_at, false)) : 0`
+- Set `$periodEnd = $now->copy()->addMonth()->addDays($remainingTrialDays)`
+- This carries forward any unused trial time into the next billing period, so paying on day 10 of a 14-day trial results in `next_billing_date = now + 30 + 4 days`.
+
+**Files changed (BE — 1 file):**
+- `app/Services/Billing/SubscriptionService.php:139-143` — added remaining trial day calculation before setting `next_billing_date`
+
+**Trade-offs:**
+- `diffInDays(false)` returns a negative value if `trial_ends_at` is in the past, so `max(0, ...)` safely floors to 0 for expired trials — no behavioral change for the common case.
+- The carry-forward only applies to the *initial* activation during a trial. Scheduled changes (upgrades/downgrades via `SubscriptionScheduledChangeService`) use `subscriptions.next_billing_date` directly and are unaffected by this logic.
+
+---
+
+## 2026-05-26: Billing Email Notifications — Activation, Payment Submission, Payment Approval
+
+**Context:** Facility owners had no automated email notification when their subscription activated (trial started), when they submitted a payment proof, or when an admin approved their payment. Owners had to manually check the platform or wait for external communication.
+
+**Decisions:**
+
+1. **`NotificationService::sendBillingToFacility()`** — shared method that sends to the facility's direct email (`$facility->email`) if set, then queries facility owners via `facility_owners → staff → users` to get owner emails. Decrypts and deduplicates before sending.
+
+2. **`StandardEmail` extended with `$fileAttachments`** — added `array $fileAttachments = []` constructor parameter. Each entry has `{data, name, mime}`. The `attachments()` method uses `Attachment::fromData()` to attach content in-memory — no temp files.
+
+3. **PDF content generation methods** — `SubscriptionBillingPdfServiceInterface` gained `generateInvoicePdfContent(Invoice): string` and `generateReceiptPdfContent(Payment): string`, each returning raw PDF binary. Existing `downloadInvoicePdf()`/`downloadReceiptPdf()` were refactored to delegate to these new methods, keeping download behavior unchanged.
+
+4. **Three trigger points:**
+   - `SubscriptionService::activateSubscription()` — sends invoice PDF after activation
+   - `PaymentService::recordPayment()` — sends confirmation (no attachment) after proof submission
+   - `PaymentService::approvePayment()` — sends receipt PDF after admin approval
+
+5. **Failure isolation** — email sending is wrapped in `try/catch` per recipient. A failed email logs the error but does not roll back the transaction (activation/approval still proceeds).
+
+**Email content by event:**
+
+| Event | Subject | Body includes | Attachment |
+|-------|---------|--------------|------------|
+| Trial activated | "Your [Plan] subscription is now active" | Plan name, facility name, invoice number | Invoice PDF |
+| Payment submitted | "Payment proof received — pending review" | Amount, plan name, transaction reference | None |
+| Payment approved | "Payment approved — receipt #[number]" | Amount, plan name, receipt number | Receipt PDF |
+
+**Files changed:**
+- `app/Mail/StandardEmail.php` — `$fileAttachments` param + `Attachment::fromData()` mapping
+- `app/Services/Notification/NotificationService.php` — `sendBillingToFacility()` method
+- `app/Services/Billing/Contracts/SubscriptionBillingPdfServiceInterface.php` — `generateInvoicePdfContent()`, `generateReceiptPdfContent()`
+- `app/Services/Billing/SubscriptionBillingPdfService.php` — implementations + refactored download methods
+- `app/Services/Billing/SubscriptionService.php` — injected notification + pdf services, post-activation email
+- `app/Services/Billing/PaymentService.php` — injected notification + pdf services, post-submission and post-approval emails
+
+**Trade-offs:**
+- Owner emails are decrypted at send-time; any decryption failure drops that recipient but others still receive the email.
+- PDF content is generated in-memory each time — no caching. For billing emails (low frequency), this is acceptable. If bulk-sending is needed later, a queued job with cached PDF content would reduce memory pressure.
+- `facility_owners → staff → users` is a three-join path. For the current facility counts (<100 owners per facility), the query overhead is negligible.
+
+---
+
+## 2026-05-26: Billing Email Fixes — Invoice on Payment, Template Redesign, Upgrade/Schedule Emails
+
+**Context:** Three issues were found after the initial billing email implementation:
+1. The trial activation email accessed `$updated->invoice`, but `Subscription` has no `invoice` relationship — it's on `Payment`.
+2. The email template header used a blue-to-emerald gradient that didn't match the Custospark design system.
+3. Upgrade (`upgradeNow()`) and scheduled changes (`schedulePlanChange()`, `applyScheduledPlanChange()`) had no email notifications.
+
+**Decisions:**
+
+1. **Invoice lookup fixed** — Changed `$updated->invoice` to `$payment->loadMissing('invoice')` with `$payment->invoice`. The invoice is always linked to the payment that triggered activation, not the subscription.
+
+2. **Template header redesigned** (`resources/views/emails/standard.blade.php`):
+   - Removed the blue-to-emerald gradient header background
+   - White background with "Custospark" in blue-500 (`#3b82f6`)
+   - Single blue horizontal divider (`2px solid #3b82f6`) below brand
+   - `h1` moved below the divider with a light gray top border
+   - Brand text and tagline changed to gray
+   - Logo border changed from white-on-white to `#e5e7eb` (visible on light backgrounds)
+   - Body, CTA tip, and footer left untouched
+
+3. **Three new email trigger points** — `upgradeNow()`, `schedulePlanChange()`, and `applyScheduledPlanChange()` now all send emails via the existing `NotificationService::sendBillingToFacility()` with the plan name in the subject. No PDF attachments for these — just a subject/body notification.
+
+4. **`SubscriptionScheduledChangeService` injected `NotificationService`** as a constructor dependency (same pattern as `SubscriptionService` and `PaymentService`).
+
+**Complete email flows:**
+
+| Event | Subject | When | Attachment |
+|-------|---------|------|------------|
+| Subscription activated | "Your [Plan] subscription is now active" | Trial/initial payment approved | Invoice PDF |
+| Payment submitted | "Payment proof received — pending review" | Facility uploads receipt | None |
+| Payment approved | "Payment approved — receipt #[number]" | Admin approves payment | Receipt PDF |
+| Upgrade (immediate) | "Your plan has been upgraded to [Plan]" | Upgrade now clicked | None |
+| Schedule change | "Your [upgrade/plan change] to [Plan] has been scheduled" | Schedule confirmed | None |
+| Scheduled change applied | "Your plan has been changed to [Plan]" | Effective date reached | None |
+
+**Files changed:**
+- `app/Services/Billing/SubscriptionService.php` — fixed `$updated->invoice` → `$payment->loadMissing('invoice')` / `$payment->invoice`; added email in `upgradeNow()`
+- `resources/views/emails/standard.blade.php` — full header redesign
+- `app/Services/Billing/SubscriptionScheduledChangeService.php` — injected `NotificationService`, added email calls in `schedulePlanChange()` and `applyScheduledPlanChange()`
+
+**Trade-offs:**
+- Upgrade and schedule emails carry no PDF attachment — no invoice/receipt is generated for plan changes. The plan name is embedded directly in the email body.
+- Template redesign is purely CSS/HTML content within the existing Blade structure — no new variables or parameters added to `StandardEmail`.

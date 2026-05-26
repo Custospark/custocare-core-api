@@ -35,6 +35,7 @@ class Invoice extends Model
     protected $fillable = [
         'subscription_id',
         'facility_id',
+        'payment_id',
         'invoice_number',
         'invoice_type',
         'status',
@@ -69,6 +70,11 @@ class Invoice extends Model
     public function facility(): BelongsTo
     {
         return $this->belongsTo(Facility::class);
+    }
+
+    public function payment(): BelongsTo
+    {
+        return $this->belongsTo(Payment::class);
     }
 
     public function scopeForFacility($query, int $facilityId)

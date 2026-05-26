@@ -45,12 +45,14 @@ class Payment extends Model
     protected $fillable = [
         'subscription_id',
         'facility_id',
+        'invoice_id',
         'amount',
         'currency',
         'method',
         'payment_type',
         'status',
         'transaction_reference',
+        'receipt_number',
         'receipt_path',
         'receipt_notes',
         'paid_at',
@@ -86,6 +88,11 @@ class Payment extends Model
     public function facility(): BelongsTo
     {
         return $this->belongsTo(Facility::class);
+    }
+
+    public function invoice(): BelongsTo
+    {
+        return $this->belongsTo(Invoice::class);
     }
 
     public function approvedBy(): BelongsTo

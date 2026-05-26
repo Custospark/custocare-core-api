@@ -12,9 +12,12 @@ use App\Models\User;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Models\Plan;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionBillingDocumentServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionBillingPdfServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Billing\BillingFacilitySummaryService;
+use App\Services\Notification\NotificationService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -29,6 +32,9 @@ class PaymentService implements PaymentServiceInterface
         private readonly SubscriptionServiceInterface $subscriptionService,
         private readonly SubscriptionPaymentQuoteServiceInterface $quoteService,
         private readonly BillingFacilitySummaryService $billingFacilitySummaryService,
+        private readonly SubscriptionBillingDocumentServiceInterface $billingDocuments,
+        private readonly SubscriptionBillingPdfServiceInterface $billingPdfService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -101,6 +107,9 @@ class PaymentService implements PaymentServiceInterface
                 ]),
             ]);
 
+            $subscription = $subscription->fresh(['plan', 'facility']);
+            $this->billingDocuments->createInvoiceForPayment($subscription, $payment);
+
             Log::info('[Billing] Payment recorded — awaiting admin approval', [
                 'payment_id'      => $payment->id,
                 'subscription_id' => $subscription->id,
@@ -110,7 +119,27 @@ class PaymentService implements PaymentServiceInterface
                 'type'            => $payment->payment_type,
             ]);
 
-            return $payment;
+            // Send payment submission confirmation to facility owner(s)
+            try {
+                $facility = $subscription->facility;
+                if ($facility) {
+                    $ref = $payment->transaction_reference ?? 'N/A';
+                    $this->notificationService->sendBillingToFacility(
+                        $facility,
+                        'Payment proof received — pending review',
+                        "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been received.</p>
+                        <p>Reference: <strong>{$ref}</strong></p>
+                        <p>A platform administrator will review your payment proof shortly. You will be notified once it is approved.</p>",
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::error('[Billing] Failed to send payment submission email', [
+                    'payment_id' => $payment->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+
+            return $payment->fresh(['subscription.plan', 'invoice']);
         });
     }
 
@@ -164,13 +193,45 @@ class PaymentService implements PaymentServiceInterface
                 PaymentType::UPGRADE_PRORATION => $this->applyUpgradeProration($subscription, $payment, $approvedBy),
             };
 
+            $payment = $this->billingDocuments->issueReceiptForApprovedPayment(
+                $payment->fresh(['subscription.plan', 'facility']),
+            );
+
+            // Send receipt to facility owner(s) with PDF attached
+            try {
+                $facility = $payment->facility;
+                if ($facility && $payment->receipt_number) {
+                    $pdfContent = $this->billingPdfService->generateReceiptPdfContent($payment);
+
+                    $this->notificationService->sendBillingToFacility(
+                        $facility,
+                        "Payment approved — receipt #{$payment->receipt_number}",
+                        "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been approved.</p>
+                        <p>Receipt: <strong>{$payment->receipt_number}</strong></p>
+                        <p>Your receipt is attached below. Thank you for your payment.</p>",
+                        [
+                            [
+                                'data' => $pdfContent,
+                                'name' => str_replace('/', '_', $payment->receipt_number) . '.pdf',
+                                'mime' => 'application/pdf',
+                            ],
+                        ],
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::error('[Billing] Failed to send payment approval receipt email', [
+                    'payment_id' => $payment->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
+
             Log::info('[Billing] Payment approved by admin', [
                 'payment_id'  => $payment->id,
                 'approved_by' => $approvedBy->id,
                 'type'        => $payment->payment_type->value,
             ]);
 
-            return $payment->fresh();
+            return $payment->fresh(['subscription.plan', 'invoice']);
         });
     }
 

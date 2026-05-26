@@ -15,6 +15,7 @@ use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
 use App\Repositories\Billing\Contracts\SubscriptionScheduledChangeRepositoryInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
+use App\Services\Notification\NotificationService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -25,6 +26,7 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         private readonly SubscriptionRepositoryInterface $subscriptionRepo,
         private readonly SubscriptionScheduledChangeRepositoryInterface $scheduledChangeRepo,
         private readonly FacilityStaffRoleModuleSyncServiceInterface $moduleSyncService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     public function applyPendingScheduledChanges(Subscription $subscription): Subscription
@@ -66,7 +68,7 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         $type = SubscriptionScheduledChangeType::from($changeType);
         $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonth();
 
-        return $this->scheduledChangeRepo->create([
+        $change = $this->scheduledChangeRepo->create([
             'subscription_id'       => $subscription->id,
             'facility_id'           => $subscription->facility_id,
             'change_type'           => $type->value,
@@ -79,6 +81,27 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
                 'target_plan_name' => $targetPlan->name,
             ],
         ]);
+
+        // Send scheduled change confirmation
+        try {
+            $facility = $subscription->facility;
+            if ($facility) {
+                $changeLabel = $type === SubscriptionScheduledChangeType::UPGRADE ? 'upgrade' : 'plan change';
+                $this->notificationService->sendBillingToFacility(
+                    $facility,
+                    "Your {$changeLabel} to {$targetPlan->name} has been scheduled",
+                    "<p>A {$changeLabel} to <strong>{$targetPlan->name}</strong> has been scheduled for your subscription.</p>
+                    <p>This change will take effect on <strong>{$effectiveAt->format('F j, Y')}</strong>.</p>",
+                );
+            }
+        } catch (\Exception $e) {
+            Log::error('[Billing] Failed to send scheduled change email', [
+                'subscription_id' => $subscription->id,
+                'error'           => $e->getMessage(),
+            ]);
+        }
+
+        return $change;
     }
 
     public function scheduleCancellation(
@@ -135,6 +158,25 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
             'subscription_id' => $updated->id,
             'to_plan_id'        => $change->to_plan_id,
         ]);
+
+        // Send plan change applied notification
+        try {
+            $facility = $updated->facility;
+            $targetPlan = Plan::find($change->to_plan_id);
+            if ($facility && $targetPlan) {
+                $this->notificationService->sendBillingToFacility(
+                    $facility,
+                    "Your plan has been changed to {$targetPlan->name}",
+                    "<p>Your scheduled plan change has been applied. Your subscription is now on <strong>{$targetPlan->name}</strong>.</p>
+                    <p>Your new plan features and limits are now active.</p>",
+                );
+            }
+        } catch (\Exception $e) {
+            Log::error('[Billing] Failed to send scheduled change applied email', [
+                'subscription_id' => $updated->id,
+                'error'           => $e->getMessage(),
+            ]);
+        }
 
         return $updated->fresh(['plan']);
     }

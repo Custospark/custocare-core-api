@@ -32,6 +32,8 @@ class PaymentResource extends JsonResource
             'status'                => $this->status->value,
             'status_label'          => $this->status->label(),
             'transaction_reference' => $this->transaction_reference,
+            'receipt_number'        => $this->receipt_number,
+            'invoice_id'            => $this->invoice_id,
             'receipt_url'           => $this->receiptUrl(),
             'receipt_download_url'  => $request->routeIs('admin.billing.*')
                 ? $this->adminReceiptDownloadUrl()

@@ -18,8 +18,10 @@ use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
 use App\Services\Billing\BillingFacilitySummaryService;
+use App\Services\Billing\Contracts\SubscriptionBillingPdfServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Enums\Billing\SubscriptionScheduledChangeType;
+use App\Services\Notification\NotificationService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -36,6 +38,8 @@ class SubscriptionService implements SubscriptionServiceInterface
         private readonly FacilityStaffRoleModuleSyncServiceInterface $moduleSyncService,
         private readonly SubscriptionScheduledChangeServiceInterface $scheduledChangeService,
         private readonly BillingFacilitySummaryService $billingFacilitySummaryService,
+        private readonly SubscriptionBillingPdfServiceInterface $billingPdfService,
+        private readonly NotificationService $notificationService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -137,7 +141,10 @@ class SubscriptionService implements SubscriptionServiceInterface
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
             $now = Carbon::now();
-            $periodEnd = $now->copy()->addMonth();
+            $remainingTrialDays = $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture()
+                ? max(0, $now->diffInDays($subscription->trial_ends_at, false))
+                : 0;
+            $periodEnd = $now->copy()->addMonth()->addDays($remainingTrialDays);
 
             $updated = $this->subscriptionRepo->update($subscription, [
                 'status'              => SubscriptionStatus::ACTIVE->value,
@@ -161,6 +168,35 @@ class SubscriptionService implements SubscriptionServiceInterface
             ]);
 
             $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
+
+            // Send invoice to facility owner(s)
+            try {
+                $facility = $updated->facility;
+                $payment->loadMissing('invoice');
+                $invoice = $payment->invoice;
+                if ($facility && $invoice) {
+                    $pdfContent = $this->billingPdfService->generateInvoicePdfContent($invoice);
+
+                    $this->notificationService->sendBillingToFacility(
+                        $facility,
+                        "Your {$updated->plan?->name} subscription is now active",
+                        "<p>Your <strong>{$updated->plan?->name}</strong> subscription for <strong>{$facility->facility_name}</strong> is now active.</p>
+                        <p>Your invoice <strong>{$invoice->invoice_number}</strong> is attached below. Thank you for choosing Custocare.</p>",
+                        [
+                            [
+                                'data' => $pdfContent,
+                                'name' => str_replace('/', '_', $invoice->invoice_number) . '.pdf',
+                                'mime' => 'application/pdf',
+                            ],
+                        ],
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::error('[Billing] Failed to send activation invoice email', [
+                    'subscription_id' => $updated->id,
+                    'error'           => $e->getMessage(),
+                ]);
+            }
 
             return $updated;
         });
@@ -372,6 +408,24 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'subscription_id' => $updated->id,
                 'plan_id'           => $plan->id,
             ]);
+
+            // Send upgrade notification
+            try {
+                $facility = $updated->facility;
+                if ($facility) {
+                    $this->notificationService->sendBillingToFacility(
+                        $facility,
+                        "Your plan has been upgraded to {$plan->name}",
+                        "<p>Your subscription for <strong>{$facility->facility_name}</strong> has been upgraded to <strong>{$plan->name}</strong>.</p>
+                        <p>Your new plan features and limits are now active. Thank you for growing with Custocare.</p>",
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::error('[Billing] Failed to send upgrade notification email', [
+                    'subscription_id' => $updated->id,
+                    'error'           => $e->getMessage(),
+                ]);
+            }
 
             return $updated->fresh(['plan']);
         });

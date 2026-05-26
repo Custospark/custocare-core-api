@@ -31,7 +31,7 @@ class PaymentRepository implements PaymentRepositoryInterface
     public function getForFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
         return Payment::forFacility($facilityId)
-            ->with(['subscription.plan'])
+            ->with(['subscription.plan', 'facility'])
             ->when(
                 isset($filters['status']),
                 fn($q) => $q->where('status', $filters['status'])

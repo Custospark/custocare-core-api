@@ -31,7 +31,7 @@ class InvoiceService implements InvoiceServiceInterface
                 'invoice_type'    => $data['invoice_type'] ?? 'subscription',
                 'status'          => InvoiceStatus::UNPAID,
                 'amount'          => $data['amount'],
-                'currency'        => $data['currency'] ?? 'UGX',
+                'currency'        => $data['currency'] ?? 'USD',
                 'paid_amount'     => 0,
                 'description'     => $data['description'] ?? null,
                 'line_items'      => $data['line_items'] ?? null,

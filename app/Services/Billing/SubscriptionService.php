@@ -148,8 +148,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             $remainingTrialDays = $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture()
                 ? max(0, $now->diffInDays($subscription->trial_ends_at, false))
                 : 0;
-            $subscription->loadMissing('plan');
-            $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+            $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
             $periodEnd = $now->copy()->addMonths($monthsToAdd)->addDays($remainingTrialDays);
 
             $updated = $this->subscriptionRepo->update($subscription, [
@@ -225,8 +224,7 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             // Extend from current period end to not penalise early renewal
             $periodEnd = $subscription->currentPeriodEndsAt() ?? $subscription->ends_at;
-            $subscription->loadMissing('plan');
-            $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+            $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
             $newEndsAt = $periodEnd && $periodEnd->isFuture()
                 ? $periodEnd->copy()->addMonths($monthsToAdd)
                 : Carbon::now()->copy()->addMonths($monthsToAdd);
@@ -366,7 +364,7 @@ class SubscriptionService implements SubscriptionServiceInterface
 
         $this->scheduledChangeService->cancelPendingChange($subscription);
 
-        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
         $effectiveAt = $subscription->ends_at ?? $subscription->next_billing_date ?? Carbon::now()->addMonths($monthsToAdd);
 
         $this->scheduledChangeService->scheduleCancellation($subscription);

@@ -67,7 +67,7 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         $this->scheduledChangeRepo->cancelPendingForSubscription($subscription->id);
 
         $type = SubscriptionScheduledChangeType::from($changeType);
-        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
         $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonths($monthsToAdd);
 
         $change = $this->scheduledChangeRepo->create([
@@ -112,20 +112,8 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
     ): SubscriptionScheduledChange {
         $this->scheduledChangeRepo->cancelPendingForSubscription($subscription->id);
 
-        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
         $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonths($monthsToAdd);
-
-        return $this->scheduledChangeRepo->create([
-            'subscription_id'      => $subscription->id,
-            'facility_id'          => $subscription->facility_id,
-            'change_type'          => SubscriptionScheduledChangeType::CANCEL->value,
-            'from_plan_id'         => $subscription->plan_id,
-            'to_plan_id'           => null,
-            'effective_at'         => $effectiveAt,
-            'status'               => SubscriptionScheduledChangeStatus::PENDING->value,
-            'requested_by_user_id' => $requestedBy?->id,
-            'metadata'             => [],
-        ]);
     }
 
     public function cancelPendingChange(Subscription $subscription): void

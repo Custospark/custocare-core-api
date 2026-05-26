@@ -25,7 +25,7 @@ final class SubscriptionProrationCalculator
     public static function calculate(Subscription $subscription, Plan $currentPlan, Plan $targetPlan): array
     {
         $now = Carbon::now()->startOfDay();
-        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
         $endsAt = ($subscription->currentPeriodEndsAt() ?? $now->copy()->addMonths($monthsToAdd))->copy()->startOfDay();
         $startsAt = ($subscription->starts_at ?? $now->copy()->subMonth())->copy()->startOfDay();
 

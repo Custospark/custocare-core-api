@@ -43,6 +43,7 @@ class Subscription extends Model
     protected $fillable = [
         'facility_id',
         'plan_id',
+        'billing_cycle',
         'status',
         'trial_ends_at',
         'starts_at',

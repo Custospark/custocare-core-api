@@ -14,6 +14,7 @@ use App\Models\Plan;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
+use App\Services\Billing\BillingFacilitySummaryService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -27,6 +28,7 @@ class PaymentService implements PaymentServiceInterface
         private readonly PaymentRepositoryInterface $paymentRepo,
         private readonly SubscriptionServiceInterface $subscriptionService,
         private readonly SubscriptionPaymentQuoteServiceInterface $quoteService,
+        private readonly BillingFacilitySummaryService $billingFacilitySummaryService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -223,7 +225,9 @@ class PaymentService implements PaymentServiceInterface
 
     public function getAllPayments(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return $this->paymentRepo->getAllPaginated($filters, $perPage);
+        $paginator = $this->paymentRepo->getAllPaginated($filters, $perPage);
+
+        return $this->billingFacilitySummaryService->enrichPaymentPaginator($paginator);
     }
 
     public function findPaymentById(int $id): ?Payment

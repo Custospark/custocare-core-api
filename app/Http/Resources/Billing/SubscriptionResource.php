@@ -20,11 +20,10 @@ class SubscriptionResource extends JsonResource
             'id'                   => $this->id,
 
             // ── Facility reference ────────────────────────────────────────
-            'facility'             => [
-                'id'            => $this->facility_id,
-                'facility_name' => $this->whenLoaded('facility', fn() => $this->facility->facility_name),
-                'facility_code' => $this->whenLoaded('facility', fn() => $this->facility->facility_code),
-            ],
+            'facility'             => $this->whenLoaded(
+                'facility',
+                fn () => new BillingFacilitySummaryResource($this->facility),
+            ),
 
             // ── Plan ──────────────────────────────────────────────────────
             'plan'                 => new PlanResource($this->whenLoaded('plan')),
@@ -63,6 +62,15 @@ class SubscriptionResource extends JsonResource
 
             // ── Payments ─────────────────────────────────────────────────
             'payments'             => PaymentResource::collection($this->whenLoaded('payments')),
+
+            'pending_payments_count'  => $this->when(
+                isset($this->pending_payments_count),
+                (int) $this->pending_payments_count,
+            ),
+            'approved_payments_count' => $this->when(
+                isset($this->approved_payments_count),
+                (int) $this->approved_payments_count,
+            ),
 
             'notes'                => $this->notes,
             'created_at'           => $this->created_at?->toISOString(),

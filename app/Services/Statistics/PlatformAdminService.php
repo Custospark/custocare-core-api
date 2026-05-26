@@ -334,6 +334,16 @@ class PlatformAdminService
         return $user->global_user_uuid ?? "user_{$user->id}";
     }
 
+    /**
+     * Owner contact map for billing / admin tables (facility_id => owner array).
+     *
+     * @return Collection<int, array{name: string|null, email: string|null, phone: string|null}>
+     */
+    public function getOwnersForFacilityIds(array $facilityIds): Collection
+    {
+        return $this->getFacilityOwners($facilityIds);
+    }
+
     protected function getFacilityOwners(array $facilityIds): Collection
     {
         if (empty($facilityIds)) return collect();

@@ -17,6 +17,7 @@ use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
+use App\Services\Billing\BillingFacilitySummaryService;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Enums\Billing\SubscriptionScheduledChangeType;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -34,6 +35,7 @@ class SubscriptionService implements SubscriptionServiceInterface
         private readonly PaymentRepositoryInterface $paymentRepo,
         private readonly FacilityStaffRoleModuleSyncServiceInterface $moduleSyncService,
         private readonly SubscriptionScheduledChangeServiceInterface $scheduledChangeService,
+        private readonly BillingFacilitySummaryService $billingFacilitySummaryService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -386,6 +388,8 @@ class SubscriptionService implements SubscriptionServiceInterface
 
     public function getAllSubscriptions(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return $this->subscriptionRepo->getAllPaginated($filters, $perPage);
+        $paginator = $this->subscriptionRepo->getAllPaginated($filters, $perPage);
+
+        return $this->billingFacilitySummaryService->enrichSubscriptionPaginator($paginator);
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Repositories\Billing;
 
+use App\Enums\Billing\PaymentStatus;
 use App\Enums\Billing\SubscriptionStatus;
 use App\Models\Subscription;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
@@ -62,6 +63,16 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
     {
         return Subscription::query()
             ->with(['facility', 'plan'])
+            ->withCount([
+                'payments as pending_payments_count' => fn ($q) => $q->where(
+                    'status',
+                    PaymentStatus::PENDING->value,
+                ),
+                'payments as approved_payments_count' => fn ($q) => $q->where(
+                    'status',
+                    PaymentStatus::APPROVED->value,
+                ),
+            ])
             ->when(
                 isset($filters['status']),
                 fn($q) => $q->where('status', $filters['status'])

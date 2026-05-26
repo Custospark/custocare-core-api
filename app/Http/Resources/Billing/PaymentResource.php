@@ -14,7 +14,15 @@ class PaymentResource extends JsonResource
         return [
             'id'                    => $this->id,
             'facility_id'           => $this->facility_id,
+            'facility'              => $this->whenLoaded(
+                'facility',
+                fn () => new BillingFacilitySummaryResource($this->facility),
+            ),
             'subscription_id'       => $this->subscription_id,
+            'plan_name'             => $this->whenLoaded(
+                'subscription',
+                fn () => $this->subscription?->plan?->name,
+            ),
             'amount'                => (float) $this->amount,
             'currency'              => $this->currency,
             'method'                => $this->method->value,

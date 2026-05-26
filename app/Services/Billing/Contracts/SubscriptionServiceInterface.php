@@ -19,7 +19,8 @@ interface SubscriptionServiceInterface
     public function markPastDue(Subscription $subscription): Subscription;
     public function handleGracePeriod(): void;
     public function suspendSubscription(Subscription $subscription): Subscription;
-    public function cancelSubscription(Subscription $subscription, ?string $reason = null): Subscription;
+    public function cancelSubscription(Subscription $subscription, ?string $reason = null, string $mode = 'at_period_end'): Subscription;
+    public function upgradeNow(Subscription $subscription, Plan $plan, ?User $approvedBy = null): Subscription;
     public function getActiveSubscription(int $facilityId): ?Subscription;
     public function getSubscriptionForFacility(int $facilityId): ?Subscription;
     public function getAllSubscriptions(array $filters = [], int $perPage = 15): LengthAwarePaginator;

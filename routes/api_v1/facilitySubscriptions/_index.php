@@ -69,6 +69,10 @@ Route::middleware(['auth:sanctum'])
                 Route::get('/',    [SubscriptionController::class, 'show'])  ->name('show');
                 Route::post('/',   [SubscriptionController::class, 'store']) ->name('store');
                 Route::delete('/', [SubscriptionController::class, 'cancel'])->name('cancel');
+                Route::post('/schedule-change', [SubscriptionController::class, 'scheduleChange'])->name('schedule-change');
+                Route::post('/upgrade-now', [SubscriptionController::class, 'upgradeNow'])->name('upgrade-now');
+                Route::delete('/scheduled-change', [SubscriptionController::class, 'cancelScheduledChange'])->name('cancel-scheduled-change');
+                Route::get('/payment-quote', [SubscriptionController::class, 'paymentQuote'])->name('payment-quote');
             });
 
         /*

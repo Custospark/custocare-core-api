@@ -8,18 +8,24 @@ use App\Repositories\Billing\Contracts\InvoiceRepositoryInterface;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Repositories\Billing\Contracts\PlanRepositoryInterface;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
+use App\Repositories\Billing\Contracts\SubscriptionScheduledChangeRepositoryInterface;
 use App\Repositories\Billing\InvoiceRepository;
 use App\Repositories\Billing\PaymentRepository;
 use App\Repositories\Billing\PlanRepository;
 use App\Repositories\Billing\SubscriptionRepository;
+use App\Repositories\Billing\SubscriptionScheduledChangeRepository;
 use App\Services\Billing\Contracts\InvoiceServiceInterface;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\AssignableModuleService;
 use App\Services\Billing\Contracts\AssignableModuleServiceInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
 use App\Services\Billing\Contracts\PlanLimitServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use App\Services\Billing\Contracts\UsageServiceInterface;
+use App\Services\Billing\SubscriptionPaymentQuoteService;
+use App\Services\Billing\SubscriptionScheduledChangeService;
 use App\Services\Billing\Gateways\GatewayManager;
 use App\Services\Billing\Gateways\GatewayService;
 use App\Services\Billing\FacilityStaffRoleModuleSyncService;
@@ -37,10 +43,13 @@ class BillingServiceProvider extends ServiceProvider
         // ── Repositories ──────────────────────────────────────────────────
         $this->app->bind(PlanRepositoryInterface::class, PlanRepository::class);
         $this->app->bind(SubscriptionRepositoryInterface::class, SubscriptionRepository::class);
+        $this->app->bind(SubscriptionScheduledChangeRepositoryInterface::class, SubscriptionScheduledChangeRepository::class);
         $this->app->bind(PaymentRepositoryInterface::class, PaymentRepository::class);
         $this->app->bind(InvoiceRepositoryInterface::class, InvoiceRepository::class);
 
         // ── Services ──────────────────────────────────────────────────────
+        $this->app->bind(SubscriptionScheduledChangeServiceInterface::class, SubscriptionScheduledChangeService::class);
+        $this->app->bind(SubscriptionPaymentQuoteServiceInterface::class, SubscriptionPaymentQuoteService::class);
         $this->app->bind(SubscriptionServiceInterface::class, SubscriptionService::class);
         $this->app->bind(PaymentServiceInterface::class, PaymentService::class);
         $this->app->bind(InvoiceServiceInterface::class, InvoiceService::class);

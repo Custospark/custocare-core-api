@@ -10,7 +10,9 @@ use App\Models\Payment;
 use App\Models\Subscription;
 use App\Models\User;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
+use App\Models\Plan;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
@@ -23,7 +25,8 @@ class PaymentService implements PaymentServiceInterface
 {
     public function __construct(
         private readonly PaymentRepositoryInterface $paymentRepo,
-        private readonly SubscriptionServiceInterface $subscriptionService
+        private readonly SubscriptionServiceInterface $subscriptionService,
+        private readonly SubscriptionPaymentQuoteServiceInterface $quoteService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -57,6 +60,18 @@ class PaymentService implements PaymentServiceInterface
                 );
             }
 
+            $quoteIntent = $data['quote_intent'] ?? $this->resolveQuoteIntent($subscription, $data['payment_type']);
+            $targetPlanId = isset($data['target_plan_id'])
+                ? (int) $data['target_plan_id']
+                : ($subscription->metadata['pending_upgrade_plan_id'] ?? null);
+
+            $this->quoteService->validatePaymentAmount(
+                $subscription,
+                (float) $data['amount'],
+                $quoteIntent,
+                $targetPlanId ? (int) $targetPlanId : null,
+            );
+
             // ── Store receipt file if provided ────────────────────────────
             $receiptPath = null;
             if ($receipt) {
@@ -78,7 +93,10 @@ class PaymentService implements PaymentServiceInterface
                 'receipt_notes'       => $data['receipt_notes'] ?? null,
                 'paid_at'             => $data['paid_at'] ?? Carbon::now(),
                 'status'              => PaymentStatus::PENDING->value,
-                'metadata'            => $data['metadata'] ?? null,
+                'metadata'            => array_merge($data['metadata'] ?? [], [
+                    'quote_intent'    => $quoteIntent,
+                    'target_plan_id'  => $targetPlanId,
+                ]),
             ]);
 
             Log::info('[Billing] Payment recorded — awaiting admin approval', [
@@ -141,6 +159,7 @@ class PaymentService implements PaymentServiceInterface
                 PaymentType::RENEWAL => $this->subscriptionService->renewSubscription(
                     $subscription, $payment, $approvedBy
                 ),
+                PaymentType::UPGRADE_PRORATION => $this->applyUpgradeProration($subscription, $payment, $approvedBy),
             };
 
             Log::info('[Billing] Payment approved by admin', [
@@ -210,5 +229,38 @@ class PaymentService implements PaymentServiceInterface
     public function findPaymentById(int $id): ?Payment
     {
         return $this->paymentRepo->findById($id);
+    }
+
+    private function resolveQuoteIntent(Subscription $subscription, string $paymentType): string
+    {
+        $type = PaymentType::tryFrom($paymentType);
+
+        return match ($type) {
+            PaymentType::RENEWAL            => 'renewal',
+            PaymentType::UPGRADE_PRORATION  => 'upgrade_now',
+            PaymentType::ONBOARDING         => 'first_activation',
+            PaymentType::SUBSCRIPTION       => $subscription->status->value === 'trial'
+                ? 'subscription'
+                : 'first_activation',
+            default => 'subscription',
+        };
+    }
+
+    private function applyUpgradeProration(
+        Subscription $subscription,
+        Payment $payment,
+        User $approvedBy,
+    ): void {
+        $targetPlanId = $payment->metadata['target_plan_id']
+            ?? $subscription->metadata['pending_upgrade_plan_id']
+            ?? null;
+
+        if (! $targetPlanId) {
+            throw new \DomainException('Upgrade target plan is missing from payment metadata.', 422);
+        }
+
+        $plan = Plan::findOrFail((int) $targetPlanId);
+
+        $this->subscriptionService->upgradeNow($subscription, $plan, $approvedBy);
     }
 }

@@ -101,6 +101,11 @@ class Subscription extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function scheduledChanges(): HasMany
+    {
+        return $this->hasMany(SubscriptionScheduledChange::class);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Scopes
     // ─────────────────────────────────────────────────────────────────────────
@@ -139,11 +144,38 @@ class Subscription extends Model
     public function hasAccess(): bool
     {
         return match ($this->status) {
-            SubscriptionStatus::ACTIVE  => true,
+            SubscriptionStatus::ACTIVE => $this->hasActivePeriodAccess(),
             SubscriptionStatus::TRIAL   => $this->trial_ends_at?->isFuture() ?? true,
             SubscriptionStatus::PAST_DUE => $this->grace_period_ends_at?->isFuture() ?? false,
             default                     => false,
         };
+    }
+
+    /** Active subscription, including cancel-at-period-end until ends_at. */
+    private function hasActivePeriodAccess(): bool
+    {
+        if (! ($this->metadata['cancel_at_period_end'] ?? false)) {
+            return true;
+        }
+
+        return $this->ends_at?->isFuture() ?? false;
+    }
+
+    public function isCancelAtPeriodEnd(): bool
+    {
+        return (bool) ($this->metadata['cancel_at_period_end'] ?? false)
+            && $this->status === SubscriptionStatus::ACTIVE;
+    }
+
+    public function accessEndsAt(): ?Carbon
+    {
+        if ($this->isCancelAtPeriodEnd()) {
+            return $this->ends_at;
+        }
+
+        return $this->metadata['access_ends_at'] ?? null
+            ? Carbon::parse($this->metadata['access_ends_at'])
+            : null;
     }
 
     public function isActive(): bool

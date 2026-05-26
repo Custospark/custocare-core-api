@@ -11,6 +11,7 @@ use App\Models\Facility;
 use App\Models\Payment;
 use App\Models\Subscription;
 use App\Services\Billing\Contracts\PaymentServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -19,7 +20,8 @@ use Illuminate\Support\Facades\Storage;
 class PaymentController extends Controller
 {
     public function __construct(
-        private readonly PaymentServiceInterface $paymentService
+        private readonly PaymentServiceInterface $paymentService,
+        private readonly SubscriptionServiceInterface $subscriptionService,
     ) {}
 
     /**
@@ -80,12 +82,9 @@ class PaymentController extends Controller
      */
     public function store(StorePaymentRequest $request, Facility $facility): JsonResponse
     {
-        $subscription = Subscription::where('facility_id', $facility->id)
-            ->whereIn('status', ['trial', 'active', 'past_due'])
-            ->latest()
-            ->first();
+        $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);
 
-        if (! $subscription) {
+        if (! $subscription || ! $subscription->hasAccess()) {
             return response()->json([
                 'success' => false,
                 'message' => 'No active or trial subscription found for this facility.',

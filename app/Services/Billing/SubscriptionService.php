@@ -16,7 +16,9 @@ use App\Models\Subscription;
 use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
+use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
+use App\Enums\Billing\SubscriptionScheduledChangeType;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +33,7 @@ class SubscriptionService implements SubscriptionServiceInterface
         private readonly SubscriptionRepositoryInterface $subscriptionRepo,
         private readonly PaymentRepositoryInterface $paymentRepo,
         private readonly FacilityStaffRoleModuleSyncServiceInterface $moduleSyncService,
+        private readonly SubscriptionScheduledChangeServiceInterface $scheduledChangeService,
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -255,24 +258,103 @@ class SubscriptionService implements SubscriptionServiceInterface
     }
 
     /**
-     * Cancel a subscription (voluntary or admin-initiated).
+     * Cancel a subscription.
+     *
+     * @param  string  $mode  `at_period_end` (default) or `immediate`
      */
-    public function cancelSubscription(Subscription $subscription, ?string $reason = null): Subscription
+    public function cancelSubscription(
+        Subscription $subscription,
+        ?string $reason = null,
+        string $mode = 'at_period_end',
+    ): Subscription {
+        if ($mode === 'immediate') {
+            return $this->cancelSubscriptionImmediately($subscription, $reason);
+        }
+
+        return $this->cancelSubscriptionAtPeriodEnd($subscription, $reason);
+    }
+
+    public function cancelSubscriptionImmediately(Subscription $subscription, ?string $reason = null): Subscription
     {
+        $this->scheduledChangeService->cancelPendingChange($subscription);
+
         $updated = $this->subscriptionRepo->update($subscription, [
             'status'       => SubscriptionStatus::CANCELLED->value,
             'cancelled_at' => Carbon::now(),
-            'notes'        => $reason
-                ? ($subscription->notes ? $subscription->notes . "\nCancelled: $reason" : "Cancelled: $reason")
-                : $subscription->notes,
+            'metadata'     => array_merge($subscription->metadata ?? [], [
+                'cancel_at_period_end' => false,
+                'access_ends_at'       => null,
+            ]),
+            'notes'        => $this->appendNote($subscription, $reason, 'Cancelled immediately'),
         ]);
 
-        Log::info('[Billing] Subscription cancelled', [
+        Log::info('[Billing] Subscription cancelled immediately', [
             'subscription_id' => $updated->id,
             'reason'          => $reason,
         ]);
 
         return $updated;
+    }
+
+    public function cancelSubscriptionAtPeriodEnd(Subscription $subscription, ?string $reason = null): Subscription
+    {
+        if (! $subscription->hasAccess()) {
+            return $this->cancelSubscriptionImmediately($subscription, $reason);
+        }
+
+        $this->scheduledChangeService->cancelPendingChange($subscription);
+
+        $effectiveAt = $subscription->ends_at ?? $subscription->next_billing_date ?? Carbon::now()->addMonth();
+
+        $this->scheduledChangeService->scheduleCancellation($subscription);
+
+        $updated = $this->subscriptionRepo->update($subscription, [
+            'metadata' => array_merge($subscription->metadata ?? [], [
+                'cancel_at_period_end' => true,
+                'access_ends_at'       => $effectiveAt->toISOString(),
+            ]),
+            'notes'    => $this->appendNote($subscription, $reason, 'Cancellation scheduled at period end'),
+        ]);
+
+        Log::info('[Billing] Subscription cancellation scheduled at period end', [
+            'subscription_id' => $updated->id,
+            'effective_at'      => $effectiveAt->toDateTimeString(),
+        ]);
+
+        return $updated->fresh(['plan']);
+    }
+
+    /**
+     * Apply plan upgrade immediately (after upgrade-now payment is approved).
+     */
+    public function upgradeNow(Subscription $subscription, Plan $plan, ?User $approvedBy = null): Subscription
+    {
+        return DB::transaction(function () use ($subscription, $plan, $approvedBy) {
+            $this->scheduledChangeService->cancelPendingChange($subscription);
+
+            $updated = $this->subscriptionRepo->update($subscription, [
+                'plan_id'  => $plan->id,
+                'metadata' => array_merge($subscription->metadata ?? [], [
+                    'cancel_at_period_end' => false,
+                    'access_ends_at'       => null,
+                    'pending_upgrade_plan_id' => null,
+                ]),
+                'notes'    => $this->appendNote(
+                    $subscription,
+                    null,
+                    "Upgraded to {$plan->name}" . ($approvedBy ? " (approved by user #{$approvedBy->id})" : ''),
+                ),
+            ]);
+
+            $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
+
+            Log::info('[Billing] Subscription upgraded immediately', [
+                'subscription_id' => $updated->id,
+                'plan_id'           => $plan->id,
+            ]);
+
+            return $updated->fresh(['plan']);
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -286,7 +368,20 @@ class SubscriptionService implements SubscriptionServiceInterface
 
     public function getSubscriptionForFacility(int $facilityId): ?Subscription
     {
-        return $this->subscriptionRepo->findByFacility($facilityId);
+        $subscription = $this->subscriptionRepo->findByFacility($facilityId);
+
+        if (! $subscription) {
+            return null;
+        }
+
+        return $this->scheduledChangeService->applyPendingScheduledChanges($subscription);
+    }
+
+    private function appendNote(Subscription $subscription, ?string $reason, string $prefix): ?string
+    {
+        $line = $reason ? "{$prefix}: {$reason}" : $prefix;
+
+        return $subscription->notes ? $subscription->notes . "\n{$line}" : $line;
     }
 
     public function getAllSubscriptions(array $filters = [], int $perPage = 15): LengthAwarePaginator

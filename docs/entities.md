@@ -1,3 +1,42 @@
+## Subscription billing v2 — 2026-05-26
+
+### New table: `subscription_scheduled_changes`
+| Column | Notes |
+|--------|--------|
+| `subscription_id`, `facility_id` | FKs |
+| `change_type` | `upgrade`, `downgrade`, `cancel`, `plan_change` |
+| `from_plan_id`, `to_plan_id` | `to_plan_id` null for cancel |
+| `effective_at` | Usually `subscriptions.next_billing_date` |
+| `status` | `pending`, `applied`, `cancelled` |
+
+Unique partial index: one `pending` row per `subscription_id`.
+
+### Subscription metadata (cancel at period end)
+- `cancel_at_period_end` (bool)
+- `access_ends_at` (ISO8601)
+- `pending_upgrade_plan_id` (upgrade-now flow)
+- `latest_quote` (cached quote + expiry)
+
+### API endpoints (facility, under `/facilities/{facility}/subscription`)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/` | Show subscription (applies pending changes) |
+| DELETE | `/` | Cancel (`mode: at_period_end` default) |
+| POST | `/schedule-change` | `{ plan_id, change_type }` |
+| POST | `/upgrade-now` | `{ plan_id }` → quote for proration |
+| DELETE | `/scheduled-change` | Cancel pending change |
+| GET | `/payment-quote` | `?intent=&plan_id=` |
+
+### Services & bindings (`BillingServiceProvider`)
+- `SubscriptionScheduledChangeRepositoryInterface` → `SubscriptionScheduledChangeRepository`
+- `SubscriptionScheduledChangeServiceInterface` → `SubscriptionScheduledChangeService`
+- `SubscriptionPaymentQuoteServiceInterface` → `SubscriptionPaymentQuoteService`
+
+### Payment types
+- Added `upgrade_proration` — on admin approve calls `SubscriptionService::upgradeNow()`.
+
+---
+
 ## Prescriptions — 2026-05-21
 
 ### API Endpoints

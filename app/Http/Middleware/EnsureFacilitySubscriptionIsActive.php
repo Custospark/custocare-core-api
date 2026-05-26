@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use App\Models\Facility;
-use App\Repositories\Billing\Contracts\SubscriptionRepositoryInterface;
+use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -27,7 +27,7 @@ use Symfony\Component\HttpFoundation\Response;
 class EnsureFacilitySubscriptionIsActive
 {
     public function __construct(
-        private readonly SubscriptionRepositoryInterface $subscriptionRepo
+        private readonly SubscriptionServiceInterface $subscriptionService,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -43,10 +43,10 @@ class EnsureFacilitySubscriptionIsActive
             ], 400);
         }
 
-        // Check if the facility has an accessible subscription
-        $subscription = $this->subscriptionRepo->findAccessibleByFacility($facility->id);
+        // Applies pending scheduled changes before access check
+        $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);
 
-        if (! $subscription) {
+        if (! $subscription || ! $subscription->hasAccess()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Facility subscription is not active.',

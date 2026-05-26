@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Billing;
 
+use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -11,6 +12,9 @@ class SubscriptionResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $scheduledChange = app(SubscriptionScheduledChangeServiceInterface::class)
+            ->getPendingChange($this->resource);
+
         return [
             'id'                   => $this->id,
 
@@ -23,6 +27,14 @@ class SubscriptionResource extends JsonResource
 
             // ── Plan ──────────────────────────────────────────────────────
             'plan'                 => new PlanResource($this->whenLoaded('plan')),
+            'effective_plan'       => new PlanResource($this->whenLoaded('plan')),
+
+            // ── Scheduled changes & cancel-at-period-end ─────────────────
+            'scheduled_change'     => $scheduledChange
+                ? new SubscriptionScheduledChangeResource($scheduledChange)
+                : null,
+            'cancel_at_period_end' => $this->isCancelAtPeriodEnd(),
+            'access_ends_at'       => $this->accessEndsAt()?->toISOString(),
 
             // ── Status ────────────────────────────────────────────────────
             'status'               => $this->status->value,

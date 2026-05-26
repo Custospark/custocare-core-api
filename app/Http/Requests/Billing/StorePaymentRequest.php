@@ -30,6 +30,8 @@ class StorePaymentRequest extends FormRequest
             'receipt'               => 'nullable|file|mimes:jpeg,jpg,png,pdf|max:5120', // 5MB
             'receipt_notes'         => 'nullable|string|max:1000',
             'paid_at'               => 'required|date|before_or_equal:now',
+            'quote_intent'          => 'nullable|string|in:first_activation,subscription,renewal,scheduled_change,upgrade_now,trial_activation',
+            'target_plan_id'        => 'nullable|integer|exists:plans,id',
         ];
     }
 

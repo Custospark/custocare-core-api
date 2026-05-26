@@ -151,6 +151,21 @@ class Subscription extends Model
         };
     }
 
+    /**
+     * True when the facility may submit payment proof (activation, renewal, upgrade).
+     * Broader than hasAccess() — e.g. expired trial or past-due after grace still need to pay.
+     */
+    public function canAcceptFacilityPayment(): bool
+    {
+        return match ($this->status) {
+            SubscriptionStatus::TRIAL,
+            SubscriptionStatus::ACTIVE,
+            SubscriptionStatus::PAST_DUE,
+            SubscriptionStatus::SUSPENDED => true,
+            default => false,
+        };
+    }
+
     /** Active subscription, including cancel-at-period-end until ends_at. */
     private function hasActivePeriodAccess(): bool
     {

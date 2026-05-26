@@ -84,11 +84,11 @@ class PaymentController extends Controller
     {
         $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);
 
-        if (! $subscription || ! $subscription->hasAccess()) {
+        if (! $subscription || ! $subscription->canAcceptFacilityPayment()) {
             return response()->json([
                 'success' => false,
-                'message' => 'No active or trial subscription found for this facility.',
-                'errors' => ['subscription' => ['Create or restore a subscription first.']],
+                'message' => 'No payable subscription found for this facility.',
+                'errors' => ['subscription' => ['Create or restore a subscription before submitting payment.']],
                 'data' => null,
             ], 404);
         }

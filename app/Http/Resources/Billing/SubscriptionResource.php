@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Billing;
 
 use App\Services\Billing\Contracts\SubscriptionScheduledChangeServiceInterface;
+use App\Services\Billing\SubscriptionPaymentActionResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -40,6 +41,9 @@ class SubscriptionResource extends JsonResource
             'status'               => $this->status->value,
             'status_label'         => $this->status->label(),
             'has_access'           => $this->hasAccess(),
+
+            'payment_action'       => app(SubscriptionPaymentActionResolver::class)
+                ->resolve($this->resource),
 
             // ── Timeline ─────────────────────────────────────────────────
             'trial_ends_at'        => $this->trial_ends_at?->toISOString(),

@@ -27,10 +27,25 @@ Unique partial index: one `pending` row per `subscription_id`.
 | DELETE | `/scheduled-change` | Cancel pending change |
 | GET | `/payment-quote` | `?intent=&plan_id=` |
 
+### `SubscriptionResource.payment_action` (read-only)
+Resolved by `SubscriptionPaymentActionResolver` on each subscription show:
+| Field | Type | Notes |
+|-------|------|--------|
+| `required` | bool | User should complete payment |
+| `pending_approval` | bool | Pending payment proof exists |
+| `plan_id` | int\|null | Plan to pay for |
+| `intent` | string\|null | `subscription`, `renewal`, `upgrade_now` |
+| `label` | string\|null | e.g. "Complete payment" |
+| `message` | string\|null | Facility-facing guidance |
+
 ### Services & bindings (`BillingServiceProvider`)
 - `SubscriptionScheduledChangeRepositoryInterface` → `SubscriptionScheduledChangeRepository`
 - `SubscriptionScheduledChangeServiceInterface` → `SubscriptionScheduledChangeService`
 - `SubscriptionPaymentQuoteServiceInterface` → `SubscriptionPaymentQuoteService`
+
+### Facility payment submission
+- `POST /facilities/{facility}/payments` accepts proof when subscription status is `trial`, `active`, `past_due`, or `suspended` (`Subscription::canAcceptFacilityPayment()`), not only when `has_access` is true.
+- Duplicate pending proof still returns 422 from `PaymentService`.
 
 ### Payment types
 - Added `upgrade_proration` — on admin approve calls `SubscriptionService::upgradeNow()`.

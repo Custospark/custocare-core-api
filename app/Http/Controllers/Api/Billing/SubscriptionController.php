@@ -82,7 +82,10 @@ class SubscriptionController extends Controller
             $subscription = $this->subscriptionService->createSubscription(
                 facility: $facility,
                 plan: $plan,
-                options: ['notes' => $request->input('notes')]
+                options: array_filter([
+                    'notes'         => $request->input('notes'),
+                    'billing_cycle' => $request->input('billing_cycle'),
+                ], fn($v) => $v !== null),
             );
 
             return response()->json([

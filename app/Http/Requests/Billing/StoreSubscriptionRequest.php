@@ -19,8 +19,9 @@ class StoreSubscriptionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'plan_id' => 'required|integer|exists:plans,id',
-            'notes'   => 'nullable|string|max:1000',
+            'plan_id'       => 'required|integer|exists:plans,id',
+            'billing_cycle' => 'nullable|string|in:monthly,yearly',
+            'notes'         => 'nullable|string|max:1000',
         ];
     }
 

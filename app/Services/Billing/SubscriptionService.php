@@ -94,13 +94,14 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             $trialEndsAt = $hasUsedTrialBefore ? null : $now->copy()->addDays($plan->trial_days);
 
-            $monthsToAdd = BillingCycle::tryFrom($plan->billing_cycle)?->monthsToAdd() ?? 1;
+            $selectedCycle = $options['billing_cycle'] ?? $plan->billing_cycle ?? 'monthly';
+            $monthsToAdd = BillingCycle::tryFrom($selectedCycle)?->monthsToAdd() ?? 1;
 
             // ── Build the subscription payload ────────────────────────────
             $subscription = $this->subscriptionRepo->create([
                 'facility_id'        => $facility->id,
                 'plan_id'            => $plan->id,
-                'billing_cycle'      => $plan->billing_cycle ?? 'monthly',
+                'billing_cycle'      => $selectedCycle,
                 'status'             => $status,
                 'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
@@ -485,16 +486,17 @@ class SubscriptionService implements SubscriptionServiceInterface
     }
 
     /**
-     * Prefer the quoted monthly line item; fall back to plan catalog price.
+     * Prefer the quoted line item for the subscription's billing cycle; fall back to plan catalog price.
      */
     private function resolveMonthlyPriceFromPayment(Subscription $subscription, Payment $payment): float
     {
         $quote = $subscription->metadata['latest_quote'] ?? null;
+        $cycle = $subscription->billing_cycle ?? 'monthly';
 
         if (is_array($quote) && ! empty($quote['line_items'])) {
             foreach ($quote['line_items'] as $item) {
                 $label = strtolower((string) ($item['label'] ?? ''));
-                if (str_contains($label, 'monthly') && isset($item['amount'])) {
+                if (str_contains($label, $cycle) && isset($item['amount'])) {
                     return (float) $item['amount'];
                 }
             }
@@ -503,7 +505,9 @@ class SubscriptionService implements SubscriptionServiceInterface
         $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
 
         if ($plan) {
-            return (float) $plan->price_usd;
+            return $cycle === 'yearly'
+                ? round((float) $plan->price_usd * 10, 2)
+                : (float) $plan->price_usd;
         }
 
         return (float) $payment->amount;

@@ -93,7 +93,8 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
                     $facility,
                     "Your {$changeLabel} to {$targetPlan->name} has been scheduled",
                     "<p>A {$changeLabel} to <strong>{$targetPlan->name}</strong> has been scheduled for your subscription.</p>
-                    <p>This change will take effect on <strong>{$effectiveAt->format('F j, Y')}</strong>.</p>",
+                    <p>This change will take effect on <strong>{$effectiveAt->format('F j, Y')}</strong>.</p>
+                    " . \App\Services\Notification\NotificationService::billingInfoBlock($subscription) . "",
                 );
             }
         } catch (\Exception $e) {
@@ -159,6 +160,7 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
                     $facility,
                     "Your plan has been changed to {$targetPlan->name}",
                     "<p>Your scheduled plan change has been applied. Your subscription is now on <strong>{$targetPlan->name}</strong>.</p>
+                    " . \App\Services\Notification\NotificationService::billingInfoBlock($updated) . "
                     <p>Your new plan features and limits are now active.</p>",
                 );
             }

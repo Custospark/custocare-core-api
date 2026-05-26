@@ -191,6 +191,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                         $facility,
                         "Your {$updated->plan?->name} subscription is now active",
                         "<p>Your <strong>{$updated->plan?->name}</strong> subscription for <strong>{$facility->facility_name}</strong> is now active.</p>
+                        " . \App\Services\Notification\NotificationService::billingInfoBlock($updated) . "
                         <p>Your invoice <strong>{$invoice->invoice_number}</strong> is attached below. Thank you for choosing Custocare.</p>",
                         [
                             [
@@ -431,6 +432,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                         $facility,
                         "Your plan has been upgraded to {$plan->name}",
                         "<p>Your subscription for <strong>{$facility->facility_name}</strong> has been upgraded to <strong>{$plan->name}</strong>.</p>
+                        " . \App\Services\Notification\NotificationService::billingInfoBlock($updated) . "
                         <p>Your new plan features and limits are now active. Thank you for growing with Custocare.</p>",
                     );
                 }

@@ -63,7 +63,7 @@ class PaymentService implements PaymentServiceInterface
 
             if ($hasPendingProof) {
                 throw new \DomainException(
-                    'A payment proof is already pending approval. Wait for the platform admin to review it before submitting another.',
+                    'A payment proof is already pending approval. Wait for our accountants to review it before submitting another.',
                     422
                 );
             }
@@ -129,7 +129,8 @@ class PaymentService implements PaymentServiceInterface
                         'Payment proof received — pending review',
                         "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been received.</p>
                         <p>Reference: <strong>{$ref}</strong></p>
-                        <p>A platform administrator will review your payment proof shortly. You will be notified once it is approved.</p>",
+                        " . \App\Services\Notification\NotificationService::billingInfoBlock($subscription) . "
+                        <p>Our accountants will review your payment proof shortly. You will be notified once it is approved.</p>",
                     );
                 }
             } catch (\Exception $e) {
@@ -208,6 +209,7 @@ class PaymentService implements PaymentServiceInterface
                         "Payment approved — receipt #{$payment->receipt_number}",
                         "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been approved.</p>
                         <p>Receipt: <strong>{$payment->receipt_number}</strong></p>
+                        " . \App\Services\Notification\NotificationService::billingInfoBlock($subscription) . "
                         <p>Your receipt is attached below. Thank you for your payment.</p>",
                         [
                             [

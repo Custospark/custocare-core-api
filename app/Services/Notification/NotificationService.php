@@ -8,6 +8,7 @@ namespace App\Services\Notification;
 use App\Mail\StandardEmail;
 use App\Models\Facility;
 use App\Models\Notification;
+use App\Models\Subscription;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -124,6 +125,48 @@ class NotificationService
                 ]);
             }
         }
+    }
+
+    /**
+     * Build a formatted billing info block for email bodies.
+     */
+    public static function billingInfoBlock(?Subscription $subscription): string
+    {
+        if (! $subscription) return '';
+
+        $plan = $subscription->plan;
+        $cycle = $subscription->billing_cycle === 'yearly' ? 'Annual' : 'Monthly';
+        $price = $plan?->price_usd ?? 0;
+        $displayPrice = $subscription->billing_cycle === 'yearly'
+            ? round($price * 10 / 12, 2) . " USD / mo (billed annually — $" . round($price * 10, 2) . "/yr)"
+            : $price . " USD / mo";
+
+        $lines = [
+            "<strong>Plan:</strong> {$plan?->name}",
+            "<strong>Billing Cycle:</strong> {$cycle}",
+            "<strong>Price:</strong> {$displayPrice}",
+        ];
+
+        if ($subscription->starts_at) {
+            $lines[] = "<strong>Started:</strong> " . $subscription->starts_at->format('M j, Y');
+        }
+
+        if ($subscription->trial_ends_at && $subscription->trial_ends_at->isFuture()) {
+            $lines[] = "<strong>Trial Ends:</strong> " . $subscription->trial_ends_at->format('M j, Y');
+        }
+
+        if ($subscription->next_billing_date) {
+            $lines[] = "<strong>Next Renewal:</strong> " . $subscription->next_billing_date->format('M j, Y');
+        }
+
+        $html = '<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;background:#f9fafb;border-radius:8px;">';
+        $html .= '<tbody>';
+        foreach ($lines as $line) {
+            $html .= '<tr><td style="padding:6px 16px;border-bottom:1px solid #e5e7eb;">' . $line . '</td></tr>';
+        }
+        $html .= '</tbody></table>';
+
+        return $html;
     }
 
     /**

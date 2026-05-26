@@ -27,7 +27,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
 
         match ($intent) {
             'first_activation', 'subscription' => $this->buildActivationQuote($subscription, $plan, $lineItems, $total, $paymentType),
-            'renewal' => $this->buildRenewalQuote($plan, $lineItems, $total, $paymentType),
+            'renewal' => $this->buildRenewalQuote($subscription, $plan, $lineItems, $total, $paymentType),
             'scheduled_change' => $this->buildScheduledChangeQuote($targetPlan, $lineItems, $total),
             'upgrade_now' => $this->buildUpgradeNowQuote($subscription, $plan, $targetPlan, $lineItems, $total, $paymentType),
             default => throw new \InvalidArgumentException("Unknown payment quote intent: {$intent}"),
@@ -77,6 +77,12 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         }
     }
 
+    private function resolveBillingCycle(Subscription $subscription, Plan $plan): BillingCycle
+    {
+        return BillingCycle::tryFrom($subscription->billing_cycle ?? $plan->billing_cycle ?? 'monthly')
+            ?? BillingCycle::MONTHLY;
+    }
+
     private function buildActivationQuote(
         Subscription $subscription,
         Plan $plan,
@@ -84,7 +90,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         float &$total,
         string &$paymentType,
     ): void {
-        $cycle = BillingCycle::tryFrom($plan->billing_cycle ?? 'monthly') ?? BillingCycle::MONTHLY;
+        $cycle = $this->resolveBillingCycle($subscription, $plan);
         $months = $cycle->monthsToAdd();
         $isAnnual = $cycle === BillingCycle::YEARLY;
         $price = (float) $plan->price_usd;
@@ -107,9 +113,9 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         $paymentType = $subscription->status === SubscriptionStatus::TRIAL ? 'subscription' : $paymentType;
     }
 
-    private function buildRenewalQuote(Plan $plan, array &$lineItems, float &$total, string &$paymentType): void
+    private function buildRenewalQuote(Subscription $subscription, Plan $plan, array &$lineItems, float &$total, string &$paymentType): void
     {
-        $cycle = BillingCycle::tryFrom($plan->billing_cycle ?? 'monthly') ?? BillingCycle::MONTHLY;
+        $cycle = $this->resolveBillingCycle($subscription, $plan);
         $months = $cycle->monthsToAdd();
         $isAnnual = $cycle === BillingCycle::YEARLY;
         $price = (float) $plan->price_usd;

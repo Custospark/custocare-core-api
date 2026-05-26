@@ -19,6 +19,8 @@ use App\Services\Billing\Contracts\PaymentServiceInterface;
 use App\Services\Billing\AssignableModuleService;
 use App\Services\Billing\Contracts\AssignableModuleServiceInterface;
 use App\Services\Billing\Contracts\FacilityStaffRoleModuleSyncServiceInterface;
+use App\Services\Currency\Contracts\CurrencyExchangeServiceInterface;
+use App\Services\Currency\CurrencyExchangeService;
 use App\Services\Billing\Contracts\PlanLimitServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionBillingDocumentServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionBillingPdfServiceInterface;
@@ -74,6 +76,12 @@ class BillingServiceProvider extends ServiceProvider
         $this->app->bind(
             AssignableModuleServiceInterface::class,
             AssignableModuleService::class,
+        );
+
+        // ── Currency exchange ──────────────────────────────────────────
+        $this->app->bind(
+            CurrencyExchangeServiceInterface::class,
+            CurrencyExchangeService::class,
         );
 
         // ── Gateway infrastructure ────────────────────────────────────────

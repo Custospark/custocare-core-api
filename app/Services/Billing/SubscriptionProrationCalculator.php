@@ -23,14 +23,16 @@ final class SubscriptionProrationCalculator
      */
     public static function calculate(Subscription $subscription, Plan $currentPlan, Plan $targetPlan): array
     {
-        $now = Carbon::now();
-        $endsAt = $subscription->ends_at ? $subscription->ends_at->copy() : $now->copy()->addMonth();
-        $startsAt = $subscription->starts_at ? $subscription->starts_at->copy() : $now->copy()->subMonth();
+        $now = Carbon::now()->startOfDay();
+        $endsAt = ($subscription->currentPeriodEndsAt() ?? $now->copy()->addMonth())->copy()->startOfDay();
+        $startsAt = ($subscription->starts_at ?? $now->copy()->subMonth())->copy()->startOfDay();
 
         $daysInPeriod = max(1, (int) $startsAt->diffInDays($endsAt));
-        $daysRemaining = max(0, (int) $now->diffInDays($endsAt, false));
+        $daysRemaining = $endsAt->lte($now)
+            ? 0
+            : (int) $now->diffInDays($endsAt);
 
-        $oldPrice = (float) $currentPlan->price_usd;
+        $oldPrice = $subscription->billingPeriodPriceUsd();
         $newPrice = (float) $targetPlan->price_usd;
 
         $creditUnused = round($oldPrice * ($daysRemaining / $daysInPeriod), 2);

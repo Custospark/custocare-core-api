@@ -219,9 +219,46 @@ class Subscription extends Model
         return $this->status === SubscriptionStatus::CANCELLED;
     }
 
-    /** Days remaining in current billing period. */
+    /** End of the current paid billing period (renewal date). */
+    public function currentPeriodEndsAt(): ?Carbon
+    {
+        return $this->next_billing_date ?? $this->ends_at;
+    }
+
+    /**
+     * Monthly price locked for the current billing period (from last approved payment / activation).
+     * Falls back to the plan catalog price when not yet locked.
+     */
+    public function billingPeriodPriceUsd(): float
+    {
+        if (isset($this->metadata['billing_period_price_usd'])) {
+            return (float) $this->metadata['billing_period_price_usd'];
+        }
+
+        return (float) ($this->plan?->price_usd ?? 0);
+    }
+
+    /** Calendar days until trial end or current period end. */
     public function daysRemaining(): int
     {
-        return max(0, (int) now()->diffInDays($this->ends_at, false));
+        if ($this->isOnTrial() && $this->trial_ends_at?->isFuture()) {
+            return $this->calendarDaysUntil($this->trial_ends_at);
+        }
+
+        $periodEnd = $this->currentPeriodEndsAt();
+
+        return $periodEnd ? $this->calendarDaysUntil($periodEnd) : 0;
+    }
+
+    private function calendarDaysUntil(Carbon $target): int
+    {
+        $today = Carbon::now()->startOfDay();
+        $end = $target->copy()->startOfDay();
+
+        if ($end->lte($today)) {
+            return 0;
+        }
+
+        return (int) $today->diffInDays($end);
     }
 }

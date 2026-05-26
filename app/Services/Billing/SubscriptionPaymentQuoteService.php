@@ -99,6 +99,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
 
     private function buildRenewalQuote(Plan $plan, array &$lineItems, float &$total, string &$paymentType): void
     {
+        // Renewal always uses current catalog price (plan prices may change over time).
         $monthly = (float) $plan->price_usd;
         $lineItems[] = ['label' => "{$plan->name} renewal (monthly)", 'amount' => $monthly];
         $total = $monthly;
@@ -134,6 +135,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
             throw new \DomainException('Upgrade now requires a higher-priced plan.', 422);
         }
 
+        // Proration: credit unused time at the locked period rate; charge remainder at target catalog price.
         $breakdown = SubscriptionProrationCalculator::calculate($subscription, $currentPlan, $targetPlan);
 
         $lineItems[] = [

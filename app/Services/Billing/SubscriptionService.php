@@ -111,6 +111,12 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'status'          => $status,
             ]);
 
+            $subscription = $subscription->fresh(['plan']);
+
+            if ($subscription->hasAccess()) {
+                $this->moduleSyncService->syncForSubscription($subscription);
+            }
+
             return $subscription;
         });
     }
@@ -131,19 +137,21 @@ class SubscriptionService implements SubscriptionServiceInterface
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
             $now = Carbon::now();
+            $periodEnd = $now->copy()->addMonth();
 
             $updated = $this->subscriptionRepo->update($subscription, [
                 'status'              => SubscriptionStatus::ACTIVE->value,
-                'starts_at'           => $now,
-                'ends_at'             => $now->addMonth(),
-                'next_billing_date'   => $now->addMonth(),
+                'starts_at'           => $now->copy(),
+                'ends_at'             => $periodEnd->copy(),
+                'next_billing_date'   => $periodEnd->copy(),
                 'grace_period_ends_at' => null,
                 'suspended_at'        => null,
-                'approved_at'         => $now,
+                'approved_at'         => $now->copy(),
                 'approved_by_user_id' => $approvedBy ? $approvedBy->id : null,
                 'onboarding_fee_paid' => $payment->payment_type === PaymentType::ONBOARDING
                     ? true
                     : $subscription->onboarding_fee_paid,
+                'metadata'            => $this->metadataWithLockedPeriodPrice($subscription, $payment),
             ]);
 
             Log::info('[Billing] Subscription activated', [
@@ -173,17 +181,25 @@ class SubscriptionService implements SubscriptionServiceInterface
     ): Subscription {
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
-            // Extend from current ends_at to not penalise early renewal
-            $newEndsAt = $subscription->ends_at->isFuture()
-                ? $subscription->ends_at->copy()->addMonth()
-                : Carbon::now()->addMonth();
+            // Extend from current period end to not penalise early renewal
+            $periodEnd = $subscription->currentPeriodEndsAt() ?? $subscription->ends_at;
+            $newEndsAt = $periodEnd && $periodEnd->isFuture()
+                ? $periodEnd->copy()->addMonth()
+                : Carbon::now()->copy()->addMonth();
+
+            $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
 
             $updated = $this->subscriptionRepo->update($subscription, [
                 'status'               => SubscriptionStatus::ACTIVE->value,
                 'ends_at'              => $newEndsAt,
-                'next_billing_date'    => $newEndsAt,
+                'next_billing_date'    => $newEndsAt->copy(),
                 'grace_period_ends_at' => null,
                 'suspended_at'         => null,
+                'metadata'             => $this->metadataWithLockedPeriodPrice(
+                    $subscription,
+                    $payment,
+                    $plan ? (float) $plan->price_usd : null,
+                ),
             ]);
 
             Log::info('[Billing] Subscription renewed', [
@@ -340,6 +356,8 @@ class SubscriptionService implements SubscriptionServiceInterface
                     'cancel_at_period_end' => false,
                     'access_ends_at'       => null,
                     'pending_upgrade_plan_id' => null,
+                    'billing_period_price_usd' => round((float) $plan->price_usd, 2),
+                    'billing_period_price_locked_at' => Carbon::now()->toISOString(),
                 ]),
                 'notes'    => $this->appendNote(
                     $subscription,
@@ -384,6 +402,49 @@ class SubscriptionService implements SubscriptionServiceInterface
         $line = $reason ? "{$prefix}: {$reason}" : $prefix;
 
         return $subscription->notes ? $subscription->notes . "\n{$line}" : $line;
+    }
+
+    /**
+     * Lock the monthly rate for the current billing period (used in proration & display).
+     *
+     * @param  float|null  $overrideUsd  Explicit catalog price (e.g. after renewal).
+     */
+    private function metadataWithLockedPeriodPrice(
+        Subscription $subscription,
+        Payment $payment,
+        ?float $overrideUsd = null,
+    ): array {
+        $price = $overrideUsd ?? $this->resolveMonthlyPriceFromPayment($subscription, $payment);
+
+        return array_merge($subscription->metadata ?? [], [
+            'billing_period_price_usd'       => round($price, 2),
+            'billing_period_price_locked_at' => Carbon::now()->toISOString(),
+        ]);
+    }
+
+    /**
+     * Prefer the quoted monthly line item; fall back to plan catalog price.
+     */
+    private function resolveMonthlyPriceFromPayment(Subscription $subscription, Payment $payment): float
+    {
+        $quote = $subscription->metadata['latest_quote'] ?? null;
+
+        if (is_array($quote) && ! empty($quote['line_items'])) {
+            foreach ($quote['line_items'] as $item) {
+                $label = strtolower((string) ($item['label'] ?? ''));
+                if (str_contains($label, 'monthly') && isset($item['amount'])) {
+                    return (float) $item['amount'];
+                }
+            }
+        }
+
+        $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
+
+        if ($plan) {
+            return (float) $plan->price_usd;
+        }
+
+        return (float) $payment->amount;
     }
 
     public function getAllSubscriptions(array $filters = [], int $perPage = 15): LengthAwarePaginator

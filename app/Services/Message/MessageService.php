@@ -253,8 +253,8 @@ class MessageService
                 // Create or update the message record
                 $message = $this->createOrUpdateDraft($user, $data);
 
-                // Sync recipients and labels
-                $this->syncRecipients($message, $data);
+                // Sync recipients and labels (skip addresses not on Custocare)
+                $this->syncRecipients($message, $data, skipUnresolved: true);
                 $this->syncLabels($message, $user->id, $data['labels'] ?? []);
 
                 // Ensure user has a draft state
@@ -262,7 +262,8 @@ class MessageService
 
                 return $message->load(['recipients', 'attachments', 'labels']);
             });
-            
+        } catch (MessageRecipientNotResolvedException|InvalidArgumentException $e) {
+            throw $e;
         } catch (Throwable $e) {
             Log::error('Failed to save draft', [
                 'user_id' => $user->id,
@@ -336,9 +337,9 @@ class MessageService
             $message->save();
 
             // Optionally sync recipients/labels if provided
-            if (isset($data['recipients'])) {
+            if (array_key_exists('to', $data) || array_key_exists('cc', $data) || array_key_exists('bcc', $data)) {
                 $message->recipients()->delete();
-                $this->syncRecipients($message, $data);
+                $this->syncRecipients($message, $data, skipUnresolved: true);
             }
 
             if (isset($data['labels'])) {
@@ -346,7 +347,8 @@ class MessageService
             }
 
             return $message->refresh()->load(['recipients', 'attachments', 'labels']);
-            
+        } catch (MessageRecipientNotResolvedException|InvalidArgumentException $e) {
+            throw $e;
         } catch (Throwable $e) {
             Log::error('Failed to update draft', [
                 'user_id' => $user->id,
@@ -372,10 +374,13 @@ class MessageService
     /**
      * Send a message immediately or schedule it.
      */
-    public function sendMessage(User $user, array $data): Message
+    /**
+     * @return array{message: Message, skipped_recipients: list<array{type: string, channel: string, value: string, message: string}>}
+     */
+    public function sendMessage(User $user, array $data): array
     {
         try {
-            return DB::transaction(function () use ($user, $data): Message {
+            return DB::transaction(function () use ($user, $data): array {
                 // Get or create message
                 $message = $this->getOrCreateMessage($user, $data);
 
@@ -384,8 +389,9 @@ class MessageService
                 $this->prepareMessageForSending($message, $data, $scheduledAt);
                 $message->save();
 
-                // Sync recipients and labels
-                $this->syncRecipients($message, $data);
+                // Sync recipients (skip unresolved) and labels
+                $skipped = $this->syncRecipients($message, $data, skipUnresolved: true);
+                $this->assertHasResolvedRecipients($message);
                 $this->syncLabels($message, $user->id, $data['labels'] ?? []);
 
                 // Create user states
@@ -396,16 +402,20 @@ class MessageService
                     $this->processImmediateSend($message);
                 }
 
-                return $message->load(['recipients', 'attachments', 'labels']);
+                return [
+                    'message' => $message->load(['recipients', 'attachments', 'labels']),
+                    'skipped_recipients' => $skipped,
+                ];
             });
-            
+        } catch (MessageRecipientNotResolvedException|InvalidArgumentException $e) {
+            throw $e;
         } catch (Throwable $e) {
             Log::error('Failed to send message', [
                 'user_id' => $user->id,
                 'data' => $this->sanitizeData($data),
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
-            
+
             throw new RuntimeException('Failed to send message. Please try again.', 0, $e);
         }
     }
@@ -1038,14 +1048,46 @@ public function downloadAttachment(User $user, int $attachmentId)
     }
 
     /**
-     * Sync recipients.
+     * Sync recipients. When $skipUnresolved is true, non-Custocare addresses are skipped
+     * and returned in the result instead of aborting the whole operation.
+     *
+     * @return list<array{type: string, channel: string, value: string, message: string}>
      */
-    private function syncRecipients(Message $message, array $data): void
+    private function syncRecipients(Message $message, array $data, bool $skipUnresolved = false): array
     {
+        $skipped = [];
+
         foreach (['to', 'cc', 'bcc'] as $type) {
             foreach (($data[$type] ?? []) as $recipient) {
-                $this->createRecipient($message, $recipient, $type);
+                try {
+                    $this->createRecipient($message, $recipient, $type);
+                } catch (MessageRecipientNotResolvedException $e) {
+                    if (!$skipUnresolved) {
+                        throw $e;
+                    }
+
+                    $skipped[] = [
+                        'type'    => $type,
+                        'channel' => $e->channel,
+                        'value'   => $e->normalizedValue,
+                        'message' => $e->getMessage(),
+                    ];
+                }
             }
+        }
+
+        return $skipped;
+    }
+
+    /**
+     * @throws InvalidArgumentException
+     */
+    private function assertHasResolvedRecipients(Message $message): void
+    {
+        if ($message->recipients()->count() === 0) {
+            throw new InvalidArgumentException(
+                'At least one recipient must be registered on Custocare.',
+            );
         }
     }
 

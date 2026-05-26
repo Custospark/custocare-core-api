@@ -180,15 +180,17 @@ class MessageController extends Controller
             'to'      => ['required_without_all:cc,bcc', 'array'],
         ]);
 
-        $message = $this->service->sendMessage($user, $data);
+        $result = $this->service->sendMessage($user, $data);
+        $message = $result['message'];
 
         MessageStatsUpdated::dispatch($user);
 
         $status = $message->scheduled_send_at ? 'scheduled' : 'sent';
 
         return response()->json([
-            'message' => $message,
-            'status'  => $status,
+            'message'              => $message,
+            'status'               => $status,
+            'skipped_recipients'   => $result['skipped_recipients'],
         ], Response::HTTP_CREATED);
     }
 

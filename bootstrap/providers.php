@@ -3,6 +3,7 @@
 return [
     App\Providers\AiAssessmentServiceProvider::class,
     App\Providers\AllergyServiceProvider::class,
+    App\Providers\UserMessageContactServiceProvider::class,
     App\Providers\AppServiceProvider::class,
     App\Providers\AppointmentServiceProvider::class,
     App\Providers\AuditLogServiceProvider::class,

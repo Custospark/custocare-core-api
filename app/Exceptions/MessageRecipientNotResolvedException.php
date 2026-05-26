@@ -25,9 +25,9 @@ final class MessageRecipientNotResolvedException extends RuntimeException
     private static function defaultMessage(string $channel): string
     {
         return match ($channel) {
-            'email' => 'No user account is registered with this email address.',
-            'phone' => 'No user account is registered with this phone number.',
-            default => 'Recipient does not match an existing user account.',
+            'email' => 'This email is not registered on Custocare.',
+            'phone' => 'This phone number is not registered on Custocare.',
+            default => 'This contact is not registered on Custocare.',
         };
     }
 }

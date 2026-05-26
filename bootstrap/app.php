@@ -45,6 +45,18 @@ return Application::configure(basePath: dirname(__DIR__))
             return null;
         });
 
+        $exceptions->render(function (\InvalidArgumentException $e, \Illuminate\Http\Request $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'errors'  => ['recipients' => [$e->getMessage()]],
+                ], 422);
+            }
+
+            return null;
+        });
+
         $exceptions->render(function (AuthenticationException $e, \Illuminate\Http\Request $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
                 return response()->json([

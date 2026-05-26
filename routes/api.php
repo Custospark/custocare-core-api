@@ -45,6 +45,7 @@ require __DIR__.'/api_v1/clinicalDocument/_index.php';
 require __DIR__.'/api_v1/conversation/_index.php';
 require __DIR__.'/api_v1/conversationParticipant/_index.php';
 require __DIR__.'/api_v1/message/_index.php';
+require __DIR__.'/api_v1/messageContact/_index.php';
 require __DIR__.'/api_v1/messageReceipt/_index.php';
 require __DIR__.'/api_v1/messageAttachment/_index.php';
 require __DIR__.'/api_v1/module/_index.php';

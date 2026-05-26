@@ -94,15 +94,18 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             $trialEndsAt = $hasUsedTrialBefore ? null : $now->copy()->addDays($plan->trial_days);
 
+            $monthsToAdd = BillingCycle::tryFrom($plan->billing_cycle)?->monthsToAdd() ?? 1;
+
             // ── Build the subscription payload ────────────────────────────
             $subscription = $this->subscriptionRepo->create([
                 'facility_id'        => $facility->id,
                 'plan_id'            => $plan->id,
+                'billing_cycle'      => $plan->billing_cycle ?? 'monthly',
                 'status'             => $status,
                 'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
-                'ends_at'            => $now->copy()->addMonth(),
-                'next_billing_date'  => $now->copy()->addMonth(),
+                'ends_at'            => $now->copy()->addMonths($monthsToAdd),
+                'next_billing_date'  => $now->copy()->addMonths($monthsToAdd),
                 'onboarding_fee_paid' => false,
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,
@@ -144,7 +147,9 @@ class SubscriptionService implements SubscriptionServiceInterface
             $remainingTrialDays = $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture()
                 ? max(0, $now->diffInDays($subscription->trial_ends_at, false))
                 : 0;
-            $periodEnd = $now->copy()->addMonth()->addDays($remainingTrialDays);
+            $subscription->loadMissing('plan');
+            $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+            $periodEnd = $now->copy()->addMonths($monthsToAdd)->addDays($remainingTrialDays);
 
             $updated = $this->subscriptionRepo->update($subscription, [
                 'status'              => SubscriptionStatus::ACTIVE->value,
@@ -219,9 +224,11 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             // Extend from current period end to not penalise early renewal
             $periodEnd = $subscription->currentPeriodEndsAt() ?? $subscription->ends_at;
+            $subscription->loadMissing('plan');
+            $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
             $newEndsAt = $periodEnd && $periodEnd->isFuture()
-                ? $periodEnd->copy()->addMonth()
-                : Carbon::now()->copy()->addMonth();
+                ? $periodEnd->copy()->addMonths($monthsToAdd)
+                : Carbon::now()->copy()->addMonths($monthsToAdd);
 
             $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
 
@@ -358,7 +365,8 @@ class SubscriptionService implements SubscriptionServiceInterface
 
         $this->scheduledChangeService->cancelPendingChange($subscription);
 
-        $effectiveAt = $subscription->ends_at ?? $subscription->next_billing_date ?? Carbon::now()->addMonth();
+        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $effectiveAt = $subscription->ends_at ?? $subscription->next_billing_date ?? Carbon::now()->addMonths($monthsToAdd);
 
         $this->scheduledChangeService->scheduleCancellation($subscription);
 

@@ -20,6 +20,8 @@ class PlanResource extends JsonResource
                 'usd'                => (float) $this->price_usd,
                 'ugx'                => (float) $this->price_ugx,
                 'billing_cycle'      => $this->billing_cycle,
+                'annual_usd'         => round((float) $this->price_usd * 10, 2),
+                'annual_ugx'         => round((float) $this->price_ugx * 10, 2),
             ],
             'onboarding_fee'         => [
                 'usd'                => (float) $this->onboarding_fee_usd,

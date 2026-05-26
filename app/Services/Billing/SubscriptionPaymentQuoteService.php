@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Enums\Billing\BillingCycle;
 use App\Enums\Billing\SubscriptionStatus;
 use App\Models\Plan;
 use App\Models\Subscription;
@@ -83,9 +84,18 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         float &$total,
         string &$paymentType,
     ): void {
-        $monthly = (float) $plan->price_usd;
-        $lineItems[] = ['label' => "{$plan->name} (monthly)", 'amount' => $monthly];
-        $total += $monthly;
+        $cycle = BillingCycle::tryFrom($plan->billing_cycle ?? 'monthly') ?? BillingCycle::MONTHLY;
+        $months = $cycle->monthsToAdd();
+        $isAnnual = $cycle === BillingCycle::YEARLY;
+        $price = (float) $plan->price_usd;
+        $label = "{$plan->name} ({$cycle->value})";
+
+        if ($isAnnual) {
+            $price = round($price * 10, 2);
+        }
+
+        $lineItems[] = ['label' => $label, 'amount' => $price];
+        $total += $price;
 
         if (! $subscription->onboarding_fee_paid && $plan->hasOnboardingFee()) {
             $fee = (float) $plan->onboarding_fee_usd;
@@ -99,10 +109,18 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
 
     private function buildRenewalQuote(Plan $plan, array &$lineItems, float &$total, string &$paymentType): void
     {
-        // Renewal always uses current catalog price (plan prices may change over time).
-        $monthly = (float) $plan->price_usd;
-        $lineItems[] = ['label' => "{$plan->name} renewal (monthly)", 'amount' => $monthly];
-        $total = $monthly;
+        $cycle = BillingCycle::tryFrom($plan->billing_cycle ?? 'monthly') ?? BillingCycle::MONTHLY;
+        $months = $cycle->monthsToAdd();
+        $isAnnual = $cycle === BillingCycle::YEARLY;
+        $price = (float) $plan->price_usd;
+        $label = "{$plan->name} renewal ({$cycle->value})";
+
+        if ($isAnnual) {
+            $price = round($price * 10, 2);
+        }
+
+        $lineItems[] = ['label' => $label, 'amount' => $price];
+        $total = $price;
         $paymentType = 'renewal';
     }
 

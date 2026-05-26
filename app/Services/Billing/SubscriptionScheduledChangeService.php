@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Enums\Billing\BillingCycle;
 use App\Enums\Billing\SubscriptionScheduledChangeStatus;
 use App\Enums\Billing\SubscriptionScheduledChangeType;
 use App\Enums\Billing\SubscriptionStatus;
@@ -66,7 +67,8 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         $this->scheduledChangeRepo->cancelPendingForSubscription($subscription->id);
 
         $type = SubscriptionScheduledChangeType::from($changeType);
-        $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonth();
+        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonths($monthsToAdd);
 
         $change = $this->scheduledChangeRepo->create([
             'subscription_id'       => $subscription->id,
@@ -110,7 +112,8 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
     ): SubscriptionScheduledChange {
         $this->scheduledChangeRepo->cancelPendingForSubscription($subscription->id);
 
-        $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonth();
+        $monthsToAdd = BillingCycle::tryFrom($subscription->plan?->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
+        $effectiveAt = $subscription->next_billing_date ?? $subscription->ends_at ?? Carbon::now()->addMonths($monthsToAdd);
 
         return $this->scheduledChangeRepo->create([
             'subscription_id'      => $subscription->id,

@@ -28,6 +28,7 @@ class SubscriptionResource extends JsonResource
             // ── Plan ──────────────────────────────────────────────────────
             'plan'                 => new PlanResource($this->whenLoaded('plan')),
             'effective_plan'       => new PlanResource($this->whenLoaded('plan')),
+            'billing_cycle'        => $this->billing_cycle ?? 'monthly',
 
             // ── Scheduled changes & cancel-at-period-end ─────────────────
             'scheduled_change'     => $scheduledChange

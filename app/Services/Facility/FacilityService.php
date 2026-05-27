@@ -260,7 +260,23 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
         ]);
 
         /**
-         * 5️⃣ Assign Administrator Role
+         * 5️⃣ Create Subscription FIRST (if plan_id provided)
+         * Subscription must exist before role assignment so module validation
+         * against the plan's feature flags can succeed.
+         */
+        if (!empty($data['plan_id'])) {
+            $plan = Plan::find($data['plan_id']);
+            if (!$plan) {
+                throw new \RuntimeException('Selected plan not found.');
+            }
+            $this->subscriptionService->createSubscription($facility, $plan, [
+                'notes' => 'Plan selected during facility onboarding',
+                'metadata' => ['source' => 'onboarding', 'plan_name' => $plan->name],
+            ]);
+        }
+
+        /**
+         * 6️⃣ Assign Administrator Role
          */
         $this->facilityStaffRoleService->createAssignment([
             'facility_id'         => $facility->id,
@@ -276,20 +292,6 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
                 'owner_record_created' => true,
             ],
         ]);
-
-        /**
-         * 6️⃣ Create Subscription (if plan_id provided)
-         */
-        if (!empty($data['plan_id'])) {
-            $plan = Plan::find($data['plan_id']);
-            if (!$plan) {
-                throw new \RuntimeException('Selected plan not found.');
-            }
-            $this->subscriptionService->createSubscription($facility, $plan, [
-                'notes' => 'Plan selected during facility onboarding',
-                'metadata' => ['source' => 'onboarding', 'plan_name' => $plan->name],
-            ]);
-        }
 
         return $facility;
     });

@@ -114,9 +114,9 @@
 
         .footer-message { margin-bottom: 16px; }
         .footer-message strong { color: #ffffff; font-weight: 600; }
-        .footer-attribution { font-size: 11px; font-style: italic; color: #cbd5e1; margin-bottom: 12px; }
-        .footer-attribution a { color: #cbd5e1; text-decoration: underline; }
-        .copyright { font-size: 11px; color: #94a3b8; }
+        .footer-attribution { font-size: 12px; font-style: italic; color: #f1f5f9; margin-bottom: 12px; }
+        .footer-attribution a { color: #f1f5f9; text-decoration: underline; }
+        .copyright { font-size: 12px; color: #cbd5e1; }
 
         @media only screen and (max-width: 620px) {
             .email-container { margin: 20px 10px; }

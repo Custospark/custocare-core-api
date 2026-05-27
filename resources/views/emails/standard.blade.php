@@ -6,7 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $title }}</title>
     <style>
-        /* Keep all your existing styles */
         body {
             margin: 0;
             padding: 0;
@@ -50,15 +49,16 @@
             border: 2px solid #e5e7eb;
         }
 
-        .brand-section { margin-bottom: 12px; }
-        .parent-brand { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #9ca3af; margin-bottom: 4px; }
-        .brand-name { font-size: 24px; font-weight: 700; color: #3b82f6; margin-bottom: 4px; line-height: 1.2; }
-        .tagline { font-size: 14px; color: #6b7280; font-weight: 400; margin-bottom: 0; }
+        .brand-section { margin-bottom: 16px; }
+        .brand-name { font-size: 24px; font-weight: 700; color: #1e293b; margin-bottom: 4px; line-height: 1.2; letter-spacing: -0.3px; }
+        .tagline { font-size: 14px; color: #64748b; font-weight: 400; margin-bottom: 8px; }
+        .parent-brand { font-size: 11px; color: #94a3b8; font-style: italic; font-weight: 400; margin-bottom: 0; }
+        .parent-brand a { color: #94a3b8; }
 
         .brand-divider {
             border: 0;
-            height: 2px;
-            background: #3b82f6;
+            height: 1px;
+            background: #e5e7eb;
             margin: 16px 24px;
         }
 
@@ -105,17 +105,19 @@
         .email-tip strong { color: #2563eb; }
 
         .email-footer {
-            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
-            padding: 28px 24px;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 32px 24px;
             text-align: center;
-            font-size: 14px;
-            color: white;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 13px;
+            color: #cbd5e1;
+            line-height: 1.8;
         }
 
-        .footer-message { margin-bottom: 12px; opacity: .9; }
-        .footer-message strong { color: white; font-weight: 700; }
-        .copyright { font-size: 12px; opacity: .7; margin-top: 12px; }
+        .footer-message { margin-bottom: 16px; }
+        .footer-message strong { color: #f1f5f9; font-weight: 600; }
+        .footer-attribution { font-size: 11px; font-style: italic; color: #94a3b8; margin-bottom: 12px; }
+        .footer-attribution a { color: #94a3b8; text-decoration: underline; }
+        .copyright { font-size: 11px; color: #64748b; }
 
         @media only screen and (max-width: 620px) {
             .email-container { margin: 20px 10px; }
@@ -140,16 +142,16 @@
                      alt="{{ config('app.name') }}"
                      class="logo-rounded">
             @else
-                <div style="font-size: 32px; font-weight: bold; margin-bottom: 12px; color: #3b82f6;">📧</div>
+                <div style="font-size: 32px; font-weight: bold; margin-bottom: 12px; color: #1e293b;">📧</div>
             @endif
 
             <div class="brand-section">
                 <div class="brand-name">Custocare</div>
                 <div class="tagline">Continuous Care. Clinical Excellence.</div>
                 <div class="parent-brand">
-                    A product of
-                    <a href="https://www.custospark.com" style="color:#9ca3af;text-decoration:underline;">Custospark Company Ltd</a>
-                    — PowerHouse of Innovations.
+                    &ldquo;a product of
+                    <a href="https://www.custospark.com">Custospark Company Ltd</a>
+                    &mdash; PowerHouse of Innovations.&rdquo;
                 </div>
             </div>
 
@@ -171,7 +173,7 @@
             {{-- Optional pro-tip callout --}}
             @isset($tip)
                 <div class="email-tip">
-                    <strong>💡 Pro Tip:</strong> {{ $tip }}
+                    <strong>Pro Tip:</strong> {{ $tip }}
                 </div>
             @endisset
 
@@ -192,10 +194,14 @@
         {{-- ── Footer ─────────────────────────────────────────────────── --}}
         <div class="email-footer">
             <div class="footer-message">
-                You're receiving this because you use <strong>Custocare</strong>,<br>
-                a product of
-                <a href="https://www.custospark.com" style="color:#ffffff;text-decoration:underline;"><strong>Custospark Company Ltd</strong></a>
-                — PowerHouse of Innovations.
+                You're receiving this because you're part of the<br>
+                <strong>Custocare</strong> community &mdash; where continuous care<br>
+                meets clinical excellence.
+            </div>
+            <div class="footer-attribution">
+                &ldquo;a product of
+                <a href="https://www.custospark.com">Custospark Company Ltd</a>
+                &mdash; PowerHouse of Innovations.&rdquo;
             </div>
             <div class="copyright">
                 &copy; {{ now()->year }} Custospark Company Ltd. All rights reserved.

@@ -31,7 +31,7 @@
             position: absolute;
             top: 0; left: 0; right: 0;
             height: 4px;
-            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
+            background: linear-gradient(90deg, #1E3A8A 0%, #10B981 100%);
             z-index: 1;
         }
 
@@ -68,7 +68,6 @@
             font-size: 20px;
             font-weight: 500;
             color: #111827;
-            border-top: 1px solid #e5e7eb;
         }
 
         .email-body {
@@ -84,17 +83,17 @@
             display: inline-block;
             margin: 24px 0;
             padding: 14px 32px;
-            background: linear-gradient(90deg, #2563eb 0%, #059669 100%);
+            background: linear-gradient(90deg, #1E3A8A 0%, #10B981 100%);
             color: #ffffff !important;
             text-decoration: none;
             font-weight: 600;
             border-radius: 30px;
-            box-shadow: 0 4px 6px rgba(5, 150, 105, 0.2);
+            box-shadow: 0 4px 6px rgba(16, 185, 129, 0.25);
         }
 
         .email-tip {
             background: linear-gradient(90deg, #eff6ff 0%, #ecfdf5 100%);
-            border-left: 4px solid #059669;
+            border-left: 4px solid #10B981;
             padding: 20px;
             margin: 24px 0;
             border-radius: 8px;
@@ -102,10 +101,10 @@
             color: #065f46;
         }
 
-        .email-tip strong { color: #2563eb; }
+        .email-tip strong { color: #1E3A8A; }
 
         .email-footer {
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            background: linear-gradient(135deg, #1E3A8A 0%, #0F766E 100%);
             padding: 32px 24px;
             text-align: center;
             font-size: 13px;

@@ -6,12 +6,20 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Events\EmailVerificationRequested;
+use App\Events\FacilityRegistered;
 use App\Events\MfaRequired;
 use App\Events\PasswordChanged;
 use App\Events\PasswordResetRequested;
+use App\Events\PatientRegistered;
+use App\Events\StaffRegistered;
+use App\Events\UserEmailVerified;
 use App\Listeners\SendPasswordResetNotification;
 use App\Listeners\SendEmailVerificationNotification;
+use App\Listeners\SendFacilityRegisteredNotification;
 use App\Listeners\SendMfaRequiredNotification;
+use App\Listeners\SendPatientWelcomeNotification;
+use App\Listeners\SendStaffRegisteredNotification;
+use App\Listeners\SendUserWelcomeNotification;
 
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
 
@@ -45,6 +53,23 @@ class EventServiceProvider extends ServiceProvider
         
         \App\Events\FacilityStatusChanged::class => [
             \App\Listeners\SendFacilityStatusChangeNotification::class,
+        ],
+
+        // ── Onboarding / welcome events ──────────────────────────────────
+        StaffRegistered::class => [
+            SendStaffRegisteredNotification::class,
+        ],
+
+        FacilityRegistered::class => [
+            SendFacilityRegisteredNotification::class,
+        ],
+
+        UserEmailVerified::class => [
+            SendUserWelcomeNotification::class,
+        ],
+
+        PatientRegistered::class => [
+            SendPatientWelcomeNotification::class,
         ],
 
         // ── Laravel built-in (keep if using standard email verification) ───

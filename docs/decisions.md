@@ -263,3 +263,50 @@ The `staff()` relationship already existed on the User model, and the rest of th
 **Trade-offs:**
 - Upgrade and schedule emails carry no PDF attachment — no invoice/receipt is generated for plan changes. The plan name is embedded directly in the email body.
 - Template redesign is purely CSS/HTML content within the existing Blade structure — no new variables or parameters added to `StandardEmail`.
+
+---
+
+## 2026-05-28: Onboarding Welcome Emails — Staff, Facility, User, Patient
+
+**Context:** Users who register through onboarding flows (staff, patient, facility) never received a follow-up email containing their unique identifier or a welcome message. The front-end shows the UUID on a success screen, but it's not persisted anywhere the user can refer back to.
+
+**Decision:**
+Added 4 event-listener pairs following the existing Event → Listener → NotificationService pattern:
+
+| Event | Listener | Fires After | Condition |
+|-------|----------|-------------|-----------|
+| `StaffRegistered` | `SendStaffRegisteredNotification` | `POST /staff` | Always |
+| `FacilityRegistered` | `SendFacilityRegisteredNotification` | `POST /facilities` | Always; also sends to facility email |
+| `UserEmailVerified` | `SendUserWelcomeNotification` | `POST /auth/verify-email` | Only first-time verification |
+| `PatientRegistered` | `SendPatientWelcomeNotification` | `POST /patients` | Only when `user_id === Auth::id()` |
+
+**Key details:**
+- Public-facing term for all identifiers is **"Number"** (Staff Number, Facility Number, Patient Number)
+- All emails carry a CTA button pointing to `https://custocare.custospark.com/login`
+- `NotificationService::sendToUser()` and `dispatchEmail()` extended with optional `$ctaUrl` / `$ctaLabel` params
+- The `StandardEmail` mailable already supported CTA — just wasn't plumbed through NotificationService
+- Tagline updated in `resources/views/emails/standard.blade.php`: *Continuous Care. Clinical Excellence.* with Custospark attribution: *PowerHouse of Innovations.*
+
+**Files created (8):**
+- `app/Events/StaffRegistered.php`
+- `app/Events/FacilityRegistered.php`
+- `app/Events/UserEmailVerified.php`
+- `app/Events/PatientRegistered.php`
+- `app/Listeners/SendStaffRegisteredNotification.php`
+- `app/Listeners/SendFacilityRegisteredNotification.php`
+- `app/Listeners/SendUserWelcomeNotification.php`
+- `app/Listeners/SendPatientWelcomeNotification.php`
+
+**Files changed (6):**
+- `app/Providers/EventServiceProvider.php` — added 4 event-listener mappings
+- `app/Http/Controllers/Api/StaffController.php` — dispatches `StaffRegistered`
+- `app/Http/Controllers/Api/FacilityController.php` — dispatches `FacilityRegistered`
+- `app/Http/Controllers/Api/PatientController.php` — dispatches `PatientRegistered` (self-registration only)
+- `app/Services/User/AccountRecoveryService.php` — dispatches `UserEmailVerified` (first-time only)
+- `app/Services/Notification/NotificationService.php` — added CTA passthrough
+- `resources/views/emails/standard.blade.php` — updated tagline and Custospark branding
+
+**Trade-offs:**
+- Facility welcome is sent to both owner's user email and facility's direct email — avoids missing the facility's shared inbox
+- Patient welcome is intentionally skipped for admin-created patients to avoid confusion (admin handles onboarding)
+- User welcome (Email 3) is generic/role-agnostic since it fires before the user chooses a role — no conditional logic needed

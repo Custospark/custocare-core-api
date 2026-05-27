@@ -12,6 +12,7 @@ use App\Models\Department;
 use App\Models\FacilityStaffRole;
 use App\Models\Staff;
 use App\Models\User;
+use App\Events\StaffRegistered;
 use App\Services\Contracts\StaffServiceInterface;
 use App\Services\User\Contracts\UserServiceInterface;
 use App\Support\HealthcareIdGenerator;
@@ -274,6 +275,9 @@ use Illuminate\Support\Facades\Auth;
 
             // ✅ Eager load user for the resource (prevents MissingValue issues)
             $staff->load('user');
+
+            // Dispatch welcome email with Staff Number
+            event(new StaffRegistered($staff, $staff->user));
 
             return response()->json([
                 'success' => true,

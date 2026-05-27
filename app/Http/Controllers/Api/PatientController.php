@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Events\PatientRegistered;
 use App\Exceptions\PatientCreationException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Patient\StorePatientRequest;
@@ -597,6 +598,14 @@ public function createPatientByAdmin(Request $request): JsonResponse
         try {
             $validatedData = $request->validated();
             $patient = $this->patientService->createPatient($validatedData);
+
+            // Dispatch welcome email only for self-registration (not admin-created)
+            if ((int) $validatedData['user_id'] === (int) Auth::id()) {
+                $patient->load('user');
+                if ($patient->user) {
+                    event(new PatientRegistered($patient, $patient->user));
+                }
+            }
 
             return response()->json([
                 'success' => true,

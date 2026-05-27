@@ -144,9 +144,13 @@
             @endif
 
             <div class="brand-section">
-                <div class="parent-brand">From the makers of</div>
-                <div class="brand-name">Custospark</div>
-                <div class="tagline">Innovation That Powers Excellence</div>
+                <div class="brand-name">Custocare</div>
+                <div class="tagline">Continuous Care. Clinical Excellence.</div>
+                <div class="parent-brand">
+                    A product of
+                    <a href="https://www.custospark.com" style="color:#9ca3af;text-decoration:underline;">Custospark Company Ltd</a>
+                    — PowerHouse of Innovations.
+                </div>
             </div>
 
             <hr class="brand-divider">
@@ -189,7 +193,9 @@
         <div class="email-footer">
             <div class="footer-message">
                 You're receiving this because you use <strong>Custocare</strong>,<br>
-                a product of <strong>Custospark</strong> — where innovation meets excellence.
+                a product of
+                <a href="https://www.custospark.com" style="color:#ffffff;text-decoration:underline;"><strong>Custospark Company Ltd</strong></a>
+                — PowerHouse of Innovations.
             </div>
             <div class="copyright">
                 &copy; {{ now()->year }} Custospark Company Ltd. All rights reserved.

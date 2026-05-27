@@ -8,6 +8,7 @@ namespace App\Services\User;
 use App\Constants\ActionTypes;
 use App\Events\PasswordChanged;
 use App\Events\EmailVerificationRequested;
+use App\Events\UserEmailVerified;
 use App\Models\AccountRecoveryToken;
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;
@@ -116,6 +117,9 @@ class AccountRecoveryService
 
             // Email not verified yet - verify it now
             $user->markEmailAsVerified();
+
+            // Dispatch welcome email on first-time verification
+            UserEmailVerified::dispatch($user);
 
             Log::info('Email verified', [
                 'user_id' => $userId,

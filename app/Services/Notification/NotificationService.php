@@ -49,14 +49,16 @@ class NotificationService
         string $title,
         string $body,
         string $type,
-        string $channel = 'email'
+        string $channel = 'email',
+        ?string $ctaUrl = null,
+        ?string $ctaLabel = null,
     ): void {
         if (in_array($channel, ['in_app', 'both'], true)) {
             $this->persistNotification($user->id, $title, $body, $type, $channel);
         }
 
         if (in_array($channel, ['email', 'both'], true)) {
-            $this->dispatchEmail($user, $title, $body);
+            $this->dispatchEmail($user, $title, $body, $ctaUrl, $ctaLabel);
         }
     }
 
@@ -278,8 +280,13 @@ class NotificationService
      * Decrypt the user's email and send a transactional email.
      * Failures are caught and logged so one bad address never kills a batch.
      */
-    private function dispatchEmail(User $user, string $title, string $body): void
-    {
+    private function dispatchEmail(
+        User    $user,
+        string  $title,
+        string  $body,
+        ?string $ctaUrl = null,
+        ?string $ctaLabel = null,
+    ): void {
         if (empty($user->email_encrypted)) {
             Log::warning('dispatchEmail: user has no encrypted email', ['user_id' => $user->id]);
             return;
@@ -291,6 +298,8 @@ class NotificationService
             Mail::to($email)->send(new StandardEmail(
                 title:    $title,
                 mailBody: $body,
+                ctaUrl:   $ctaUrl,
+                ctaLabel: $ctaLabel,
                 isHtml:   true
             ));
 

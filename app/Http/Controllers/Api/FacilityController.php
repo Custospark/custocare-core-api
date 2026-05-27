@@ -7,8 +7,10 @@ use App\Http\Requests\Facility\StoreFacilityRequest;
 use App\Http\Requests\Facility\UpdateFacilityRequest;
 use App\Http\Requests\Facility\UpdateFacilitySettingsRequest;
 use App\Http\Resources\FacilityResource;
+use App\Events\FacilityRegistered;
 use App\Http\Resources\FacilityCollection;
 use App\Models\Facility;
+use App\Models\User;
 use App\Services\Contracts\FacilityServiceInterface;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -110,6 +112,13 @@ class FacilityController extends Controller
             
         */
              $facility = $this->facilityService->createFacilityByAdmin($validatedData, $createdByStaffId);
+
+            // Dispatch welcome email with Facility Number
+            $ownerUser = User::find($validatedData['user_id']);
+            if ($ownerUser) {
+                event(new FacilityRegistered($facility, $ownerUser));
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Facility created successfully',

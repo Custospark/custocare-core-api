@@ -108,15 +108,15 @@
             padding: 32px 24px;
             text-align: center;
             font-size: 13px;
-            color: #cbd5e1;
+            color: #e2e8f0;
             line-height: 1.8;
         }
 
         .footer-message { margin-bottom: 16px; }
-        .footer-message strong { color: #f1f5f9; font-weight: 600; }
-        .footer-attribution { font-size: 11px; font-style: italic; color: #94a3b8; margin-bottom: 12px; }
-        .footer-attribution a { color: #94a3b8; text-decoration: underline; }
-        .copyright { font-size: 11px; color: #64748b; }
+        .footer-message strong { color: #ffffff; font-weight: 600; }
+        .footer-attribution { font-size: 11px; font-style: italic; color: #cbd5e1; margin-bottom: 12px; }
+        .footer-attribution a { color: #cbd5e1; text-decoration: underline; }
+        .copyright { font-size: 11px; color: #94a3b8; }
 
         @media only screen and (max-width: 620px) {
             .email-container { margin: 20px 10px; }

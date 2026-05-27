@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Tests\Feature\Unit;
+namespace Tests\Unit;
 
 use App\Models\User;
 use App\Repositories\User\Contracts\UserRepositoryInterface;

@@ -1,6 +1,6 @@
 <?php
 
-namespace Tests\Feature\Unit;
+namespace Tests\Unit;
 
 use App\Models\MessageReceipt;
 use App\Repositories\Contracts\MessageReceiptRepositoryInterface;

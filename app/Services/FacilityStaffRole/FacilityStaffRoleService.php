@@ -235,7 +235,8 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
              * 5️⃣ Attach default modules IF NOT explicitly provided
              * This is the ONLY time role defaults are used.
              */
-            if (!array_key_exists('module_code', $data) || empty($data['module_code'])) {
+            $hasExplicitModules = array_key_exists('module_code', $data) && !empty($data['module_code']);
+            if (!$hasExplicitModules) {
                 $data['module_code'] = $this->resolveDefaultModulesForRole($data['role_code']);
             }
 
@@ -245,16 +246,21 @@ class FacilityStaffRoleService implements FacilityStaffRoleServiceInterface
                 ->where('staff_id', $targetStaffId)
                 ->exists();
 
-            $this->planLimitService->assertModulesAllowed(
-                (int) $data['facility_id'],
-                is_array($data['module_code']) ? $data['module_code'] : [],
-                $isFacilityOwner,
-            );
+            // Always filter to what the plan allows (silent trim)
             $data['module_code'] = $this->planLimitService->filterModulesForPlan(
                 (int) $data['facility_id'],
                 is_array($data['module_code']) ? $data['module_code'] : [],
                 $isFacilityOwner,
             );
+
+            // Only assert when modules were explicitly chosen by the user
+            if ($hasExplicitModules) {
+                $this->planLimitService->assertModulesAllowed(
+                    (int) $data['facility_id'],
+                    is_array($data['module_code']) ? $data['module_code'] : [],
+                    $isFacilityOwner,
+                );
+            }
 
             /**
              * 6️⃣ Enforce system ownership

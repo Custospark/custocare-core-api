@@ -7,7 +7,7 @@ namespace App\Services\Billing\Contracts;
 interface PlanLimitServiceInterface
 {
     /**
-     * @return array{max_staff: int|null, max_departments: int|null, max_patients_per_month: int|null}|null
+     * @return array{max_staff: int|null, max_departments: int|null, max_visits_per_month: int|null}|null
      */
     public function getPlanLimits(int $facilityId): ?array;
 

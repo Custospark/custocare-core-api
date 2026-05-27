@@ -30,7 +30,7 @@ class PlanLimitService implements PlanLimitServiceInterface
         return [
             'max_staff'              => $plan->max_staff,
             'max_departments'        => $plan->max_departments,
-            'max_patients_per_month' => $plan->max_patients_per_month,
+            'max_visits_per_month' => $plan->max_visits_per_month,
         ];
     }
 
@@ -114,7 +114,7 @@ class PlanLimitService implements PlanLimitServiceInterface
     public function assertCanCreateVisit(int $facilityId): void
     {
         $limits = $this->getPlanLimits($facilityId);
-        $maxVisits = $limits['max_patients_per_month'] ?? null;
+        $maxVisits = $limits['max_visits_per_month'] ?? null;
 
         if ($maxVisits === null) {
             return;

@@ -34,7 +34,7 @@ class PlanResource extends JsonResource
             'limits'                 => [
                 'max_staff'              => $this->max_staff,
                 'max_departments'        => $this->max_departments,
-                'max_patients_per_month' => $this->max_patients_per_month,
+                'max_visits_per_month' => $this->max_visits_per_month,
             ],
             'features'               => $this->features ?? [],
             'is_popular'             => $this->is_popular,

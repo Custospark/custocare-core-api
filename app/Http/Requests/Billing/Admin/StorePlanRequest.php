@@ -30,7 +30,7 @@ class StorePlanRequest extends FormRequest
             'features.*'             => 'boolean',
             'max_staff'              => 'nullable|integer|min:1',
             'max_departments'        => 'nullable|integer|min:1',
-            'max_patients_per_month' => 'nullable|integer|min:1',
+            'max_visits_per_month' => 'nullable|integer|min:1',
             'sort_order'             => 'nullable|integer|min:0',
             'is_popular'             => 'nullable|boolean',
             'is_active'              => 'nullable|boolean',

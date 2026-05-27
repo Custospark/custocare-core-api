@@ -28,7 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property array|null  $features
  * @property int|null    $max_staff
  * @property int|null    $max_departments
- * @property int|null    $max_patients_per_month
+ * @property int|null    $max_visits_per_month
  * @property int         $sort_order
  * @property bool        $is_popular
  * @property bool        $is_active
@@ -51,7 +51,7 @@ class Plan extends Model
         'features',
         'max_staff',
         'max_departments',
-        'max_patients_per_month',
+        'max_visits_per_month',
         'sort_order',
         'is_popular',
         'is_active',
@@ -66,7 +66,7 @@ class Plan extends Model
         'trial_days'             => 'integer',
         'max_staff'              => 'integer',
         'max_departments'        => 'integer',
-        'max_patients_per_month' => 'integer',
+        'max_visits_per_month' => 'integer',
         'sort_order'             => 'integer',
         'is_popular'             => 'boolean',
         'is_active'              => 'boolean',

@@ -27,7 +27,7 @@ class StorePaymentRequest extends FormRequest
             'method'                => ['required', new Enum(PaymentMethod::class)],
             'payment_type'          => ['required', new Enum(PaymentType::class)],
             'transaction_reference' => 'nullable|string|max:255',
-            'receipt'               => 'nullable|file|mimes:jpeg,jpg,png,pdf|max:5120', // 5MB
+            'receipt'               => 'required|file|mimes:jpeg,jpg,png,pdf|max:5120', // 5MB
             'receipt_notes'         => 'nullable|string|max:1000',
             'paid_at'               => 'required|date|before_or_equal:now',
             'quote_intent'          => 'nullable|string|in:first_activation,subscription,renewal,scheduled_change,upgrade_now,trial_activation',

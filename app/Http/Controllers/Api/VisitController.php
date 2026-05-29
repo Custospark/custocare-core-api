@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Visit\StoreDischargeRequest;
 use App\Http\Requests\Visit\StoreVisitRequest;
+use App\Http\Requests\Visit\UpdateDischargeRequest;
 use App\Http\Requests\Visit\UpdateVisitRequest;
+use App\Http\Resources\DischargeResource;
 use App\Http\Resources\PatientSearchResource;
 use App\Http\Resources\VisitResource;
 use App\Http\Resources\VisitCollection;
@@ -1574,42 +1577,28 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
     /**
      * Discharge a visit.
      *
-     * @param Request $request
+     * @param StoreDischargeRequest $request
      * @param string $uuid
      * @return JsonResponse
      */
-    public function discharge(Request $request, string $uuid): JsonResponse
+    public function discharge(StoreDischargeRequest $request, string $uuid): JsonResponse
     {
         try {
-            // Validate request
-            $request->validate([
-                'discharge_disposition' => 'required|string|in:home,admitted_to_hospital,transferred_to_facility,left_ama,left_without_seen,expired,hospice,skilled_nursing_facility,rehabilitation_facility,psychiatric_facility,law_enforcement_custody',
-                'discharge_instructions' => 'nullable|string|max:5000',
-                'discharge_medications' => 'nullable|array',
-                'followup_scheduled_at' => 'nullable|date',
-                'followup_provider_staff_id' => 'nullable|integer|exists:staff,id',
-                'discharged_at' => 'nullable|date',
-            ]);
+            // Resolve staff record from authenticated user
+            $staff = Staff::where('user_id', $request->user()->id)->first();
+            if (!$staff) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff record not found for authenticated user.',
+                ], 404);
+            }
+            $staffId = $staff->id;
 
-            // Get current user ID
-            $userId = $request->user()->id;
-
-            // Prepare discharge data
-            $dischargeData = $request->only([
-                'discharge_disposition',
-                'discharge_instructions',
-                'discharge_medications',
-                'followup_scheduled_at',
-                'followup_provider_staff_id',
-                'discharged_at',
-                'discharged_by_staff_id',
-            ]);
-
-            // Set discharged by
-            $dischargeData['discharged_by_staff_id'] = $userId;
+            // Get validated data
+            $dischargeData = $request->validated();
 
             // Discharge visit via service
-            $result = $this->visitService->dischargeVisit($uuid, $dischargeData, $userId);
+            $result = $this->visitService->dischargeVisit($uuid, $dischargeData, $staffId);
 
             if (!$result['success']) {
                 return response()->json($result, 400);
@@ -1627,6 +1616,83 @@ private function determineStaffAvailability($presenceStatus, int $currentPatient
         } catch (\Exception $e) {
             Log::error('Failed to discharge visit', [
                 'uuid' => $uuid,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Get discharge data for a visit.
+     *
+     * @param Visit $visit
+     * @return JsonResponse
+     */
+    public function getDischarge(Visit $visit): JsonResponse
+    {
+        try {
+            $result = $this->visitService->getDischargeData($visit->id);
+
+            if (!$result['success']) {
+                return response()->json($result, 404);
+            }
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            Log::error('Failed to get discharge data', [
+                'visit_id' => $visit->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred. Please try again later.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Update discharge data for an already discharged visit.
+     *
+     * @param UpdateDischargeRequest $request
+     * @param Visit $visit
+     * @return JsonResponse
+     */
+    public function updateDischarge(UpdateDischargeRequest $request, Visit $visit): JsonResponse
+    {
+        try {
+            $staff = Staff::where('user_id', $request->user()->id)->first();
+            if (!$staff) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff record not found for authenticated user.',
+                ], 404);
+            }
+
+            $data = $request->validated();
+            $result = $this->visitService->updateDischargeData($visit->id, $data, $staff->id);
+
+            if (!$result['success']) {
+                return response()->json($result, 400);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => new DischargeResource($result['data']),
+                'message' => 'Discharge data updated successfully.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to update discharge data', [
+                'visit_id' => $visit->id,
                 'user_id' => $request->user()->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),

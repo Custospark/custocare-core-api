@@ -165,4 +165,13 @@ interface VisitRepositoryInterface
      * @return Visit
      */
     public function discharge(Visit $visit, array $dischargeData): Visit;
+
+    /**
+     * Update discharge data for an already discharged visit
+     *
+     * @param Visit $visit
+     * @param array $data
+     * @return Visit
+     */
+    public function updateDischargeData(Visit $visit, array $data): Visit;
 }

@@ -310,3 +310,24 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 - Facility welcome is sent to both owner's user email and facility's direct email — avoids missing the facility's shared inbox
 - Patient welcome is intentionally skipped for admin-created patients to avoid confusion (admin handles onboarding)
 - User welcome (Email 3) is generic/role-agnostic since it fires before the user chooses a role — no conditional logic needed
+
+---
+
+## ADR-2026-05-29-1: Discharge Form Implementation — Embedded in Visit, No Separate Entity
+
+**Status:** Accepted
+
+**Context:** Need a discharge form UI for clinicians to process patient discharges and generate discharge summaries.
+
+**Decision:**
+1. **No separate Discharge entity** — discharge data lives on the existing `visits` table. No new table, model, or relationships needed.
+2. **New column added** — `discharge_diagnosis` (TEXT, nullable) added to `visits` table for the final discharge diagnosis summary.
+3. **Staff ID bug fixed** — `VisitController::discharge()` was passing `Auth::id()` (user_id) as `discharged_by_staff_id` instead of resolving the staff record. Fixed by using `Staff::where('user_id', ...)` pattern consistent with other controller methods.
+4. **Frontend follows existing clinical form pattern** — Mode-based (idle/create/edit) with React Query hooks, BaseFormWrapper, BaseFormActions, sub-component directory, report launcher, and form grid tile registration.
+5. **Dedicated Form Requests** — Validation moved from inline `$request->validate()` to `StoreDischargeRequest` and `UpdateDischargeRequest` classes.
+
+**Consequences:**
+- Discharge data is always accessible via the Visit model without joins
+- VisitResource now includes `discharge_diagnosis` field
+- Three API endpoints for discharge: GET (read), POST (initial discharge + status change), PUT (update after discharge)
+- No changes to `bootstrap/providers.php` or VisitServiceProvider

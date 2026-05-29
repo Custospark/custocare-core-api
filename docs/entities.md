@@ -533,3 +533,45 @@ Subscription activated / Payment recorded / Payment approved
 No new bindings — uses existing `SubscriptionBillingPdfServiceInterface` → `SubscriptionBillingPdfService` binding in `BillingServiceProvider`.
 
 ---
+
+## Discharge — 2026-05-29
+
+### Fields (on `visits` table — embedded in Visit entity)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `discharged_at` | timestamp, nullable | When patient was discharged |
+| `discharged_by_staff_id` | FK → staff, nullable, set null on delete | Who discharged the patient |
+| `discharge_disposition` | enum | `home`, `admitted_to_hospital`, `transferred_to_facility`, `left_ama`, `left_without_seen`, `expired`, `hospice`, `skilled_nursing_facility`, `rehabilitation_facility`, `psychiatric_facility`, `law_enforcement_custody` |
+| `discharge_diagnosis` | text, nullable | Final discharge diagnosis summary (NEW) |
+| `discharge_instructions` | text, nullable | Aftercare instructions |
+| `discharge_medications` | json, nullable | Medications prescribed at discharge |
+| `followup_scheduled_at` | timestamp, nullable | Follow-up appointment |
+| `followup_provider_staff_id` | FK → staff, nullable | Follow-up provider |
+
+### API Endpoints (all under `/api/v1/visits`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/{visit}/discharge` | Get discharge data (new) |
+| POST | `/{visit}/discharge` | Discharge patient (existing, bug fixed) |
+| PUT | `/{visit}/discharge` | Update discharge data (new) |
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `app/Http/Requests/Visit/StoreDischargeRequest.php` | Validation for POST discharge |
+| `app/Http/Requests/Visit/UpdateDischargeRequest.php` | Validation for PUT discharge |
+| `app/Http/Resources/DischargeResource.php` | API response transformer |
+| `database/migrations/2026_05_29_000001_add_discharge_diagnosis_to_visits_table.php` | Adds `discharge_diagnosis` column |
+
+### Provider Bindings
+
+No new bindings — `VisitServiceProvider` already binds `VisitServiceInterface` and `VisitRepositoryInterface`.
+
+### Bug Fix
+
+`VisitController::discharge()` was passing `Auth::id()` (user_id) as `discharged_by_staff_id` instead of resolving the staff record. Fixed by using `Staff::where('user_id', ...)` pattern consistent with other controller methods.
+
+---

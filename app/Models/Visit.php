@@ -94,6 +94,7 @@ class Visit extends Model
         'discharged_at',
         'discharged_by_staff_id',
         'discharge_disposition',
+        'discharge_diagnosis',
         'discharge_instructions',
         'discharge_medications',
         'followup_scheduled_at',

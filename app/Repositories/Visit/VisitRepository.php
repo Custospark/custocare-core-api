@@ -557,4 +557,25 @@ class VisitRepository implements VisitRepositoryInterface
             throw $e;
         }
     }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function updateDischargeData(Visit $visit, array $data): Visit
+    {
+        try {
+            DB::beginTransaction();
+            $visit->update($data);
+            $visit->refresh();
+            DB::commit();
+            return $visit;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to update discharge data', [
+                'visit_id' => $visit->id,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
 }

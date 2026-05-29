@@ -26,6 +26,8 @@ Route::prefix('visits')->middleware(['auth:sanctum'])->group(function () {
     Route::post('/{visit}/phase', [VisitController::class, 'updatePhase'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/status', [VisitController::class, 'updateStatus'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/discharge', [VisitController::class, 'discharge'])->where('visit', '[a-f0-9-]{36}');
+    Route::get('/{visit}/discharge', [VisitController::class, 'getDischarge'])->where('visit', '[a-f0-9-]{36}');
+    Route::put('/{visit}/discharge', [VisitController::class, 'updateDischarge'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/clinical-care/start', [VisitController::class, 'startClinicalCare'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/clinical-care/end', [VisitController::class, 'endClinicalCare'])->where('visit', '[a-f0-9-]{36}');
     Route::post('/{visit}/cancel', [VisitController::class, 'cancel'])->where('visit', '[a-f0-9-]{36}');

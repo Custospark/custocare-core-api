@@ -128,6 +128,24 @@ interface VisitServiceInterface
     public function dischargeVisit(string $uuid, array $dischargeData, int $userId): array;
 
     /**
+     * Get discharge data for a visit
+     *
+     * @param int $visitId
+     * @return array
+     */
+    public function getDischargeData(int $visitId): array;
+
+    /**
+     * Update discharge data for an already discharged visit
+     *
+     * @param int $visitId
+     * @param array $data
+     * @param int $staffId
+     * @return array
+     */
+    public function updateDischargeData(int $visitId, array $data, int $staffId): array;
+
+    /**
      * Get long waiting visits
      *
      * @param int $minutesThreshold

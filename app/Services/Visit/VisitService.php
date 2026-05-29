@@ -2,6 +2,7 @@
 
 namespace App\Services\Visit;
 
+use App\Http\Resources\DischargeResource;
 use App\Models\Patient;
 use App\Models\Staff;
 use App\Models\Visit;
@@ -864,6 +865,89 @@ public function createVisit(array $data, int $staffId): array
             return [
                 'success' => false,
                 'message' => 'Failed to discharge visit. Please try again later.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getDischargeData(int $visitId): array
+    {
+        try {
+            $visit = $this->visitRepository->findById($visitId);
+
+            if (!$visit) {
+                return [
+                    'success' => false,
+                    'message' => 'Visit not found.',
+                    'errors' => ['id' => 'The specified visit does not exist.'],
+                ];
+            }
+
+            $visit->load(['dischargedBy', 'followupProvider']);
+
+            return [
+                'success' => true,
+                'data' => new DischargeResource($visit),
+                'message' => 'Discharge data retrieved successfully.',
+            ];
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve discharge data', [
+                'visit_id' => $visitId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to retrieve discharge data. Please try again later.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ];
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function updateDischargeData(int $visitId, array $data, int $staffId): array
+    {
+        try {
+            $visit = $this->visitRepository->findById($visitId);
+
+            if (!$visit) {
+                return [
+                    'success' => false,
+                    'message' => 'Visit not found.',
+                    'errors' => ['id' => 'The specified visit does not exist.'],
+                ];
+            }
+
+            $data['updated_by_staff_id'] = $staffId;
+
+            $updatedVisit = $this->visitRepository->updateDischargeData($visit, $data);
+
+            Log::info('Discharge data updated for visit', [
+                'visit_id' => $visit->id,
+                'visit_uuid' => $visit->visit_uuid,
+                'staff_id' => $staffId,
+            ]);
+
+            return [
+                'success' => true,
+                'data' => $updatedVisit,
+                'message' => 'Discharge data updated successfully.',
+            ];
+        } catch (\Exception $e) {
+            Log::error('Failed to update discharge data', [
+                'visit_id' => $visitId,
+                'staff_id' => $staffId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to update discharge data. Please try again later.',
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ];
         }

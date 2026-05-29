@@ -61,6 +61,7 @@ class VisitResource extends JsonResource
             'discharged_at' => $this->discharged_at,
             'discharged_by' => $this->whenLoaded('dischargedBy', new StaffResource($this->dischargedBy)),
             'discharge_disposition' => $this->discharge_disposition,
+            'discharge_diagnosis' => $this->discharge_diagnosis,
             'discharge_instructions' => $this->discharge_instructions,
             'discharge_medications' => $this->discharge_medications,
             'followup_scheduled_at' => $this->followup_scheduled_at,

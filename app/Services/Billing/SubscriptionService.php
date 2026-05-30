@@ -70,13 +70,15 @@ class SubscriptionService implements SubscriptionServiceInterface
             if ($existing) {
                 // Active subscription that still grants access — update plan, don't create new
                 if ($existing->hasAccess()) {
-                    $updated = $this->subscriptionRepo->update($existing, [
-                        'plan_id' => $plan->id,
-                    ]);
+                    $updated = $this->subscriptionRepo->update($existing, array_filter([
+                        'plan_id'       => $plan->id,
+                        'billing_cycle' => $options['billing_cycle'] ?? null,
+                    ], fn($v) => $v !== null));
                     $updated->_action = 'updated';
                     Log::info('[Billing] Subscription plan updated (switch within active/trial)', [
                         'subscription_id' => $existing->id,
                         'new_plan'        => $plan->name,
+                        'billing_cycle'   => $options['billing_cycle'] ?? $existing->billing_cycle,
                     ]);
                     return $updated;
                 }

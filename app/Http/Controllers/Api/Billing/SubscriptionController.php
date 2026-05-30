@@ -88,13 +88,18 @@ class SubscriptionController extends Controller
                 ], fn($v) => $v !== null),
             );
 
-            $wasUpdated = ($subscription->_action ?? 'created') === 'updated';
+            $wasUpdated = ($subscription->_action ?? null) === 'updated';
+            $statusLabel = $subscription->status->value ?? 'trial';
+            $actionLabel = $wasUpdated ? 'updated' : 'created';
+            $statusHint = match ($statusLabel) {
+                'past_due' => ' Payment is overdue.',
+                'trial'    => ' Submit a payment to activate.',
+                default    => '',
+            };
 
             return response()->json([
                 'success' => true,
-                'message' => $wasUpdated
-                    ? 'Subscription updated. Status: ' . ($subscription->status->value ?? 'trial') . '.'
-                    : 'Subscription created. Status: ' . ($subscription->status->value ?? 'trial') . '. Submit a payment to activate.',
+                'message' => "Subscription {$actionLabel}. Status: {$statusLabel}.{$statusHint}",
                 'data'    => new SubscriptionResource($subscription->load('plan')),
             ], $wasUpdated ? 200 : 201);
 

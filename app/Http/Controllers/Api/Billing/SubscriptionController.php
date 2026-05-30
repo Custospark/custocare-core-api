@@ -289,7 +289,7 @@ class SubscriptionController extends Controller
                 : null;
 
             $intent = $request->string('intent')->toString();
-            $quote = $this->quoteService->buildQuote($subscription, $targetPlan, $intent);
+            $quote = $this->quoteService->buildQuote($subscription, $targetPlan, $intent, $request->input('billing_cycle'));
 
             return response()->json([
                 'success' => true,

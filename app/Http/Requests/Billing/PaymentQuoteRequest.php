@@ -19,8 +19,9 @@ class PaymentQuoteRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'intent'  => 'required|string|in:first_activation,subscription,renewal,scheduled_change,upgrade_now,trial_activation',
-            'plan_id' => 'nullable|integer|exists:plans,id',
+            'intent'        => 'required|string|in:first_activation,subscription,renewal,scheduled_change,upgrade_now,trial_activation',
+            'plan_id'       => 'nullable|integer|exists:plans,id',
+            'billing_cycle' => 'nullable|string|in:monthly,yearly',
         ];
     }
 

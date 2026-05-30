@@ -98,6 +98,7 @@ class StoreFacilityRequest extends FormRequest
             'monthly_patient_volume' => 'nullable|integer|min:0',
             
             'plan_id' => 'nullable|integer|exists:plans,id',
+            'billing_cycle' => 'nullable|string|in:monthly,yearly',
 
             'operational_status' => 'required|in:fully_operational,limited_services,emergency_only,temporarily_closed,permanently_closed,under_construction',
             

@@ -17,7 +17,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         private readonly SubscriptionRepositoryInterface $subscriptionRepo,
     ) {}
 
-    public function buildQuote(Subscription $subscription, ?Plan $targetPlan, string $intent): array
+    public function buildQuote(Subscription $subscription, ?Plan $targetPlan, string $intent, ?string $billingCycleOverride = null): array
     {
         $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
         $lineItems = [];
@@ -26,8 +26,8 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         $notes = null;
 
         match ($intent) {
-            'first_activation', 'subscription' => $this->buildActivationQuote($subscription, $plan, $lineItems, $total, $paymentType),
-            'renewal' => $this->buildRenewalQuote($subscription, $plan, $lineItems, $total, $paymentType),
+            'first_activation', 'subscription' => $this->buildActivationQuote($subscription, $plan, $lineItems, $total, $paymentType, $billingCycleOverride),
+            'renewal' => $this->buildRenewalQuote($subscription, $plan, $lineItems, $total, $paymentType, $billingCycleOverride),
             'scheduled_change' => $this->buildScheduledChangeQuote($targetPlan, $lineItems, $total),
             'upgrade_now' => $this->buildUpgradeNowQuote($subscription, $plan, $targetPlan, $lineItems, $total, $paymentType),
             default => throw new \InvalidArgumentException("Unknown payment quote intent: {$intent}"),
@@ -77,9 +77,9 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         }
     }
 
-    private function resolveBillingCycle(Subscription $subscription, Plan $plan): BillingCycle
+    private function resolveBillingCycle(Subscription $subscription, Plan $plan, ?string $override = null): BillingCycle
     {
-        return BillingCycle::tryFrom($subscription->billing_cycle ?? $plan->billing_cycle ?? 'monthly')
+        return BillingCycle::tryFrom($override ?? $subscription->billing_cycle ?? $plan->billing_cycle ?? 'monthly')
             ?? BillingCycle::MONTHLY;
     }
 
@@ -89,8 +89,9 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         array &$lineItems,
         float &$total,
         string &$paymentType,
+        ?string $billingCycleOverride = null,
     ): void {
-        $cycle = $this->resolveBillingCycle($subscription, $plan);
+        $cycle = $this->resolveBillingCycle($subscription, $plan, $billingCycleOverride);
         $months = $cycle->monthsToAdd();
         $isAnnual = $cycle === BillingCycle::YEARLY;
         $price = (float) $plan->price_usd;
@@ -113,9 +114,9 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         $paymentType = $subscription->status === SubscriptionStatus::TRIAL ? 'subscription' : $paymentType;
     }
 
-    private function buildRenewalQuote(Subscription $subscription, Plan $plan, array &$lineItems, float &$total, string &$paymentType): void
+    private function buildRenewalQuote(Subscription $subscription, Plan $plan, array &$lineItems, float &$total, string &$paymentType, ?string $billingCycleOverride = null): void
     {
-        $cycle = $this->resolveBillingCycle($subscription, $plan);
+        $cycle = $this->resolveBillingCycle($subscription, $plan, $billingCycleOverride);
         $months = $cycle->monthsToAdd();
         $isAnnual = $cycle === BillingCycle::YEARLY;
         $price = (float) $plan->price_usd;

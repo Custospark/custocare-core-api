@@ -88,15 +88,15 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             $now = Carbon::now();
 
-            // ── Check if facility has ever had a trial before (anti-abuse) ──
-            $hasUsedTrialBefore = $this->subscriptionRepo->hasEverHadTrial($facility->id);
+            // ── Calculate remaining trial days to prevent abuse ──
+            $remainingTrialDays = $this->subscriptionRepo->getRemainingTrialDays($facility->id, $plan->trial_days);
 
-            $status = $hasUsedTrialBefore
-                ? SubscriptionStatus::PAST_DUE->value
-                : SubscriptionStatus::TRIAL->value;
+            $status = $remainingTrialDays > 0
+                ? SubscriptionStatus::TRIAL->value
+                : SubscriptionStatus::PAST_DUE->value;
 
-            $trialEndsAt = $hasUsedTrialBefore ? null : $now->copy()->addDays($plan->trial_days);
-            $graceEndsAt = $hasUsedTrialBefore ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS) : null;
+            $trialEndsAt = $remainingTrialDays > 0 ? $now->copy()->addDays($remainingTrialDays) : null;
+            $graceEndsAt = $remainingTrialDays <= 0 ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS) : null;
 
             $selectedCycle = $options['billing_cycle'] ?? $plan->billing_cycle ?? 'monthly';
             $monthsToAdd = BillingCycle::tryFrom($selectedCycle)?->monthsToAdd() ?? 1;

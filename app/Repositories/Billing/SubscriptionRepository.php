@@ -127,4 +127,23 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
             ->withTrashed()
             ->exists();
     }
+
+    public function getRemainingTrialDays(int $facilityId, int $planTrialDays): int
+    {
+        $lastTrial = Subscription::where('facility_id', $facilityId)
+            ->whereNotNull('trial_ends_at')
+            ->orderBy('id', 'desc')
+            ->withTrashed()
+            ->first();
+
+        if (! $lastTrial || ! $lastTrial->trial_ends_at) {
+            return $planTrialDays;
+        }
+
+        $startsAt = $lastTrial->starts_at ?? $lastTrial->created_at;
+        $usedDays = (int) $startsAt->diffInDays($lastTrial->trial_ends_at);
+        $remaining = $planTrialDays - $usedDays;
+
+        return max(0, $remaining);
+    }
 }

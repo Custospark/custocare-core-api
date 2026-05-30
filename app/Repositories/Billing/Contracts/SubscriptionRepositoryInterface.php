@@ -21,4 +21,5 @@ interface SubscriptionRepositoryInterface
     public function getSubscriptionsGraceExpired(): Collection;
     public function getTrialSubscriptionsExpired(): Collection;
     public function hasEverHadTrial(int $facilityId): bool;
+    public function getRemainingTrialDays(int $facilityId, int $planTrialDays): int;
 }

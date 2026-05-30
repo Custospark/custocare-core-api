@@ -96,7 +96,12 @@ class SubscriptionService implements SubscriptionServiceInterface
                 : SubscriptionStatus::PAST_DUE->value;
 
             $trialEndsAt = $remainingTrialDays > 0 ? $now->copy()->addDays($remainingTrialDays) : null;
-            $graceEndsAt = $remainingTrialDays <= 0 ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS) : null;
+
+            // Only grant grace period once per facility — prevent infinite grace abuse
+            $hasUsedGraceBefore = $existing && $existing->grace_period_ends_at !== null;
+            $graceEndsAt = $remainingTrialDays <= 0 && !$hasUsedGraceBefore
+                ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS)
+                : null;
 
             $selectedCycle = $options['billing_cycle'] ?? $plan->billing_cycle ?? 'monthly';
             $monthsToAdd = BillingCycle::tryFrom($selectedCycle)?->monthsToAdd() ?? 1;

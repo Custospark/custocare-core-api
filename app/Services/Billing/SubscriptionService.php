@@ -94,6 +94,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 : SubscriptionStatus::TRIAL->value;
 
             $trialEndsAt = $hasUsedTrialBefore ? null : $now->copy()->addDays($plan->trial_days);
+            $graceEndsAt = $hasUsedTrialBefore ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS) : null;
 
             $selectedCycle = $options['billing_cycle'] ?? $plan->billing_cycle ?? 'monthly';
             $monthsToAdd = BillingCycle::tryFrom($selectedCycle)?->monthsToAdd() ?? 1;
@@ -113,6 +114,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'ends_at'            => $billingStartsFrom->copy()->addMonths($monthsToAdd),
                 'next_billing_date'  => $billingStartsFrom->copy()->addMonths($monthsToAdd),
                 'onboarding_fee_paid' => false,
+                'grace_period_ends_at' => $graceEndsAt,
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,
             ];

@@ -126,14 +126,16 @@ class SubscriptionService implements SubscriptionServiceInterface
                     ? $billingStartsFrom  // trial end = first payment due
                     : $billingPeriodEnd,  // past_due = end of billing period
                 'onboarding_fee_paid' => false,
-                'grace_period_ends_at' => $graceEndsAt,
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,
             ];
 
-            // Only set trial_ends_at when granting a trial — preserve historical trial marker
+            // Only set trial_ends_at and grace_period_ends_at when granting — preserve historical markers
             if ($trialEndsAt !== null) {
                 $payload['trial_ends_at'] = $trialEndsAt;
+            }
+            if ($graceEndsAt !== null) {
+                $payload['grace_period_ends_at'] = $graceEndsAt;
             }
 
             if ($existing) {
@@ -198,7 +200,6 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'starts_at'           => $now->copy(),
                 'ends_at'             => $periodEnd->copy(),
                 'next_billing_date'   => $periodEnd->copy(),
-                'grace_period_ends_at' => null,
                 'suspended_at'        => null,
                 'approved_at'         => $now->copy(),
                 'approved_by_user_id' => $approvedBy ? $approvedBy->id : null,
@@ -280,7 +281,6 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'status'               => SubscriptionStatus::ACTIVE->value,
                 'ends_at'              => $newEndsAt,
                 'next_billing_date'    => $newEndsAt->copy(),
-                'grace_period_ends_at' => null,
                 'suspended_at'         => null,
                 'metadata'             => $this->metadataWithLockedPeriodPrice(
                     $subscription,

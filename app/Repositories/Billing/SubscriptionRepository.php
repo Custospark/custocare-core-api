@@ -130,29 +130,11 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
 
     public function getRemainingTrialDays(int $facilityId, int $planTrialDays): int
     {
-        $lastTrial = Subscription::where('facility_id', $facilityId)
-            ->whereNotNull('trial_ends_at')
-            ->orderBy('id', 'desc')
-            ->withTrashed()
-            ->first();
-
-        if (! $lastTrial || ! $lastTrial->trial_ends_at) {
-            return $planTrialDays;
-        }
-
-        // Use the original trial duration as the baseline
-        $startsAt = $lastTrial->starts_at ?? $lastTrial->created_at;
-        $originalTrialDays = (int) $startsAt->diffInDays($lastTrial->trial_ends_at);
-
-        // Trial already expired — all days used
-        if ($lastTrial->trial_ends_at->isPast()) {
+        // Facility has used a trial before — no trial remaining, ever
+        if ($this->hasEverHadTrial($facilityId)) {
             return 0;
         }
 
-        // Trial still active — calculate days consumed so far
-        $daysSinceStart = (int) $startsAt->diffInDays(now());
-        $remaining = $originalTrialDays - $daysSinceStart;
-
-        return max(0, $remaining);
+        return $planTrialDays;
     }
 }

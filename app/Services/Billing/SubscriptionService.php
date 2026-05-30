@@ -120,7 +120,6 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'plan_id'            => $plan->id,
                 'billing_cycle'      => $selectedCycle,
                 'status'             => $status,
-                'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
                 'ends_at'            => $billingPeriodEnd,
                 'next_billing_date'  => $status === SubscriptionStatus::TRIAL->value
@@ -131,6 +130,11 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,
             ];
+
+            // Only set trial_ends_at when granting a trial — preserve historical trial marker
+            if ($trialEndsAt !== null) {
+                $payload['trial_ends_at'] = $trialEndsAt;
+            }
 
             if ($existing) {
                 // Update existing subscription with new details

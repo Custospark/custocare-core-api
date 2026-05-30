@@ -140,15 +140,18 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
             return $planTrialDays;
         }
 
+        // Use the original trial duration as the baseline
+        $startsAt = $lastTrial->starts_at ?? $lastTrial->created_at;
+        $originalTrialDays = (int) $startsAt->diffInDays($lastTrial->trial_ends_at);
+
         // Trial already expired — all days used
         if ($lastTrial->trial_ends_at->isPast()) {
             return 0;
         }
 
         // Trial still active — calculate days consumed so far
-        $startsAt = $lastTrial->starts_at ?? $lastTrial->created_at;
         $daysSinceStart = (int) $startsAt->diffInDays(now());
-        $remaining = $planTrialDays - $daysSinceStart;
+        $remaining = $originalTrialDays - $daysSinceStart;
 
         return max(0, $remaining);
     }

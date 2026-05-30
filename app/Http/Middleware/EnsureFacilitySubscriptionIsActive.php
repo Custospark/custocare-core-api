@@ -9,6 +9,7 @@ use App\Models\Facility;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -40,10 +41,33 @@ class EnsureFacilitySubscriptionIsActive
         // Silently pass through when no facility context — global middleware.
         // Subscription checks only apply to facility-scoped requests.
         if (! $facility) {
+            Log::debug('[SubscriptionMiddleware] No facility resolved — passing through', [
+                'path' => $request->path(),
+                'method' => $request->method(),
+                'headers' => [
+                    'x-active-facility-id' => $request->header('X-Active-Facility-Id'),
+                    'x-facility-id' => $request->header('X-Facility-Id'),
+                ],
+            ]);
             return $next($request);
         }
 
+        Log::debug('[SubscriptionMiddleware] Facility resolved', [
+            'facility_id' => $facility->id,
+            'facility_code' => $facility->facility_code,
+            'path' => $request->path(),
+        ]);
+
         $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);
+
+        Log::debug('[SubscriptionMiddleware] Subscription lookup', [
+            'facility_id' => $facility->id,
+            'has_subscription' => $subscription ? 'yes' : 'no',
+            'subscription_id' => $subscription?->id,
+            'status' => $subscription?->status?->value,
+            'trial_ends_at' => $subscription?->trial_ends_at?->toISOString(),
+            'trial_is_future' => $subscription?->trial_ends_at?->isFuture(),
+        ]);
 
         if (! $subscription) {
             return $this->deny(
@@ -104,6 +128,10 @@ class EnsureFacilitySubscriptionIsActive
         $subscription,
         Facility $facility,
     ): Response {
+        Log::debug('[SubscriptionMiddleware] Allowing request', [
+            'facility_id' => $facility->id,
+            'subscription_status' => $subscription->status->value,
+        ]);
         $request->attributes->set('active_subscription', $subscription);
         $request->attributes->set('subscription_facility', $facility);
         return $next($request);
@@ -115,6 +143,11 @@ class EnsureFacilitySubscriptionIsActive
         int $statusCode,
         ?string $action = null,
     ): Response {
+        Log::warning('[SubscriptionMiddleware] Blocking request', [
+            'message' => $message,
+            'status_code' => $statusCode,
+            'action' => $action,
+        ]);
         $payload = [
             'success' => false,
             'message' => $message,

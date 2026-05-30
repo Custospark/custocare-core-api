@@ -59,6 +59,7 @@ class SubscriptionPaymentActionResolver
         if (
             $subscription->status === SubscriptionStatus::TRIAL
             && ! $subscription->approved_at
+            && $subscription->trial_ends_at?->isFuture()
         ) {
             return [
                 'required'           => true,

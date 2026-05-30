@@ -80,6 +80,8 @@ class EnsureFacilitySubscriptionIsActive
 
         $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);
 
+        $this->attachSubscriptionDates($request, $subscription);
+
         Log::debug('[SubscriptionMiddleware] Subscription lookup', [
             'facility_id' => $facility->id,
             'has_subscription' => $subscription ? 'yes' : 'no',
@@ -87,6 +89,9 @@ class EnsureFacilitySubscriptionIsActive
             'status' => $subscription?->status?->value,
             'trial_ends_at' => $subscription?->trial_ends_at?->toISOString(),
             'trial_is_future' => $subscription?->trial_ends_at?->isFuture(),
+            'ends_at' => $subscription?->ends_at?->toISOString(),
+            'next_billing_date' => $subscription?->next_billing_date?->toISOString(),
+            'grace_period_ends_at' => $subscription?->grace_period_ends_at?->toISOString(),
         ]);
 
         if (! $subscription) {
@@ -157,6 +162,15 @@ class EnsureFacilitySubscriptionIsActive
         return $next($request);
     }
 
+    private function attachSubscriptionDates(Request $request, $subscription): void
+    {
+        if (! $subscription) {
+            return;
+        }
+        $request->attributes->set('active_subscription', $subscription);
+        $request->attributes->set('subscription_facility', $this->resolveFacility($request));
+    }
+
     private function deny(
         string $message,
         array $errors,
@@ -168,12 +182,28 @@ class EnsureFacilitySubscriptionIsActive
             'status_code' => $statusCode,
             'action' => $action,
         ]);
+
+        $request = request();
+        $subscription = $request->attributes->get('active_subscription');
+
         $payload = [
             'success' => false,
             'message' => $message,
             'errors'  => $errors,
             'data'    => null,
         ];
+
+        if ($subscription) {
+            $payload['subscription'] = [
+                'status'             => $subscription->status->value,
+                'has_access'         => $subscription->hasAccess(),
+                'trial_ends_at'      => $subscription->trial_ends_at?->toISOString(),
+                'ends_at'            => $subscription->ends_at?->toISOString(),
+                'next_billing_date'  => $subscription->next_billing_date?->toISOString(),
+                'grace_period_ends_at' => $subscription->grace_period_ends_at?->toISOString(),
+            ];
+        }
+
         if ($action) {
             $payload['action'] = $action;
         }

@@ -62,6 +62,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             if ($existing && ! in_array($existing->status, [
                 SubscriptionStatus::CANCELLED,
                 SubscriptionStatus::SUSPENDED,
+                SubscriptionStatus::PAST_DUE,
             ])) {
                 // If there's already a pending payment, just update the plan
                 $pendingPayments = $this->paymentRepo->findPendingByFacility($facility->id);

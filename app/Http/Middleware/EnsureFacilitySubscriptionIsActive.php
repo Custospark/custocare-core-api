@@ -30,12 +30,32 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class EnsureFacilitySubscriptionIsActive
 {
+    /** Routes that bypass subscription check — plan browsing, subscription, and payment submission. */
+    private const EXCEPT_PATTERNS = [
+        'api/billing/plans*',
+        'api/facilities/*/subscription*',
+        'api/facilities/*/payments*',
+        'api/facilities/*/usage',
+        'api/facilities/*/assignable-modules',
+    ];
+
     public function __construct(
         private readonly SubscriptionServiceInterface $subscriptionService,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
+        // Allow subscription-management and billing routes through
+        foreach (self::EXCEPT_PATTERNS as $pattern) {
+            if ($request->is($pattern)) {
+                Log::debug('[SubscriptionMiddleware] Excepted path — passing through', [
+                    'path' => $request->path(),
+                    'pattern' => $pattern,
+                ]);
+                return $next($request);
+            }
+        }
+
         $facility = $this->resolveFacility($request);
 
         // Silently pass through when no facility context — global middleware.

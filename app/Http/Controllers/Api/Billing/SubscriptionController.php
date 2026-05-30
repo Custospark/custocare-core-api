@@ -184,6 +184,7 @@ class SubscriptionController extends Controller
                 $subscription,
                 $targetPlan,
                 $request->string('change_type')->toString(),
+                billingCycle: $request->input('billing_cycle'),
             );
 
             $fresh = $this->subscriptionService->getSubscriptionForFacility($facility->id);

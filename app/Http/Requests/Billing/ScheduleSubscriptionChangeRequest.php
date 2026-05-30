@@ -19,8 +19,9 @@ class ScheduleSubscriptionChangeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'plan_id'     => 'required|integer|exists:plans,id',
-            'change_type' => 'required|string|in:upgrade,downgrade',
+            'plan_id'       => 'required|integer|exists:plans,id',
+            'change_type'   => 'required|string|in:upgrade,downgrade',
+            'billing_cycle' => 'nullable|string|in:monthly,yearly',
         ];
     }
 

@@ -73,6 +73,7 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         Plan $targetPlan,
         string $changeType,
         ?User $requestedBy = null,
+        ?string $billingCycle = null,
     ): SubscriptionScheduledChange {
         if (! $subscription->hasAccess()) {
             throw new \DomainException('An active paid subscription is required to schedule a plan change.', 422);
@@ -97,9 +98,10 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
             'effective_at'          => $effectiveAt,
             'status'                => SubscriptionScheduledChangeStatus::PENDING->value,
             'requested_by_user_id'  => $requestedBy?->id,
-            'metadata'              => [
+            'metadata'              => array_filter([
                 'target_plan_name' => $targetPlan->name,
-            ],
+                'billing_cycle'    => $billingCycle,
+            ], fn($v) => $v !== null),
         ]);
 
         // Send scheduled change confirmation
@@ -151,9 +153,13 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
 
     private function applyScheduledPlanChange(Subscription $subscription, SubscriptionScheduledChange $change): Subscription
     {
-        $updated = $this->subscriptionRepo->update($subscription, [
-            'plan_id' => $change->to_plan_id,
-        ]);
+        $changeMeta = $change->metadata ?? [];
+        $newBillingCycle = $changeMeta['billing_cycle'] ?? null;
+
+        $updated = $this->subscriptionRepo->update($subscription, array_filter([
+            'plan_id'       => $change->to_plan_id,
+            'billing_cycle' => $newBillingCycle,
+        ], fn($v) => $v !== null));
 
         $change->delete();
 

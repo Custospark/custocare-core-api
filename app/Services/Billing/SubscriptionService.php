@@ -59,6 +59,14 @@ class SubscriptionService implements SubscriptionServiceInterface
             // ── Guard: one active/trial/pending payment subscription per facility ──
             $existing = $this->subscriptionRepo->findByFacility($facility->id);
 
+            Log::debug('[Billing] createSubscription — existing lookup', [
+                'facility_id' => $facility->id,
+                'existing_id' => $existing?->id,
+                'existing_status' => $existing?->status?->value,
+                'existing_has_access' => $existing?->hasAccess(),
+                'existing_trial_ends_at' => $existing?->trial_ends_at?->toISOString(),
+            ]);
+
             if ($existing) {
                 // Active subscription that still grants access — update plan, don't create new
                 if ($existing->hasAccess()) {
@@ -118,6 +126,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     'facility_id'     => $facility->id,
                     'new_plan'        => $plan->name,
                     'status'          => $status,
+                    '_action'         => 'updated',
                 ]);
             } else {
                 // First-time subscription — create with facility_id
@@ -129,6 +138,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     'facility_id'     => $facility->id,
                     'plan'            => $plan->name,
                     'status'          => $status,
+                    '_action'         => 'created',
                 ]);
             }
 

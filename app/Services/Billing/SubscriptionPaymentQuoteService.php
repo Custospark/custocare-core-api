@@ -162,7 +162,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         }
 
         // Proration: credit unused time at the locked period rate; charge remainder at target catalog price.
-        $breakdown = SubscriptionProrationCalculator::calculate($subscription, $currentPlan, $targetPlan);
+        $breakdown = SubscriptionProrationCalculator::calculate($subscription, $currentPlan, $targetPlan, $billingCycleOverride);
 
         $lineItems[] = [
             'label'  => "Proration: {$currentPlan->name} → {$targetPlan->name}",

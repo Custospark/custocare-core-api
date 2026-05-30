@@ -22,7 +22,7 @@ final class SubscriptionProrationCalculator
      *   new_price_usd: float
      * }
      */
-    public static function calculate(Subscription $subscription, Plan $currentPlan, Plan $targetPlan): array
+    public static function calculate(Subscription $subscription, Plan $currentPlan, Plan $targetPlan, ?string $billingCycleOverride = null): array
     {
         $now = Carbon::now()->startOfDay();
         $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
@@ -35,8 +35,8 @@ final class SubscriptionProrationCalculator
             : (int) $now->diffInDays($endsAt);
 
         $oldPrice = $subscription->billingPeriodPriceUsd();
-        $isYearly = $subscription->billing_cycle === 'yearly';
-        $newPrice = $isYearly
+        $newCycle = $billingCycleOverride ?? $subscription->billing_cycle ?? 'monthly';
+        $newPrice = $newCycle === 'yearly'
             ? round((float) $targetPlan->price_usd * 10, 2)
             : (float) $targetPlan->price_usd;
 

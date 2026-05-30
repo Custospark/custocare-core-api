@@ -261,12 +261,14 @@ class SubscriptionService implements SubscriptionServiceInterface
     ): Subscription {
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
-            // Extend from current period end to not penalise early renewal
-            $periodEnd = $subscription->currentPeriodEndsAt() ?? $subscription->ends_at;
+            // Calculate from now if the subscription was just created (resubscribe)
+            // Otherwise extend from current period end to not penalise early renewal
+            $justCreated = $subscription->starts_at && $subscription->starts_at->diffInMinutes(now()) < 60;
             $monthsToAdd = BillingCycle::tryFrom($subscription->billing_cycle ?? 'monthly')?->monthsToAdd() ?? 1;
-            $newEndsAt = $periodEnd && $periodEnd->isFuture()
-                ? $periodEnd->copy()->addMonths($monthsToAdd)
-                : Carbon::now()->copy()->addMonths($monthsToAdd);
+            $periodEnd = $subscription->currentPeriodEndsAt();
+            $newEndsAt = $justCreated || !$periodEnd
+                ? Carbon::now()->copy()->addMonths($monthsToAdd)
+                : $periodEnd->copy()->addMonths($monthsToAdd);
 
             $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
 

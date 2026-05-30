@@ -484,6 +484,21 @@ class SubscriptionService implements SubscriptionServiceInterface
             return null;
         }
 
+        // Auto-transition based on dates (no cron job needed)
+        $now = Carbon::now();
+
+        if ($subscription->status === SubscriptionStatus::ACTIVE || $subscription->status === SubscriptionStatus::TRIAL) {
+            if ($subscription->next_billing_date && $subscription->next_billing_date->isPast()) {
+                $subscription = $this->markPastDue($subscription);
+            }
+        }
+
+        if ($subscription->status === SubscriptionStatus::PAST_DUE) {
+            if ($subscription->grace_period_ends_at && $subscription->grace_period_ends_at->isPast()) {
+                $subscription = $this->suspendSubscription($subscription);
+            }
+        }
+
         return $this->scheduledChangeService->applyPendingScheduledChanges($subscription);
     }
 

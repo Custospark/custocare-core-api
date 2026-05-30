@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Global middleware — runs on every request, passes through when headers absent
         $middleware->append(EnsureStaffFacilityAccess::class);
+        $middleware->append(EnsureFacilitySubscriptionIsActive::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (MessageRecipientNotResolvedException $e, \Illuminate\Http\Request $request) {

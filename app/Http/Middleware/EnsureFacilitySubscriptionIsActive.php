@@ -37,12 +37,10 @@ class EnsureFacilitySubscriptionIsActive
     {
         $facility = $this->resolveFacility($request);
 
+        // Silently pass through when no facility context — global middleware.
+        // Subscription checks only apply to facility-scoped requests.
         if (! $facility) {
-            return $this->deny(
-                'Unable to determine facility context.',
-                ['facility' => ['No facility identified in this request.']],
-                400,
-            );
+            return $next($request);
         }
 
         $subscription = $this->subscriptionService->getSubscriptionForFacility($facility->id);

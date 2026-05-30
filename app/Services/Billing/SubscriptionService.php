@@ -106,6 +106,10 @@ class SubscriptionService implements SubscriptionServiceInterface
                 ? $trialEndsAt->copy()
                 : $now->copy();
 
+            // For trial subscriptions, next_billing_date = trial end (first payment due)
+            // For non-trial (past_due), next_billing_date = end of current period
+            $billingPeriodEnd = $billingStartsFrom->copy()->addMonths($monthsToAdd);
+
             // ── Build the subscription payload ────────────────────────────
             $payload = [
                 'plan_id'            => $plan->id,
@@ -113,8 +117,10 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'status'             => $status,
                 'trial_ends_at'      => $trialEndsAt,
                 'starts_at'          => $now,
-                'ends_at'            => $billingStartsFrom->copy()->addMonths($monthsToAdd),
-                'next_billing_date'  => $billingStartsFrom->copy()->addMonths($monthsToAdd),
+                'ends_at'            => $billingPeriodEnd,
+                'next_billing_date'  => $status === SubscriptionStatus::TRIAL->value
+                    ? $billingStartsFrom  // trial end = first payment due
+                    : $billingPeriodEnd,  // past_due = end of billing period
                 'onboarding_fee_paid' => false,
                 'grace_period_ends_at' => $graceEndsAt,
                 'notes'              => $options['notes'] ?? null,

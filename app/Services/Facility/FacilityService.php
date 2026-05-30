@@ -269,10 +269,11 @@ public function createFacilityByAdmin(array $data, int $actorUserId): Facility
             if (!$plan) {
                 throw new \RuntimeException('Selected plan not found.');
             }
-            $this->subscriptionService->createSubscription($facility, $plan, [
+            $this->subscriptionService->createSubscription($facility, $plan, array_filter([
                 'notes' => 'Plan selected during facility onboarding',
+                'billing_cycle' => $data['billing_cycle'] ?? null,
                 'metadata' => ['source' => 'onboarding', 'plan_name' => $plan->name],
-            ]);
+            ], fn($v) => $v !== null));
         }
 
         /**

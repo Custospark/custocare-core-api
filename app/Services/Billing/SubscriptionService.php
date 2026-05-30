@@ -496,7 +496,9 @@ class SubscriptionService implements SubscriptionServiceInterface
         $now = Carbon::now();
 
         if ($subscription->status === SubscriptionStatus::ACTIVE || $subscription->status === SubscriptionStatus::TRIAL) {
-            if ($subscription->next_billing_date && $subscription->next_billing_date->isPast()) {
+            $isDue = ($subscription->next_billing_date && $subscription->next_billing_date->isPast())
+                || ($subscription->status === SubscriptionStatus::TRIAL && $subscription->trial_ends_at && $subscription->trial_ends_at->isPast());
+            if ($isDue) {
                 $subscription = $this->markPastDue($subscription);
             }
         }

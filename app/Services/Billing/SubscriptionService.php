@@ -59,29 +59,30 @@ class SubscriptionService implements SubscriptionServiceInterface
             // ── Guard: one active/trial/pending payment subscription per facility ──
             $existing = $this->subscriptionRepo->findByFacility($facility->id);
 
-            if ($existing && ! in_array($existing->status, [
-                SubscriptionStatus::CANCELLED,
-                SubscriptionStatus::SUSPENDED,
-                SubscriptionStatus::PAST_DUE,
-            ])) {
-                // If there's already a pending payment, just update the plan
-                $pendingPayments = $this->paymentRepo->findPendingByFacility($facility->id);
-                if (!empty($pendingPayments) && $existing->status === SubscriptionStatus::TRIAL) {
-                    $updated = $this->subscriptionRepo->update($existing, [
-                        'plan_id' => $plan->id,
-                    ]);
-                    Log::info('[Billing] Subscription plan updated (pending payment exists)', [
-                        'subscription_id' => $existing->id,
-                        'new_plan'        => $plan->name,
-                    ]);
-                    return $updated;
-                }
+            if ($existing) {
+                // Active subscription that still grants access — block creating a new one
+                if ($existing->hasAccess()) {
+                    // If there's already a pending payment, just update the plan
+                    $pendingPayments = $this->paymentRepo->findPendingByFacility($facility->id);
+                    if (!empty($pendingPayments) && $existing->status === SubscriptionStatus::TRIAL) {
+                        $updated = $this->subscriptionRepo->update($existing, [
+                            'plan_id' => $plan->id,
+                        ]);
+                        Log::info('[Billing] Subscription plan updated (pending payment exists)', [
+                            'subscription_id' => $existing->id,
+                            'new_plan'        => $plan->name,
+                        ]);
+                        return $updated;
+                    }
 
-                throw new \Exception(
-                    "Facility already has a {$existing->status->value} subscription (ID #{$existing->id}). " .
-                    'Cancel or wait for it to be suspended before creating a new one.',
-                    422
-                );
+                    throw new \Exception(
+                        "Facility already has a {$existing->status->value} subscription (ID #{$existing->id}). " .
+                        'Cancel or wait for it to be suspended before creating a new one.',
+                        422
+                    );
+                }
+                // Subscription exists but has no access (trial expired, past_due expired, etc.)
+                // Allow creating a new one — the old record stays as history
             }
 
             $now = Carbon::now();

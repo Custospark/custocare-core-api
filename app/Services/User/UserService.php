@@ -266,7 +266,7 @@ class UserService implements UserServiceInterface
     return [
         'success'      => true,
         'code'         => 'LOGIN_SUCCESS',
-        'message'      => 'Welcome to Custocare, ' . ($user?->first_name ?? '') . '.',
+        'message'      => 'Welcome to Custocare, ' . (trim($user?->first_name ?? '') ?: 'Valued User') . '.',
         'requires_mfa' => false,
         'user'         => $user,
         'token'        => $token,

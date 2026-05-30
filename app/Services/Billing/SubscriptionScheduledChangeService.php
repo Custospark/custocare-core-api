@@ -152,15 +152,10 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
     private function applyScheduledPlanChange(Subscription $subscription, SubscriptionScheduledChange $change): Subscription
     {
         $updated = $this->subscriptionRepo->update($subscription, [
-            'plan_id'  => $change->to_plan_id,
-            'metadata' => array_merge($subscription->metadata ?? [], [
-                'cancel_at_period_end' => false,
-            ]),
+            'plan_id' => $change->to_plan_id,
         ]);
 
         $change->delete();
-
-        $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
 
         Log::info('[Billing] Scheduled plan change applied and removed', [
             'subscription_id' => $updated->id,

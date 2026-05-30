@@ -104,7 +104,14 @@ class EnsureFacilitySubscriptionIsActive
         }
 
         return match ($subscription->status) {
-            SubscriptionStatus::ACTIVE => $this->allow($request, $next, $subscription, $facility),
+            SubscriptionStatus::ACTIVE => $subscription->hasAccess()
+                ? $this->allow($request, $next, $subscription, $facility)
+                : $this->deny(
+                    'Your subscription has ended. Please renew to continue using Custocare.',
+                    ['subscription' => ['Access ended on ' . ($subscription->ends_at?->toDateString() ?? 'N/A') . '.']],
+                    402,
+                    'subscribe',
+                ),
 
             SubscriptionStatus::TRIAL => $subscription->trial_ends_at?->isFuture()
                 ? $this->allow($request, $next, $subscription, $facility)

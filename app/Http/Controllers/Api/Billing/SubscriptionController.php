@@ -88,11 +88,15 @@ class SubscriptionController extends Controller
                 ], fn($v) => $v !== null),
             );
 
+            $wasUpdated = ($subscription->_action ?? 'created') === 'updated';
+
             return response()->json([
                 'success' => true,
-                'message' => 'Subscription created. Status: trial. Submit a payment to activate.',
+                'message' => $wasUpdated
+                    ? 'Subscription updated. Status: ' . ($subscription->status->value ?? 'trial') . '.'
+                    : 'Subscription created. Status: ' . ($subscription->status->value ?? 'trial') . '. Submit a payment to activate.',
                 'data'    => new SubscriptionResource($subscription->load('plan')),
-            ], 201);
+            ], $wasUpdated ? 200 : 201);
 
         } catch (\Exception $e) {
             return response()->json([

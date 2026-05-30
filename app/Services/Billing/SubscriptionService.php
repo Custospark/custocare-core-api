@@ -121,6 +121,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             if ($existing) {
                 // Update existing subscription with new details
                 $subscription = $this->subscriptionRepo->update($existing, $payload);
+                $subscription->_action = 'updated';
                 Log::info('[Billing] Subscription updated (resubscribed)', [
                     'subscription_id' => $subscription->id,
                     'facility_id'     => $facility->id,
@@ -131,6 +132,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 // First-time subscription — create with facility_id
                 $payload['facility_id'] = $facility->id;
                 $subscription = $this->subscriptionRepo->create($payload);
+                $subscription->_action = 'created';
                 Log::info('[Billing] Subscription created', [
                     'subscription_id' => $subscription->id,
                     'facility_id'     => $facility->id,

@@ -19,7 +19,8 @@ class UpgradeNowRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'plan_id' => 'required|integer|exists:plans,id',
+            'plan_id'       => 'required|integer|exists:plans,id',
+            'billing_cycle' => 'nullable|string|in:monthly,yearly',
         ];
     }
 

@@ -227,13 +227,15 @@ class SubscriptionController extends Controller
         try {
             $targetPlan = Plan::findOrFail($request->integer('plan_id'));
 
-            $quote = $this->quoteService->buildQuote($subscription, $targetPlan, 'upgrade_now');
+            $quote = $this->quoteService->buildQuote($subscription, $targetPlan, 'upgrade_now', $request->input('billing_cycle'));
 
+            $pendingBillingCycle = $request->input('billing_cycle');
             $this->subscriptionRepo->update($subscription, [
-                'metadata' => array_merge($subscription->metadata ?? [], [
+                'metadata' => array_merge($subscription->metadata ?? [], array_filter([
                     'pending_upgrade_plan_id' => $targetPlan->id,
+                    'pending_upgrade_billing_cycle' => $pendingBillingCycle,
                     'latest_quote_intent'     => 'upgrade_now',
-                ]),
+                ], fn($v) => $v !== null)),
             ]);
 
             return response()->json([

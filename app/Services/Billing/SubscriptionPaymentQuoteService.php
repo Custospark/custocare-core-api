@@ -29,7 +29,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
             'first_activation', 'subscription' => $this->buildActivationQuote($subscription, $plan, $lineItems, $total, $paymentType, $billingCycleOverride),
             'renewal' => $this->buildRenewalQuote($subscription, $plan, $lineItems, $total, $paymentType, $billingCycleOverride),
             'scheduled_change' => $this->buildScheduledChangeQuote($targetPlan, $lineItems, $total),
-            'upgrade_now' => $this->buildUpgradeNowQuote($subscription, $plan, $targetPlan, $lineItems, $total, $paymentType),
+            'upgrade_now' => $this->buildUpgradeNowQuote($subscription, $plan, $targetPlan, $lineItems, $total, $paymentType, $billingCycleOverride),
             default => throw new \InvalidArgumentException("Unknown payment quote intent: {$intent}"),
         };
 
@@ -151,6 +151,7 @@ class SubscriptionPaymentQuoteService implements SubscriptionPaymentQuoteService
         array &$lineItems,
         float &$total,
         string &$paymentType,
+        ?string $billingCycleOverride = null,
     ): void {
         if (! $targetPlan) {
             throw new \InvalidArgumentException('target plan is required for upgrade_now quote.');

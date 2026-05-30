@@ -13,6 +13,9 @@ interface SubscriptionScheduledChangeServiceInterface
 {
     public function applyPendingScheduledChanges(Subscription $subscription): Subscription;
 
+    /** Apply ALL pending scheduled changes regardless of effective_at date. */
+    public function applyAllPendingChanges(Subscription $subscription): Subscription;
+
     public function schedulePlanChange(
         Subscription $subscription,
         Plan $targetPlan,

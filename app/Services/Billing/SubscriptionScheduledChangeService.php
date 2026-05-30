@@ -30,6 +30,24 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
         private readonly NotificationService $notificationService,
     ) {}
 
+    public function applyAllPendingChanges(Subscription $subscription): Subscription
+    {
+        $pending = $this->scheduledChangeRepo->findPendingForSubscription($subscription->id);
+        if (! $pending) {
+            return $subscription;
+        }
+
+        return DB::transaction(function () use ($subscription, $pending) {
+            $fresh = $this->subscriptionRepo->findById($subscription->id) ?? $subscription;
+            return match ($pending->change_type) {
+                SubscriptionScheduledChangeType::CANCEL => $this->applyScheduledCancel($fresh, $pending),
+                SubscriptionScheduledChangeType::UPGRADE,
+                SubscriptionScheduledChangeType::DOWNGRADE,
+                SubscriptionScheduledChangeType::PLAN_CHANGE => $this->applyScheduledPlanChange($fresh, $pending),
+            };
+        });
+    }
+
     public function applyPendingScheduledChanges(Subscription $subscription): Subscription
     {
         $due = $this->scheduledChangeRepo->findDuePendingForSubscription($subscription->id);
@@ -140,13 +158,11 @@ class SubscriptionScheduledChangeService implements SubscriptionScheduledChangeS
             ]),
         ]);
 
-        $this->scheduledChangeRepo->update($change, [
-            'status' => SubscriptionScheduledChangeStatus::APPLIED->value,
-        ]);
+        $change->delete();
 
         $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
 
-        Log::info('[Billing] Scheduled plan change applied', [
+        Log::info('[Billing] Scheduled plan change applied and removed', [
             'subscription_id' => $updated->id,
             'to_plan_id'        => $change->to_plan_id,
         ]);

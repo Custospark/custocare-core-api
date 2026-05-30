@@ -501,7 +501,12 @@ class SubscriptionService implements SubscriptionServiceInterface
             }
         }
 
-        return $this->scheduledChangeService->applyPendingScheduledChanges($subscription);
+        // Apply any pending scheduled changes — both due (effective_at passed) and upcoming.
+        // This runs after auto-transition so upgrades/downgrades are applied immediately
+        // even if the effective_at was calculated from a previous billing date.
+        $subscription = $this->scheduledChangeService->applyAllPendingChanges($subscription);
+
+        return $subscription;
     }
 
     private function appendNote(Subscription $subscription, ?string $reason, string $prefix): ?string

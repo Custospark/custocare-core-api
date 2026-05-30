@@ -10,21 +10,21 @@ use App\Repositories\Billing\Contracts\SubscriptionScheduledChangeRepositoryInte
 
 class SubscriptionScheduledChangeRepository implements SubscriptionScheduledChangeRepositoryInterface
 {
-    public function findPendingForSubscription(int $subscriptionId): ?SubscriptionScheduledChange
-    {
-        return SubscriptionScheduledChange::query()
-            ->where('subscription_id', $subscriptionId)
-            ->where('status', SubscriptionScheduledChangeStatus::PENDING->value)
-            ->with(['fromPlan', 'toPlan'])
-            ->first();
-    }
-
     public function findDuePendingForSubscription(int $subscriptionId): ?SubscriptionScheduledChange
     {
         return SubscriptionScheduledChange::query()
             ->where('subscription_id', $subscriptionId)
             ->where('status', SubscriptionScheduledChangeStatus::PENDING->value)
             ->where('effective_at', '<=', now())
+            ->with(['fromPlan', 'toPlan'])
+            ->first();
+    }
+
+    public function findPendingForSubscription(int $subscriptionId): ?SubscriptionScheduledChange
+    {
+        return SubscriptionScheduledChange::query()
+            ->where('subscription_id', $subscriptionId)
+            ->where('status', SubscriptionScheduledChangeStatus::PENDING->value)
             ->with(['fromPlan', 'toPlan'])
             ->first();
     }

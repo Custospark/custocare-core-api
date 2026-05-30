@@ -105,8 +105,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 : $now->copy();
 
             // ── Build the subscription payload ────────────────────────────
-            $subscription = $this->subscriptionRepo->create([
-                'facility_id'        => $facility->id,
+            $payload = [
                 'plan_id'            => $plan->id,
                 'billing_cycle'      => $selectedCycle,
                 'status'             => $status,
@@ -117,14 +116,28 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'onboarding_fee_paid' => false,
                 'notes'              => $options['notes'] ?? null,
                 'metadata'           => $options['metadata'] ?? null,
-            ]);
+            ];
 
-            Log::info('[Billing] Subscription created', [
-                'facility_id'     => $facility->id,
-                'subscription_id' => $subscription->id,
-                'plan'            => $plan->name,
-                'status'          => $status,
-            ]);
+            if ($existing) {
+                // Update existing subscription with new details
+                $subscription = $this->subscriptionRepo->update($existing, $payload);
+                Log::info('[Billing] Subscription updated (resubscribed)', [
+                    'subscription_id' => $subscription->id,
+                    'facility_id'     => $facility->id,
+                    'new_plan'        => $plan->name,
+                    'status'          => $status,
+                ]);
+            } else {
+                // First-time subscription — create with facility_id
+                $payload['facility_id'] = $facility->id;
+                $subscription = $this->subscriptionRepo->create($payload);
+                Log::info('[Billing] Subscription created', [
+                    'subscription_id' => $subscription->id,
+                    'facility_id'     => $facility->id,
+                    'plan'            => $plan->name,
+                    'status'          => $status,
+                ]);
+            }
 
             $subscription = $subscription->fresh(['plan']);
 

@@ -199,6 +199,8 @@ class SubscriptionService implements SubscriptionServiceInterface
         return DB::transaction(function () use ($subscription, $payment, $approvedBy) {
 
             $now = Carbon::now();
+            $subscription->loadMissing('plan');
+            $plan = $subscription->plan ?? Plan::find($subscription->plan_id);
             $remainingTrialDays = $subscription->trial_ends_at && $subscription->trial_ends_at->isFuture()
                 ? max(0, $now->diffInDays($subscription->trial_ends_at, false))
                 : 0;
@@ -214,6 +216,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'approved_at'         => $now->copy(),
                 'approved_by_user_id' => $approvedBy ? $approvedBy->id : null,
                 'onboarding_fee_paid' => $payment->payment_type === PaymentType::ONBOARDING
+                    || ($plan && $plan->hasOnboardingFee() && !$subscription->onboarding_fee_paid)
                     ? true
                     : $subscription->onboarding_fee_paid,
                 'metadata'            => $this->metadataWithLockedPeriodPrice($subscription, $payment),
@@ -292,6 +295,9 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'ends_at'              => $newEndsAt,
                 'next_billing_date'    => $newEndsAt->copy(),
                 'suspended_at'         => null,
+                'onboarding_fee_paid'  => $plan && $plan->hasOnboardingFee() && !$subscription->onboarding_fee_paid
+                    ? true
+                    : $subscription->onboarding_fee_paid,
                 'metadata'             => $this->metadataWithLockedPeriodPrice(
                     $subscription,
                     $payment,

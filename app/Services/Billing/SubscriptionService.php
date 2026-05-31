@@ -91,21 +91,25 @@ class SubscriptionService implements SubscriptionServiceInterface
             // ── Calculate remaining trial days to prevent abuse ──
             $remainingTrialDays = $this->subscriptionRepo->getRemainingTrialDays($facility->id, $plan->trial_days);
 
+            // Suspended subscriptions stay suspended — payment required, no grace
+            $isSuspended = $existing && $existing->status === SubscriptionStatus::SUSPENDED;
+            $hasUsedGraceBefore = $existing && $existing->grace_period_ends_at !== null;
+            $hasNoTrial = $remainingTrialDays <= 0;
+
             $status = $remainingTrialDays > 0
                 ? SubscriptionStatus::TRIAL->value
-                : SubscriptionStatus::PAST_DUE->value;
+                : ($isSuspended && $hasUsedGraceBefore
+                    ? SubscriptionStatus::SUSPENDED->value
+                    : SubscriptionStatus::PAST_DUE->value);
 
             $trialEndsAt = $remainingTrialDays > 0 ? $now->copy()->addDays($remainingTrialDays) : null;
-
-            // Only grant grace period once per facility — prevent infinite grace abuse
-            $hasUsedGraceBefore = $existing && $existing->grace_period_ends_at !== null;
             Log::debug('[Billing] createSubscription — grace check', [
                 'has_existing'         => $existing ? 'yes' : 'no',
                 'existing_grace'       => $existing?->grace_period_ends_at?->toDateString(),
                 'has_used_grace_before' => $hasUsedGraceBefore ? 'yes' : 'no',
                 'will_grant_grace'     => ($remainingTrialDays <= 0 && !$hasUsedGraceBefore) ? 'yes' : 'no',
             ]);
-            $graceEndsAt = $remainingTrialDays <= 0 && !$hasUsedGraceBefore
+            $graceEndsAt = $remainingTrialDays <= 0 && !$hasUsedGraceBefore && !$isSuspended
                 ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS)
                 : null;
 

@@ -415,7 +415,7 @@ if ($subscription->status === SubscriptionStatus::TRIAL) {
 | `{plan_price}` | formatted `$plan->price_usd` |
 
 ```
-<p>Dear Facility Administrator,</p>
+<p>Dear {first_name},</p>
 
 <p>Your <strong>{plan_name}</strong> subscription for <strong>{facility_name}</strong> is now active and your {trial_days}-day free trial has begun.</p>
 
@@ -476,7 +476,7 @@ Called inline from `SubscriptionService` (no event/listener needed — it's a se
 ### Body
 
 ```
-<p>Dear Facility Administrator,</p>
+<p>Dear {first_name},</p>
 
 <p>Your <strong>{plan_name}</strong> trial for <strong>{facility_name}</strong> ends on <strong>{trial_end_date}</strong> — that's just 2 days away.</p>
 
@@ -534,7 +534,7 @@ if ($graceEndsAt !== null) {
 ### Body
 
 ```
-<p>Dear Facility Administrator,</p>
+<p>Dear {first_name},</p>
 
 <p>The billing date for your <strong>{plan_name}</strong> subscription at <strong>{facility_name}</strong> has passed.</p>
 
@@ -596,7 +596,7 @@ In `SubscriptionService::getSubscriptionForFacility()` → `sendBillingNotificat
 ### Body
 
 ```
-<p>Dear Facility Administrator,</p>
+<p>Dear {first_name},</p>
 
 <p>This is a final reminder that your <strong>{plan_name}</strong> grace period for <strong>{facility_name}</strong> ends <strong>tomorrow, {grace_end_date}</strong>.</p>
 
@@ -645,7 +645,7 @@ $this->notificationService->sendBillingToFacility($subscription->facility, ...);
 ### Body
 
 ```
-<p>Dear Facility Administrator,</p>
+<p>Dear {first_name},</p>
 
 <p>Your <strong>{plan_name}</strong> subscription for <strong>{facility_name}</strong> has been suspended because the grace period ended on <strong>{grace_end_date}</strong> without a completed payment.</p>
 
@@ -671,6 +671,31 @@ $this->notificationService->sendBillingToFacility($subscription->facility, ...);
 ```
 
 ---
+
+## Deduplication — Preventing Repeated Sends
+
+Since auto-transition checks run on every facility API request, a deduplication mechanism is required to prevent sending the same email hundreds of times.
+
+**Approach:** Store a `notifications` key in the subscription's `metadata` JSON field tracking which emails have been sent:
+
+```php
+// On successful send, mark as sent
+$metadata = $subscription->metadata ?? [];
+$metadata['notifications']['trial_started'] = true;
+$metadata['notifications']['trial_ending_soon'] = true;
+$metadata['notifications']['grace_started'] = true;
+$metadata['notifications']['grace_last_day'] = true;
+$metadata['notifications']['suspended'] = true;
+$subscription->update(['metadata' => $metadata]);
+```
+
+Before each send, check if already sent:
+```php
+$alreadySent = $subscription->metadata['notifications']['trial_ending_soon'] ?? false;
+if (!$alreadySent) { /* send + mark */ }
+```
+
+This ensures each notification fires exactly once per subscription lifecycle, regardless of how many API requests trigger the auto-transition checks.
 
 ## Implementation Summary Table (Subscriptions)
 

@@ -154,6 +154,36 @@ When `ends_at` passes and `cancel_at_period_end` is true, `hasAccess()` returns 
 
 ---
 
+## Transition Triggers
+
+Each status transition is driven by comparing a **single field** against `now()`:
+
+| Transition | Trigger Field | Condition | Code Location |
+|-----------|--------------|-----------|---------------|
+| **trial → past_due** | `next_billing_date` **or** `trial_ends_at` | `isPast()` | `SubscriptionService::getSubscriptionForFacility()` |
+| **active → past_due** | `next_billing_date` | `isPast()` | Same |
+| **past_due → suspended** | `grace_period_ends_at` | `isPast()` | Same |
+| **suspended → active** | (admin approval) | Manual — no date check | `activateSubscription()` / `renewSubscription()` |
+| **cancel_at_period_end → suspended** | `ends_at` | `isPast()` (only when `cancel_at_period_end` is true in metadata) | `Subscription::hasActivePeriodAccess()` |
+
+### Field Roles
+
+- **`next_billing_date`** — Primary driver for payment-due transitions (trial/active → past_due). Set to `trial_end` for trial subscriptions, `period_end` for active subscriptions.
+- **`grace_period_ends_at`** — Sole driver for past_due → suspended. Once past, access is revoked.
+- **`trial_ends_at`** — Secondary safety net for trial expiry. Mirrors `next_billing_date` during trial period.
+- **`ends_at`** — Only checked when `cancel_at_period_end` is true in metadata. Otherwise ignored for access decisions.
+- **`approved_at`** — Set on payment approval. Not used for transitions, only audit.
+
+### Order of Checks
+
+In `SubscriptionService::getSubscriptionForFacility()`, checks run in this order:
+
+```
+1. If status is active or trial → check next_billing_date/trial_ends_at → markPastDue()
+2. If status is past_due → check grace_period_ends_at → suspendSubscription()
+3. Apply pending scheduled changes (plan change if effective_at is past)
+```
+
 ## Auto-Transition Logic
 
 Every API request that resolves a facility runs `SubscriptionService::getSubscriptionForFacility()`:

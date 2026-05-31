@@ -185,7 +185,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     $trialEnd = $subscription->trial_ends_at;
                     $this->sendBillingEmail($facility, $subscription,
                         "Your {$plan->name} Trial Has Started — Welcome to Custocare",
-                        "<p>Dear Facility Administrator,</p>
+                        "<p>Dear {$facility->facility_name},</p>
                         <p>Your <strong>{$plan->name}</strong> subscription for <strong>{$facility->facility_name}</strong> is now active and your {$plan->trial_days}-day free trial has begun.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
                         <p>During this trial period, you have full access to all features included in your plan.</p>
@@ -378,7 +378,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     if (!($meta['notifications']['grace_started'] ?? false)) {
                         $this->sendBillingEmail($facility, $updated,
                             "Payment Required — Your {$plan?->name} Subscription Is Now Past Due",
-                            "<p>Dear Facility Administrator,</p>
+                            "<p>Dear {$facility->facility_name},</p>
                             <p>The billing date for your <strong>{$plan?->name}</strong> subscription at <strong>{$facility->facility_name}</strong> has passed.</p>
                             <p>Your facility still has full access. We've started a <strong>7-day grace period</strong> to give you time to complete your payment.</p>
                             " . NotificationService::billingInfoBlock($updated) . "
@@ -449,7 +449,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             if ($facility) {
                 $this->sendBillingEmail($facility, $updated,
                     "Your {$plan?->name} Subscription Has Been Suspended",
-                    "<p>Dear Facility Administrator,</p>
+                    "<p>Dear {$facility->facility_name},</p>
                     <p>Your <strong>{$plan?->name}</strong> subscription for <strong>{$facility->facility_name}</strong> has been suspended because the grace period ended" . ($graceEnd ? " on <strong>{$graceEnd->format('M j, Y')}</strong>" : "") . " without a completed payment.</p>
                     " . NotificationService::billingInfoBlock($updated) . "
                     <p><strong>How to restore access:</strong></p>
@@ -662,7 +662,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 if ($trialEnd && $trialEnd->isFuture() && (int) $now->diffInDays($trialEnd) === 2) {
                     $this->sendBillingEmail($facility, $subscription,
                         "Your {$plan?->name} Trial Ends in 2 Days — Complete Payment to Stay Active",
-                        "<p>Dear Facility Administrator,</p>
+                        "<p>Dear {$facility->facility_name},</p>
                         <p>Your <strong>{$plan?->name}</strong> trial for <strong>{$facility->facility_name}</strong> ends on <strong>{$trialEnd->format('M j, Y')}</strong> — that's just 2 days away.</p>
                         <p>To keep your facility running without interruption, please complete your payment before the trial ends.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
@@ -686,7 +686,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 if ($graceEnd && $graceEnd->isFuture() && (int) $now->diffInDays($graceEnd) === 1) {
                     $this->sendBillingEmail($facility, $subscription,
                         "Final Reminder — Your Grace Period Ends Tomorrow",
-                        "<p>Dear Facility Administrator,</p>
+                        "<p>Dear {$facility->facility_name},</p>
                         <p>This is a final reminder that your <strong>{$plan?->name}</strong> grace period for <strong>{$facility->facility_name}</strong> ends <strong>tomorrow, {$graceEnd->format('M j, Y')}</strong>.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
                         <p><strong>What happens after suspension?</strong></p>

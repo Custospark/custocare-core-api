@@ -368,3 +368,318 @@ Facility email is sent to the owner's user email AND the facility's direct email
 
 ### Patient welcome is self-registration only
 Admin-created patients already have the admin handling the onboarding, so no welcome email — avoids double-notification.
+
+---
+
+## Email 5: Subscription Trial Started
+
+### Trigger
+After `POST /facilities/{facility}/subscription` (SubscriptionController::store) succeeds AND the subscription status is `trial`.
+
+### How to detect
+Check `$subscription->status === 'trial'` after `createSubscription()` returns.
+
+### Recipient
+All facility owners (via `NotificationService::sendBillingToFacility()`).
+
+### Fire location
+In `SubscriptionController::store()`, after successful subscription creation:
+```php
+if ($subscription->status === SubscriptionStatus::TRIAL) {
+    event(new SubscriptionTrialStarted($subscription));
+}
+```
+
+### Event Class
+`App\Events\Billing\SubscriptionTrialStarted`
+
+### Listener Class
+`App\Listeners\SendSubscriptionTrialStartedNotification`
+
+### Subject
+**Your {plan_name} Trial Has Started — Welcome to Custocare**
+
+### CTA
+- **Label:** View Subscription
+- **URL:** `{app_url}/admin/plans-subscriptions`
+
+### Body (HTML, built in listener)
+
+| Placeholder | Source |
+|-------------|--------|
+| `{facility_name}` | `$subscription->facility->facility_name` |
+| `{plan_name}` | `$subscription->plan->name` |
+| `{trial_days}` | `$plan->trial_days` |
+| `{trial_end_date}` | formatted `$subscription->trial_ends_at` |
+| `{billing_cycle}` | `$subscription->billing_cycle` |
+| `{plan_price}` | formatted `$plan->price_usd` |
+
+```
+<p>Dear Facility Administrator,</p>
+
+<p>Your <strong>{plan_name}</strong> subscription for <strong>{facility_name}</strong> is now active and your {trial_days}-day free trial has begun.</p>
+
+<div style="background-color: #f0f9ff; border-left: 4px solid #2563eb; padding: 16px; margin: 20px 0;">
+    <p style="margin: 0; font-size: 14px;"><strong>Trial ends:</strong> {trial_end_date}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Plan:</strong> {plan_name} — ${plan_price}/mo ({billing_cycle} billing)</p>
+</div>
+
+<p>During this trial period, you have full access to all features included in your plan. Here's what to expect:</p>
+
+<ul>
+    <li><strong>Full access</strong> — All {plan_name} features are available for your facility.</li>
+    <li><strong>No charges yet</strong> — Your first payment will be due on {trial_end_date}.</li>
+    <li><strong>Switch anytime</strong> — You can upgrade or downgrade your plan before the trial ends.</li>
+</ul>
+
+<p>Before your trial ends, you'll need to submit a payment proof to continue uninterrupted access. We'll send you a reminder a few days before.</p>
+
+<p>If you have any questions, our support team is here to help.</p>
+
+<p>Warm regards,<br>Custocare Team</p>
+```
+
+---
+
+## Email 6: Trial Ending Soon (2 Days Remaining)
+
+### Trigger
+In `SubscriptionService::getSubscriptionForFacility()`, when `trial_ends_at` is exactly 2 days from `now()`. Sent once per subscription lifecycle.
+
+### How to detect
+```php
+$trialEndsAt = $subscription->trial_ends_at;
+if ($subscription->status === SubscriptionStatus::TRIAL && $trialEndsAt && $trialEndsAt->isFuture()) {
+    $daysLeft = (int) $now->diffInDays($trialEndsAt);
+    if ($daysLeft === 2 && !$this->notificationSent($subscription, 'trial_ending_soon')) {
+        // send email + mark sent
+    }
+}
+```
+
+### Recipient
+All facility owners (via `NotificationService::sendBillingToFacility()`).
+
+### Fire location
+In `SubscriptionService::getSubscriptionForFacility()` → `sendBillingNotifications()` (NEW method), after auto-transition checks.
+
+### Event / Listener
+Called inline from `SubscriptionService` (no event/listener needed — it's a service concern).
+
+### Subject
+**Your {plan_name} Trial Ends in 2 Days — Complete Payment to Stay Active**
+
+### CTA
+- **Label:** Complete Payment
+- **URL:** `{app_url}/admin/plans-subscriptions/payments`
+
+### Body
+
+```
+<p>Dear Facility Administrator,</p>
+
+<p>Your <strong>{plan_name}</strong> trial for <strong>{facility_name}</strong> ends on <strong>{trial_end_date}</strong> — that's just 2 days away.</p>
+
+<p>To keep your facility running without interruption, please complete your payment before the trial ends.</p>
+
+<div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 16px; margin: 20px 0;">
+    <p style="margin: 0; font-size: 14px;"><strong>Plan:</strong> {plan_name}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Amount due:</strong> ${plan_price}/{billing_cycle}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Due date:</strong> {trial_end_date}</p>
+</div>
+
+<p><strong>How to pay:</strong></p>
+<ol>
+    <li>Log in to your Custocare account.</li>
+    <li>Navigate to the Payments page under Plans & Subscriptions.</li>
+    <li>Choose Bank Transfer as your payment method.</li>
+    <li>Upload your payment receipt and submit for review.</li>
+</ol>
+
+<p>Need to change your plan before committing? You can upgrade or downgrade at any time during your trial — visit the Plans page to compare options.</p>
+
+<p>If you have any questions, our support team is happy to assist.</p>
+
+<p>Warm regards,<br>Custocare Team</p>
+```
+
+---
+
+## Email 7: Grace Period Started (First Day Past Due)
+
+### Trigger
+In `SubscriptionService::markPastDue()`, when `grace_period_ends_at` is set and this is the first past_due transition (not a resubscribe). Sent once per subscription lifecycle.
+
+### How to detect
+The `markPastDue()` method already knows whether grace is being set (`$graceEndsAt !== null`) — this is the first-time grace grant. Only send when grace is actually granted.
+
+### Recipient
+All facility owners (via `NotificationService::sendBillingToFacility()`).
+
+### Fire location
+In `SubscriptionService::markPastDue()`, after the update, only when `$graceEndsAt !== null`:
+```php
+if ($graceEndsAt !== null) {
+    $this->notificationService->sendBillingToFacility($subscription->facility, ...);
+}
+```
+
+### Subject
+**Payment Required — Your {plan_name} Subscription Is Now Past Due**
+
+### CTA
+- **Label:** Make Payment
+- **URL:** `{app_url}/admin/plans-subscriptions/payments`
+
+### Body
+
+```
+<p>Dear Facility Administrator,</p>
+
+<p>The billing date for your <strong>{plan_name}</strong> subscription at <strong>{facility_name}</strong> has passed.</p>
+
+<p>Don't worry — your facility still has full access. We've started a <strong>7-day grace period</strong> to give you time to complete your payment.</p>
+
+<div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 16px; margin: 20px 0;">
+    <p style="margin: 0; font-size: 14px;"><strong>Grace period ends:</strong> {grace_end_date}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Amount due:</strong> ${plan_price}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Status:</strong> Past due — action required</p>
+</div>
+
+<p>If payment is not received by {grace_end_date}, your subscription will be suspended and your facility will lose access to Custocare.</p>
+
+<p><strong>To complete your payment:</strong></p>
+<ol>
+    <li>Log in to your Custocare account.</li>
+    <li>Go to Plans & Subscriptions → Payments.</li>
+    <li>Transfer the amount due to our bank account (details provided on the payments page).</li>
+    <li>Upload your payment receipt and submit for review.</li>
+</ol>
+
+<p>Need to change your plan? You can still upgrade or downgrade during the grace period — no interruption to your service.</p>
+
+<p>If you have any questions, please contact our support team.</p>
+
+<p>Warm regards,<br>Custocare Team</p>
+```
+
+---
+
+## Email 8: Grace Period Last Day (Final Reminder)
+
+### Trigger
+In `SubscriptionService::getSubscriptionForFacility()`, when `grace_period_ends_at` is tomorrow. Sent once per grace period.
+
+### How to detect
+```php
+if ($subscription->status === SubscriptionStatus::PAST_DUE && $graceEndsAt && $graceEndsAt->isFuture()) {
+    $daysLeft = (int) $now->diffInDays($graceEndsAt);
+    if ($daysLeft === 1 && !$this->notificationSent($subscription, 'grace_last_day')) {
+        // send email + mark sent
+    }
+}
+```
+
+### Recipient
+All facility owners (via `NotificationService::sendBillingToFacility()`).
+
+### Fire location
+In `SubscriptionService::getSubscriptionForFacility()` → `sendBillingNotifications()` method.
+
+### Subject
+**Final Reminder — Your Grace Period Ends Tomorrow**
+
+### CTA
+- **Label:** Pay Now — Avoid Suspension
+- **URL:** `{app_url}/admin/plans-subscriptions/payments`
+
+### Body
+
+```
+<p>Dear Facility Administrator,</p>
+
+<p>This is a final reminder that your <strong>{plan_name}</strong> grace period for <strong>{facility_name}</strong> ends <strong>tomorrow, {grace_end_date}</strong>.</p>
+
+<div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; margin: 20px 0;">
+    <p style="margin: 0; font-size: 14px;"><strong>Action required:</strong> Complete payment by {grace_end_date}</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>After this date:</strong> Your subscription will be suspended and facility access will be blocked.</p>
+</div>
+
+<p><strong>What happens after suspension?</strong></p>
+<ul>
+    <li>Your facility staff will not be able to access Custocare.</li>
+    <li>All patient data remains securely stored and preserved.</li>
+    <li>You can restore access at any time by submitting a payment proof.</li>
+</ul>
+
+<p>Don't lose access — complete your payment today. The process takes just a few minutes.</p>
+
+<p>If you've already submitted a payment, please disregard this message. Payments are reviewed and approved by our team during business hours.</p>
+
+<p>Warm regards,<br>Custocare Team</p>
+```
+
+---
+
+## Email 9: Subscription Suspended
+
+### Trigger
+In `SubscriptionService::suspendSubscription()`, after the update. Sent once per suspension event.
+
+### Recipient
+All facility owners (via `NotificationService::sendBillingToFacility()`).
+
+### Fire location
+In `SubscriptionService::suspendSubscription()`, after the update:
+```php
+$this->notificationService->sendBillingToFacility($subscription->facility, ...);
+```
+
+### Subject
+**Your {plan_name} Subscription Has Been Suspended**
+
+### CTA
+- **Label:** Reactivate Subscription
+- **URL:** `{app_url}/admin/plans-subscriptions/payments`
+
+### Body
+
+```
+<p>Dear Facility Administrator,</p>
+
+<p>Your <strong>{plan_name}</strong> subscription for <strong>{facility_name}</strong> has been suspended because the grace period ended on <strong>{grace_end_date}</strong> without a completed payment.</p>
+
+<div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; margin: 20px 0;">
+    <p style="margin: 0; font-size: 14px;"><strong>Status:</strong> Suspended</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Access:</strong> Facility staff cannot currently use Custocare.</p>
+    <p style="margin: 4px 0 0; font-size: 14px;"><strong>Data:</strong> All patient and facility data is preserved and secure.</p>
+</div>
+
+<p><strong>How to restore access:</strong></p>
+<ol>
+    <li>Log in to your Custocare account.</li>
+    <li>Navigate to Plans & Subscriptions → Payments.</li>
+    <li>Submit a payment proof for the amount due.</li>
+    <li>Once approved by our team, your subscription will be reactivated immediately.</li>
+</ol>
+
+<p>All your facility data — patient records, clinical notes, configurations — remains intact and will be accessible again as soon as your subscription is reactivated.</p>
+
+<p>If you believe this suspension is in error or need assistance, please contact our support team.</p>
+
+<p>Warm regards,<br>Custocare Team</p>
+```
+
+---
+
+## Implementation Summary Table (Subscriptions)
+
+| # | Email | Trigger | Fire Location | Condition |
+|---|-------|---------|---------------|-----------|
+| 5 | Trial started | Subscription created with `status = trial` | `SubscriptionController::store()` | After `createSubscription()`, status is `trial` |
+| 6 | Trial ending soon | `trial_ends_at` is 2 days from now | `SubscriptionService::sendBillingNotifications()` | Not yet sent for this event |
+| 7 | Grace started | First `markPastDue()` with grace granted | `SubscriptionService::markPastDue()` | `$graceEndsAt !== null` |
+| 8 | Grace last day | `grace_period_ends_at` is tomorrow | `SubscriptionService::sendBillingNotifications()` | Not yet sent for this event |
+| 9 | Subscription suspended | `suspendSubscription()` called | `SubscriptionService::suspendSubscription()` | Always on suspension |
+
+All emails use `NotificationService::sendBillingToFacility()` with the `StandardEmail` mailable. The `tip` field is not used in these emails — the body content is self-contained. A deduplication mechanism (checking metadata for sent flags) prevents duplicate sends across multiple requests (since auto-transition runs on every API request).

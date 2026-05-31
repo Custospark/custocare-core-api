@@ -7,7 +7,6 @@ use App\Http\Requests\WalkInSession\CreateSessionRequest;
 use App\Http\Requests\WalkInSession\UpgradeSessionRequest;
 use App\Http\Resources\WalkInSessionResource;
 use App\Services\Contracts\WalkInCustomerServiceInterface;
-use App\Services\WalkInCustomer\WalkInCustomerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -17,12 +16,12 @@ class WalkInSessionController extends Controller
     /**
      * Walk-in customer service instance.
      */
-    protected WalkInCustomerService $walkInCustomerService;
+    protected WalkInCustomerServiceInterface $walkInCustomerService;
 
     /**
      * Create a new controller instance.
      */
-    public function __construct(WalkInCustomerService $walkInCustomerService)
+    public function __construct(WalkInCustomerServiceInterface $walkInCustomerService)
     {
         $this->walkInCustomerService = $walkInCustomerService;
         

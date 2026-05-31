@@ -45,5 +45,6 @@ return [
     App\Providers\DiagnosisServiceProvider::class,
     App\Providers\VitalServiceProvider::class,
     App\Providers\ConsultationServiceProvider::class,
+    App\Providers\WalkInCustomerServiceProvider::class,
 
 ];

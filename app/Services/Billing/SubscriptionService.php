@@ -179,6 +179,31 @@ class SubscriptionService implements SubscriptionServiceInterface
                 $this->moduleSyncService->syncForSubscription($subscription);
             }
 
+            // Send trial started email on first-time trial creation
+            if ($status === SubscriptionStatus::TRIAL->value) {
+                try {
+                    $trialEnd = $subscription->trial_ends_at;
+                    $this->sendBillingEmail($facility, $subscription,
+                        "Your {$plan->name} Trial Has Started — Welcome to Custocare",
+                        "<p>Dear Facility Administrator,</p>
+                        <p>Your <strong>{$plan->name}</strong> subscription for <strong>{$facility->facility_name}</strong> is now active and your {$plan->trial_days}-day free trial has begun.</p>
+                        " . NotificationService::billingInfoBlock($subscription) . "
+                        <p>During this trial period, you have full access to all features included in your plan.</p>
+                        <ul>
+                            <li><strong>No charges yet</strong> — Your first payment will be due on " . ($trialEnd?->format('M j, Y') ?? 'TBD') . ".</li>
+                            <li><strong>Switch anytime</strong> — You can upgrade or downgrade your plan before the trial ends.</li>
+                        </ul>
+                        <p>We'll send you a reminder a few days before your trial ends.</p>
+                        <p>Warm regards,<br>Custocare Team</p>"
+                    );
+                } catch (\Exception $e) {
+                    Log::error('[Billing] Failed to send trial started notification', [
+                        'subscription_id' => $subscription->id,
+                        'error'           => $e->getMessage(),
+                    ]);
+                }
+            }
+
             return $subscription;
         });
     }
@@ -342,6 +367,43 @@ class SubscriptionService implements SubscriptionServiceInterface
             'grace_granted'        => $graceEndsAt !== null,
         ]);
 
+        // Send grace started notification when grace is first granted
+        if ($graceEndsAt !== null) {
+            try {
+                $facility = $updated->facility;
+                $plan = $updated->plan;
+                if ($facility) {
+                    $meta = $updated->metadata ?? [];
+                    $meta['notifications'] = $meta['notifications'] ?? [];
+                    if (!($meta['notifications']['grace_started'] ?? false)) {
+                        $this->sendBillingEmail($facility, $updated,
+                            "Payment Required — Your {$plan?->name} Subscription Is Now Past Due",
+                            "<p>Dear Facility Administrator,</p>
+                            <p>The billing date for your <strong>{$plan?->name}</strong> subscription at <strong>{$facility->facility_name}</strong> has passed.</p>
+                            <p>Your facility still has full access. We've started a <strong>7-day grace period</strong> to give you time to complete your payment.</p>
+                            " . NotificationService::billingInfoBlock($updated) . "
+                            <p><strong>To complete your payment:</strong></p>
+                            <ol>
+                                <li>Log in to your Custocare account.</li>
+                                <li>Go to Plans & Subscriptions → Payments.</li>
+                                <li>Transfer the amount due to our bank account.</li>
+                                <li>Upload your payment receipt and submit for review.</li>
+                            </ol>
+                            <p>Need to change your plan? You can still upgrade or downgrade during the grace period.</p>
+                            <p>Warm regards,<br>Custocare Team</p>"
+                        );
+                        $meta['notifications']['grace_started'] = true;
+                        $this->subscriptionRepo->update($updated, ['metadata' => $meta]);
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::error('[Billing] Failed to send grace started notification', [
+                    'subscription_id' => $updated->id,
+                    'error'           => $e->getMessage(),
+                ]);
+            }
+        }
+
         return $updated;
     }
 
@@ -378,6 +440,36 @@ class SubscriptionService implements SubscriptionServiceInterface
             'subscription_id' => $updated->id,
             'facility_id'     => $updated->facility_id,
         ]);
+
+        // Send suspension notification
+        try {
+            $facility = $updated->facility;
+            $plan = $updated->plan;
+            $graceEnd = $updated->grace_period_ends_at;
+            if ($facility) {
+                $this->sendBillingEmail($facility, $updated,
+                    "Your {$plan?->name} Subscription Has Been Suspended",
+                    "<p>Dear Facility Administrator,</p>
+                    <p>Your <strong>{$plan?->name}</strong> subscription for <strong>{$facility->facility_name}</strong> has been suspended because the grace period ended" . ($graceEnd ? " on <strong>{$graceEnd->format('M j, Y')}</strong>" : "") . " without a completed payment.</p>
+                    " . NotificationService::billingInfoBlock($updated) . "
+                    <p><strong>How to restore access:</strong></p>
+                    <ol>
+                        <li>Log in to your Custocare account.</li>
+                        <li>Navigate to Plans & Subscriptions → Payments.</li>
+                        <li>Submit a payment proof for the amount due.</li>
+                        <li>Once approved, your subscription will be reactivated immediately.</li>
+                    </ol>
+                    <p>All your facility data — patient records, clinical notes, configurations — remains intact and will be accessible again as soon as your subscription is reactivated.</p>
+                    <p>If you need assistance, please contact our support team.</p>
+                    <p>Warm regards,<br>Custocare Team</p>"
+                );
+            }
+        } catch (\Exception $e) {
+            Log::error('[Billing] Failed to send suspension notification', [
+                'subscription_id' => $updated->id,
+                'error'           => $e->getMessage(),
+            ]);
+        }
 
         return $updated;
     }
@@ -543,7 +635,91 @@ class SubscriptionService implements SubscriptionServiceInterface
         // Apply due pending scheduled changes (effective_at is past)
         $subscription = $this->scheduledChangeService->applyPendingScheduledChanges($subscription);
 
+        // Send billing notifications based on current subscription state
+        $this->sendBillingNotifications($subscription);
+
         return $subscription;
+    }
+
+    /**
+     * Send billing notification emails based on subscription state.
+     * Each notification is sent at most once — tracked via metadata flags.
+     */
+    private function sendBillingNotifications(Subscription $subscription): void
+    {
+        try {
+            $facility = $subscription->facility;
+            if (! $facility) return;
+
+            $meta = $subscription->metadata ?? [];
+            $notifications = $meta['notifications'] ?? [];
+            $now = Carbon::now();
+            $plan = $subscription->plan;
+
+            // 1. Trial ending in 2 days
+            if ($subscription->status === SubscriptionStatus::TRIAL && !($notifications['trial_ending_soon'] ?? false)) {
+                $trialEnd = $subscription->trial_ends_at;
+                if ($trialEnd && $trialEnd->isFuture() && (int) $now->diffInDays($trialEnd) === 2) {
+                    $this->sendBillingEmail($facility, $subscription,
+                        "Your {$plan?->name} Trial Ends in 2 Days — Complete Payment to Stay Active",
+                        "<p>Dear Facility Administrator,</p>
+                        <p>Your <strong>{$plan?->name}</strong> trial for <strong>{$facility->facility_name}</strong> ends on <strong>{$trialEnd->format('M j, Y')}</strong> — that's just 2 days away.</p>
+                        <p>To keep your facility running without interruption, please complete your payment before the trial ends.</p>
+                        " . NotificationService::billingInfoBlock($subscription) . "
+                        <p><strong>How to pay:</strong></p>
+                        <ol>
+                            <li>Log in to your Custocare account.</li>
+                            <li>Navigate to the Payments page under Plans & Subscriptions.</li>
+                            <li>Choose Bank Transfer as your payment method.</li>
+                            <li>Upload your payment receipt and submit for review.</li>
+                        </ol>
+                        <p>Need to change your plan? You can upgrade or downgrade during your trial — visit the Plans page.</p>
+                        <p>Warm regards,<br>Custocare Team</p>"
+                    );
+                    $notifications['trial_ending_soon'] = true;
+                }
+            }
+
+            // 2. Grace period last day (tomorrow)
+            if ($subscription->status === SubscriptionStatus::PAST_DUE && !($notifications['grace_last_day'] ?? false)) {
+                $graceEnd = $subscription->grace_period_ends_at;
+                if ($graceEnd && $graceEnd->isFuture() && (int) $now->diffInDays($graceEnd) === 1) {
+                    $this->sendBillingEmail($facility, $subscription,
+                        "Final Reminder — Your Grace Period Ends Tomorrow",
+                        "<p>Dear Facility Administrator,</p>
+                        <p>This is a final reminder that your <strong>{$plan?->name}</strong> grace period for <strong>{$facility->facility_name}</strong> ends <strong>tomorrow, {$graceEnd->format('M j, Y')}</strong>.</p>
+                        " . NotificationService::billingInfoBlock($subscription) . "
+                        <p><strong>What happens after suspension?</strong></p>
+                        <ul>
+                            <li>Your facility staff will not be able to access Custocare.</li>
+                            <li>All patient data remains securely stored and preserved.</li>
+                            <li>You can restore access anytime by submitting a payment proof.</li>
+                        </ul>
+                        <p>Don't lose access — complete your payment today.</p>
+                        <p>If you've already submitted a payment, please disregard this message.</p>
+                        <p>Warm regards,<br>Custocare Team</p>"
+                    );
+                    $notifications['grace_last_day'] = true;
+                }
+            }
+
+            // Persist notification flags
+            if ($notifications !== ($meta['notifications'] ?? [])) {
+                $meta['notifications'] = $notifications;
+                $this->subscriptionRepo->update($subscription, ['metadata' => $meta]);
+            }
+        } catch (\Exception $e) {
+            Log::error('[Billing] Failed to send billing notification', [
+                'subscription_id' => $subscription->id,
+                'error'           => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /** Convenience wrapper around sendBillingToFacility. */
+    private function sendBillingEmail(Facility $facility, Subscription $subscription, string $subject, string $body): void
+    {
+        $this->notificationService->sendBillingToFacility($facility, $subject, $body);
     }
 
     private function appendNote(Subscription $subscription, ?string $reason, string $prefix): ?string

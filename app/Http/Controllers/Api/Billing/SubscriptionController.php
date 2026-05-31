@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\Billing;
-
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Billing\CancelSubscriptionRequest;
 use App\Http\Requests\Billing\PaymentQuoteRequest;

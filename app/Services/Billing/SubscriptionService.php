@@ -99,6 +99,12 @@ class SubscriptionService implements SubscriptionServiceInterface
 
             // Only grant grace period once per facility — prevent infinite grace abuse
             $hasUsedGraceBefore = $existing && $existing->grace_period_ends_at !== null;
+            Log::debug('[Billing] createSubscription — grace check', [
+                'has_existing'         => $existing ? 'yes' : 'no',
+                'existing_grace'       => $existing?->grace_period_ends_at?->toDateString(),
+                'has_used_grace_before' => $hasUsedGraceBefore ? 'yes' : 'no',
+                'will_grant_grace'     => ($remainingTrialDays <= 0 && !$hasUsedGraceBefore) ? 'yes' : 'no',
+            ]);
             $graceEndsAt = $remainingTrialDays <= 0 && !$hasUsedGraceBefore
                 ? $now->copy()->addDays(self::GRACE_PERIOD_DAYS)
                 : null;
@@ -310,16 +316,20 @@ class SubscriptionService implements SubscriptionServiceInterface
      */
     public function markPastDue(Subscription $subscription): Subscription
     {
-        $graceEndsAt = Carbon::now()->addDays(self::GRACE_PERIOD_DAYS);
+        // Only grant grace if facility hasn't used one before
+        $graceEndsAt = $subscription->grace_period_ends_at === null
+            ? Carbon::now()->addDays(self::GRACE_PERIOD_DAYS)
+            : null;
 
-        $updated = $this->subscriptionRepo->update($subscription, [
+        $updated = $this->subscriptionRepo->update($subscription, array_filter([
             'status'               => SubscriptionStatus::PAST_DUE->value,
             'grace_period_ends_at' => $graceEndsAt,
-        ]);
+        ], fn($v) => $v !== null));
 
         Log::info('[Billing] Subscription marked past_due', [
             'subscription_id'      => $updated->id,
-            'grace_period_ends_at' => $graceEndsAt->toDateTimeString(),
+            'grace_period_ends_at' => $graceEndsAt?->toDateTimeString(),
+            'grace_granted'        => $graceEndsAt !== null,
         ]);
 
         return $updated;

@@ -61,7 +61,7 @@ class InventoryItemController extends Controller
             ]);
 
             $perPage = $request->get('per_page', 15);
-            $perPage = min(max($perPage, 1), 100); // Limit between 1 and 100
+            $perPage = min(max($perPage, 1), 10000); // Limit between 1 and 10000
 
             // Get inventory items from service layer (already facility-scoped)
             $result = $this->service->getAllInventoryItems($filters, $perPage);

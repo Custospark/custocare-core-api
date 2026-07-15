@@ -50,6 +50,19 @@ Resolved by `SubscriptionPaymentActionResolver` on each subscription show:
 - `POST /facilities/{facility}/payments` accepts proof when subscription status is `trial`, `active`, `past_due`, or `suspended` (`Subscription::canAcceptFacilityPayment()`), not only when `has_access` is true.
 - Duplicate pending proof still returns 422 from `PaymentService`.
 
+### EnsureFacilitySubscriptionIsActive — Exception Patterns (2026-07-15)
+The following URL patterns bypass the subscription check:
+| Pattern | Purpose |
+|---------|---------|
+| `api/auth/*` | Login, register, forgot-password, verify-email, reset-password, logout, me (added 2026-07-15) |
+| `api/billing/plans*` | Public plan browsing |
+| `api/facilities/*/subscription*` | Subscription CRUD, upgrade, schedule change |
+| `api/facilities/*/payments*` | Payment submission and listing |
+| `api/facilities/*/usage` | Usage viewing |
+| `api/facilities/*/assignable-modules` | Module assignment |
+
+Auth routes were added so users with expired/suspended subscriptions can still log in and reach the subscription management pages to reactivate.
+
 ### Payment types
 - Added `upgrade_proration` — on admin approve calls `SubscriptionService::upgradeNow()`.
 

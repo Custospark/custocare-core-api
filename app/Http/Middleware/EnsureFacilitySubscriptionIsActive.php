@@ -29,8 +29,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class EnsureFacilitySubscriptionIsActive
 {
-    /** Routes that bypass subscription check — plan browsing, subscription, and payment submission. */
+    /** Routes that bypass subscription check — auth, plan browsing, subscription, and payment submission. */
     private const EXCEPT_PATTERNS = [
+        'api/auth/*',
         'api/billing/plans*',
         'api/facilities/*/subscription*',
         'api/facilities/*/payments*',

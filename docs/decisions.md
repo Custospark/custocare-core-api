@@ -266,7 +266,26 @@ The `staff()` relationship already existed on the User model, and the rest of th
 
 ---
 
-## 2026-05-28: Onboarding Welcome Emails — Staff, Facility, User, Patient
+## 2026-07-15: Auth Routes Bypass Subscription Check — Allow Login with Expired Subscription
+
+**Context:** When a facility's subscription was suspended, the global `EnsureFacilitySubscriptionIsActive` middleware blocked `POST /api/auth/login` (and other auth routes) with a 403 error. Users with expired subscriptions couldn't log in at all — making it impossible to reach the subscription management pages to reactivate.
+
+The middleware already whitelisted billing routes (`api/billing/plans*`, `api/facilities/*/subscription*`, `api/facilities/*/payments*`, etc.) so logged-in users could manage payments, but the login door was locked.
+
+**Decision:**
+- Added `'api/auth/*'` to `EnsureFacilitySubscriptionIsActive::$exceptPatterns`
+- This allows all auth routes (login, register, forgot-password, verify-email, reset-password, logout, me) to bypass the subscription check
+- Auth routes are user-level, not facility-level — subscription gating is irrelevant before authentication
+- Once logged in, users can reach the already-whitelisted billing routes to reactivate their subscription
+
+**Files changed (BE — 1 file):**
+- `app/Http/Middleware/EnsureFacilitySubscriptionIsActive.php:34` — added `'api/auth/*'` to exception patterns
+
+**Trade-offs:**
+- `api/auth/me` (GET current user) and `api/auth/logout` are now accessible even with a suspended subscription — this is correct because the user needs to see their profile and log out
+- No security concern: auth routes don't expose facility-scoped data that would be protected by a subscription
+
+---
 
 **Context:** Users who register through onboarding flows (staff, patient, facility) never received a follow-up email containing their unique identifier or a welcome message. The front-end shows the UUID on a success screen, but it's not persisted anywhere the user can refer back to.
 

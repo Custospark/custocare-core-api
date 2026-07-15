@@ -293,10 +293,10 @@ class InventoryItemImportService
             'reorder_quantity' => $get(16) !== null ? (int) $get(16) : null,
             'safety_stock_level' => $get(17) !== null ? (int) $get(17) : null,
             'max_stock_level' => $get(18) !== null ? (int) $get(18) : null,
-            'requires_prescription' => $get(19),
-            'requires_refrigeration' => $get(20),
-            'is_hazardous' => $get(21),
-            'is_billable' => $get(22),
+            'requires_prescription' => $this->normalizeYesNo($get(19)),
+            'requires_refrigeration' => $this->normalizeYesNo($get(20)),
+            'is_hazardous' => $this->normalizeYesNo($get(21)),
+            'is_billable' => $this->normalizeYesNo($get(22)),
             'item_description' => $get(23),
             'status' => $this->normalizeStatus($get(24)),
         ];
@@ -340,5 +340,12 @@ class InventoryItemImportService
         if ($value === null) return 'active';
         $normalized = strtolower(trim($value));
         return in_array($normalized, self::VALID_STATUSES, true) ? $normalized : 'active';
+    }
+
+    protected function normalizeYesNo(?string $value): ?string
+    {
+        if ($value === null) return null;
+        $normalized = strtolower(trim($value));
+        return in_array($normalized, self::YES_NO, true) ? $normalized : null;
     }
 }

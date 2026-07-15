@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\InventoryItemController;
+use App\Http\Controllers\Api\InventoryItemImportController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:sanctum', 'api'])->group(function () {
@@ -42,6 +43,13 @@ Route::middleware(['auth:sanctum', 'api'])->group(function () {
         
         Route::get('code/{item_code}', [InventoryItemController::class, 'showByCode'])
             ->name('api.inventory-items.by-code');
+
+        // Import endpoints
+        Route::get('import-template', [InventoryItemImportController::class, 'downloadTemplate'])
+            ->name('api.inventory-items.import-template');
+        
+        Route::post('import', [InventoryItemImportController::class, 'import'])
+            ->name('api.inventory-items.import');
     });
     
 });

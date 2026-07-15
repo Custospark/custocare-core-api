@@ -332,6 +332,43 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 
 ---
 
+## 2026-07-15: Inventory Bulk Import — Template Download + Chunked XLSX/CSV Upload
+
+**Context:** Facilities needed a way to upload inventory items in bulk rather than creating them one-by-one through the form drawer. This mirrors the bulk product import pattern already implemented in Custosell.
+
+**Decision:**
+- Created `InventoryItemImportService` with:
+  - `generateTemplate()` — generates an XLSX with headers matching key `InventoryItem` fields, an example row, and frozen header row
+  - `import()` — reads XLSX/XLS/CSV via PhpSpreadsheet, validates each row with per-field rules, processes in chunks of 100 within DB transactions, creates an initial ledger entry for each item via `InventoryLedgerService`
+- Created `InventoryItemImportController` with:
+  - `GET /api/inventory-items/import-template` — downloads the template XLSX
+  - `POST /api/inventory-items/import` — accepts file upload (max 20MB, xlsx/xls/csv), sets 10-min timeout and 512MB memory limit for large files
+- Frontend `InventoryImportModal` follows the same pattern as Custosell's `ImportModal`: file picker with drag-and-drop zone, upload progress bar, template download button, results view with per-row error details
+- Import button added to `InventoryItemHeader` next to the "New Item" button
+
+**Template columns (25):**
+`Item Name*`, `Item Code`, `Category*`, `Unit of Measure*`, `Package Qty*`, `Unit Cost`, `Currency Code*`, `Generic Name`, `Brand Name`, `NDC Code`, `Dosage Form`, `Strength`, `Route of Administration`, `Manufacturer`, `Supplier`, `Reorder Point`, `Reorder Qty`, `Safety Stock`, `Max Stock Level`, `Requires Prescription (Yes/No)`, `Requires Refrigeration (Yes/No)`, `Is Hazardous (Yes/No)`, `Is Billable (Yes/No)`, `Description`, `Status*`
+
+`*` = required fields. Yes/No columns accept `yes` or `no` (case-insensitive).
+
+**Files created (4):**
+- `app/Services/InventoryItem/InventoryItemImportService.php` — core import logic
+- `app/Http/Controllers/Api/InventoryItemImportController.php` — HTTP endpoints
+- `src/renderer/.../components/InventoryImportModal.tsx` — FE import modal
+
+**Files modified (3):**
+- `routes/api_v1/inventoryItem/_index.php` — added import-template and import routes
+- `src/renderer/.../AdminInventoryItems.tsx` — wired import modal
+- `src/renderer/.../components/InventoryItemHeader.tsx` — added Import button
+
+**Trade-offs:**
+- Uses PhpSpreadsheet (new dependency `phpoffice/phpspreadsheet ^5.9`) — adds ~5 packages but is the same library used in Custosell
+- Import is online-only — no offline support (same as Custosell)
+- No validation on empty template rows (skips them silently)
+- Category/dosage form/route values are normalized — invalid values fall back to defaults (`other` for category, `null` for dosage form/route, `active` for status)
+
+---
+
 ## ADR-2026-05-29-1: Discharge Form Implementation — Embedded in Visit, No Separate Entity
 
 **Status:** Accepted

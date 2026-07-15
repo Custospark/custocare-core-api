@@ -588,3 +588,41 @@ No new bindings — `VisitServiceProvider` already binds `VisitServiceInterface`
 `VisitController::discharge()` was passing `Auth::id()` (user_id) as `discharged_by_staff_id` instead of resolving the staff record. Fixed by using `Staff::where('user_id', ...)` pattern consistent with other controller methods.
 
 ---
+
+## Inventory Bulk Import — 2026-07-15
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/inventory-items/import-template` | Download XLSX template |
+| POST | `/api/inventory-items/import` | Upload file to import inventory items |
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `app/Services/InventoryItem/InventoryItemImportService.php` | Core import logic: template generation, XLSX/CSV parsing, chunked validation + creation |
+| `app/Http/Controllers/Api/InventoryItemImportController.php` | HTTP endpoints for template download and import |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `routes/api_v1/inventoryItem/_index.php` | Added import-template (GET) and import (POST) routes |
+| `src/renderer/.../components/InventoryImportModal.tsx` | New FE import modal component |
+| `src/renderer/.../AdminInventoryItems.tsx` | Wired import modal with query invalidation |
+| `src/renderer/.../components/InventoryItemHeader.tsx` | Added Import button to header actions |
+| `composer.json` | Added `phpoffice/phpspreadsheet ^5.9` dependency |
+
+### Import Behaviour
+
+- **Template columns:** 25 columns covering item name, code, category, unit of measure, pricing, clinical info, reorder levels, boolean flags, description, and status
+- **Validation:** Per-row validation runs for all fields; rows with errors are skipped (errors returned per row number)
+- **Chunking:** 100 rows per DB transaction
+- **Initial stock:** Each imported item gets an initial ledger entry for `package_quantity`
+- **Timeout:** 10 minutes (600s), 512MB memory limit for large files
+- **Supported formats:** XLSX, XLS, CSV
+- **Max file size:** 20MB
+
+---

@@ -402,4 +402,10 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 
 **Files touched (12):** `InventoryItemImportService`, `InventoryItemService`, `InventoryItem` model, `InventoryItemImportController`, `ImportInventoryItemsRequest` (new), `InventoryItemImportServiceInterface` (new), provider binding, `LabTestRepository`, `FacilityController`, `StoreReferralRequest`, `StandardEmail`, `NotificationService`.
 
-**Trade-offs:** duplicate codes auto-regenerate instead of erroring (keeps bulk flowing; single-create still reports duplicates with friendly message); queued mail needs a worker (`queue:work`/`schedule:run`) or mails sit in `jobs` table — verify before prod.
+**Trade-offs:** duplicate codes auto-regenerate instead of erroring (keeps bulk flowing; single-create still reports duplicates with friendly message); queued mail needs a worker (`queue:work`/`schedule:run`) or mails sit in `jobs` table — verified below.
+
+## 2026-09-10: Queue Worker via Scheduler (Custosell pattern)
+
+**Context:** `StandardEmail` became `ShouldQueue` but Custocare had no cron/worker — 9 jobs sat pending in `jobs` (database driver). Custosell solves this with one hPanel cron per env firing `schedule:run` every minute.
+
+**Decision:** scheduled `queue:work --stop-when-empty --max-time=50 --sleep=3 --tries=3` every minute (`withoutOverlapping`) + `queue:prune-failed --hours=72` daily in `routes/console.php`. Requires one hPanel cron: `/usr/bin/php /home/u214605677/domains/custocareai-api.custospark.com/artisan schedule:run` every minute (`* * * * *`). No supervisor on shared hosting; `--stop-when-empty` guarantees exit before the next tick.

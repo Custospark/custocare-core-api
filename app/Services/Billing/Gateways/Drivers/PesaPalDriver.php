@@ -56,7 +56,21 @@ class PesaPalDriver implements GatewayDriverInterface
     // ─────────────────────────────────────────────────────────────────────────
     public function initiate(array $payload): array
     {
-        $accessToken = $this->getAccessToken();
+        try {
+            return $this->submitOrder($payload, $this->getAccessToken());
+        } catch (GatewayException $e) {
+            // Stale cached token (401) - refresh once and retry, then give up.
+            if (! str_contains($e->getMessage(), 'HTTP 401')) {
+                throw $e;
+            }
+            Cache::forget($this->tokenCacheKey());
+
+            return $this->submitOrder($payload, $this->getAccessToken());
+        }
+    }
+
+    private function submitOrder(array $payload, string $accessToken): array
+    {
         $merchantRef = 'CUSTO-' . $payload['payment_id'] . '-' . now()->format('YmdHis');
 
         // If no IPN ID is configured, register one on-the-fly
@@ -85,6 +99,15 @@ class PesaPalDriver implements GatewayDriverInterface
             ->post("{$this->baseUrl}/api/Transactions/SubmitOrderRequest", $body);
 
         $data = $response->json() ?? [];
+
+        if ($response->status() === 401) {
+            // Marker format matters: initiate() retries exactly this signal once.
+            throw new GatewayException(
+                'PesaPal order submission failed: HTTP 401 (stale cached token)',
+                'pesapal',
+                $data
+            );
+        }
 
         if (! $response->successful() || empty($data['redirect_url'])) {
             Log::error('[PesaPal] Order submission failed', ['response' => $data, 'body' => $body]);
@@ -115,14 +138,13 @@ class PesaPalDriver implements GatewayDriverInterface
     public function verify(string $transactionId): array
     {
         // transactionId = order_tracking_id from PesaPal
-        $accessToken = $this->getAccessToken();
+        $response = $this->fetchTransactionStatus($transactionId, $this->getAccessToken());
 
-        $response = Http::withToken($accessToken)
-            ->acceptJson()
-            ->timeout(30)
-            ->get("{$this->baseUrl}/api/Transactions/GetTransactionStatus", [
-                'orderTrackingId' => $transactionId,
-            ]);
+        // Stale cached token (401) - refresh once and retry, then accept the result.
+        if ($response->status() === 401) {
+            Cache::forget($this->tokenCacheKey());
+            $response = $this->fetchTransactionStatus($transactionId, $this->getAccessToken());
+        }
 
         $data       = $response->json() ?? [];
         $statusCode = (int) ($data['status_code'] ?? 0);
@@ -239,9 +261,24 @@ class PesaPalDriver implements GatewayDriverInterface
     // ─────────────────────────────────────────────────────────────────────────
 
     /** Fetch and cache the PesaPal Bearer token. */
+    private function tokenCacheKey(): string
+    {
+        return 'pesapal_token_' . config('billing_gateways.pesapal.environment');
+    }
+
+    private function fetchTransactionStatus(string $transactionId, string $accessToken)
+    {
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->timeout(30)
+            ->get("{$this->baseUrl}/api/Transactions/GetTransactionStatus", [
+                'orderTrackingId' => $transactionId,
+            ]);
+    }
+
     private function getAccessToken(): string
     {
-        $cacheKey = 'pesapal_token_' . config('billing_gateways.pesapal.environment');
+        $cacheKey = $this->tokenCacheKey();
         $ttl      = (int) config('billing_gateways.pesapal.token_cache_ttl', 3300);
 
         return Cache::remember($cacheKey, $ttl, function () {

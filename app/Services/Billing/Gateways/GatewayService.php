@@ -6,6 +6,7 @@ namespace App\Services\Billing\Gateways;
 
 use App\Enums\Billing\PaymentType;
 use App\Models\Payment;
+use App\Models\Plan;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
 use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
@@ -366,10 +367,9 @@ class GatewayService
             ];
         }
 
-        // Find and process the payment
-        $payment = Payment::where('gateway_transaction_id', $callbackData['gateway_txn_id'])
-            ->orWhere('gateway_transaction_id', $callbackData['our_reference'])
-            ->first();
+        // Find and process the payment (gateway id first, then our reference)
+        $payment = $this->paymentRepo->findByGatewayTransactionId($callbackData['gateway_txn_id'])
+            ?? $this->paymentRepo->findByTransactionReference($callbackData['our_reference']);
 
         if (! $payment) {
             Log::error("[GatewayService] Callback - payment not found", $callbackData);
@@ -474,12 +474,12 @@ class GatewayService
     private function resolvePaymentFromWebhook(array $webhookData): ?Payment
     {
         if (! empty($webhookData['gateway_txn_id'])) {
-            $payment = Payment::where('gateway_transaction_id', $webhookData['gateway_txn_id'])->first();
+            $payment = $this->paymentRepo->findByGatewayTransactionId($webhookData['gateway_txn_id']);
             if ($payment) return $payment;
         }
 
         if (! empty($webhookData['our_reference'])) {
-            return Payment::where('transaction_reference', $webhookData['our_reference'])->first();
+            return $this->paymentRepo->findByTransactionReference($webhookData['our_reference']);
         }
 
         return null;

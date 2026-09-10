@@ -213,6 +213,58 @@ class GatewayServiceGuardsTest extends TestCase
     }
 
     /** @test */
+    public function it_refuses_disabled_gateways_before_touching_anything()
+    {
+        $disabled = Mockery::mock(GatewayDriverInterface::class);
+        $disabled->shouldReceive('isEnabled')->andReturn(false);
+        $this->manager->shouldReceive('driver')->with('mtn_momo')->andReturn($disabled);
+        $this->paymentRepo->shouldReceive('create')->never();
+
+        $this->expectException(GatewayException::class);
+        $this->expectExceptionMessage('not currently enabled');
+
+        $this->service()->initiatePayment($this->subscription(), 'mtn_momo', [
+            'amount' => 100.0,
+            'currency' => 'USD',
+            'payment_type' => 'subscription',
+        ]);
+    }
+
+    /** @test */
+    public function it_rejects_unknown_payment_types()
+    {
+        $this->paymentRepo->shouldReceive('findPendingBySubscription')->andReturn(null);
+        $this->paymentRepo->shouldReceive('create')->never();
+
+        $this->expectException(GatewayException::class);
+        $this->expectExceptionMessage('Unsupported payment type');
+
+        $this->service()->initiatePayment($this->subscription(), 'pesapal', [
+            'amount' => 100.0,
+            'currency' => 'USD',
+            'payment_type' => 'mystery_type',
+        ]);
+    }
+
+    /** @test */
+    public function it_aborts_when_no_fx_rate_exists_instead_of_charging_blind()
+    {
+        $this->paymentRepo->shouldReceive('findPendingBySubscription')->andReturn(null);
+        $this->quoteService->shouldReceive('buildQuote')->andReturn(['total_usd' => 100.0]);
+        $this->fx->shouldReceive('convert')->with(100.0, 'UGX', 'USD')->andReturn(null);
+        $this->paymentRepo->shouldReceive('create')->never();
+
+        $this->expectException(GatewayException::class);
+        $this->expectExceptionMessage('No exchange rate available');
+
+        $this->service()->initiatePayment($this->subscription(), 'pesapal', [
+            'amount' => 370000.0,
+            'currency' => 'UGX',
+            'payment_type' => 'subscription',
+        ]);
+    }
+
+    /** @test */
     public function it_requires_a_target_plan_for_upgrades()
     {
         $this->paymentRepo->shouldReceive('findPendingBySubscription')->andReturn(null);

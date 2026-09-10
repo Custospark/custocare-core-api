@@ -19,4 +19,6 @@ interface PaymentRepositoryInterface
     public function getPendingCount(): int;
     public function findPendingByFacility(int $facilityId): array;
     public function findPendingBySubscription(int $subscriptionId): ?Payment;
+    public function findByGatewayTransactionId(string $gatewayTransactionId): ?Payment;
+    public function findByTransactionReference(string $reference): ?Payment;
 }

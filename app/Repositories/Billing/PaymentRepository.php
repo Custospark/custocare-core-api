@@ -92,4 +92,14 @@ class PaymentRepository implements PaymentRepositoryInterface
     {
         return Payment::where('subscription_id', $subscriptionId)->pending()->first();
     }
+
+    public function findByGatewayTransactionId(string $gatewayTransactionId): ?Payment
+    {
+        return Payment::where('gateway_transaction_id', $gatewayTransactionId)->first();
+    }
+
+    public function findByTransactionReference(string $reference): ?Payment
+    {
+        return Payment::where('transaction_reference', $reference)->first();
+    }
 }

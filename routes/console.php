@@ -72,3 +72,9 @@ Schedule::command('queue:work --stop-when-empty --max-time=50 --sleep=3 --tries=
 // Keep the failed-jobs table from growing forever.
 Schedule::command('queue:prune-failed --hours=72')
     ->daily();
+
+// Billing health report: log errors, stuck payments, failed jobs, gateways.
+// Read-only. Exit code nonzero when issue groups are found.
+Schedule::command('billing:monitor --hours=24')
+    ->dailyAt('06:00')
+    ->withoutOverlapping();

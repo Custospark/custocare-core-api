@@ -104,6 +104,72 @@ class PesaPalDriverTest extends TestCase
     }
 
     /** @test */
+    public function it_retries_once_when_the_cached_token_is_stale()
+    {
+        Http::fake([
+            'cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken' => Http::response(['token' => 'tok-fresh'], 200),
+            'cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest' => Http::sequence()
+                ->push(['message' => 'unauthorized'], 401)
+                ->push(['order_tracking_id' => 'trk-retry', 'redirect_url' => 'https://pay.example/trk-retry'], 200),
+        ]);
+
+        $result = (new PesaPalDriver())->initiate([
+            'payment_id' => 9,
+            'amount' => 50.0,
+            'currency' => 'USD',
+            'description' => 'x',
+            'facility_name' => 'Facility',
+        ]);
+
+        $this->assertSame('trk-retry', $result['gateway_txn_id']);
+        // Proves the retry: token fetched twice (stale cache forgotten once),
+        // order submitted twice (401 then success).
+        $this->assertCount(2, Http::recorded(fn ($request) => str_contains($request->url(), 'RequestToken')));
+        $this->assertCount(2, Http::recorded(fn ($request) => str_contains($request->url(), 'SubmitOrderRequest')));
+    }
+
+    /** @test */
+    public function it_throws_on_server_errors_and_empty_bodies()
+    {
+        Http::fake([
+            'cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken' => Http::response(['token' => 'tok-123'], 200),
+            'cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest' => Http::response([], 500),
+        ]);
+
+        try {
+            (new PesaPalDriver())->initiate([
+                'payment_id' => 9, 'amount' => 50.0, 'currency' => 'USD',
+                'description' => 'x', 'facility_name' => 'F',
+            ]);
+            $this->fail('Expected GatewayException for HTTP 500.');
+        } catch (GatewayException $e) {
+            $this->assertStringContainsString('HTTP 500', $e->getMessage());
+        }
+
+        Http::fake([
+            'cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken' => Http::response(['token' => 'tok-123'], 200),
+            'cybqa.pesapal.com/pesapalv3/api/Transactions/SubmitOrderRequest' => Http::response(['no_redirect' => true], 200),
+        ]);
+
+        $this->expectException(GatewayException::class);
+        (new PesaPalDriver())->initiate([
+            'payment_id' => 9, 'amount' => 50.0, 'currency' => 'USD',
+            'description' => 'x', 'facility_name' => 'F',
+        ]);
+    }
+
+    /** @test */
+    public function it_throws_when_the_token_endpoint_has_no_token()
+    {
+        Http::fake([
+            'cybqa.pesapal.com/pesapalv3/api/Auth/RequestToken' => Http::response(['error' => 'denied'], 200),
+        ]);
+
+        $this->expectException(GatewayException::class);
+        (new PesaPalDriver())->verify('trk-x');
+    }
+
+    /** @test */
     public function it_parses_ipn_and_callback_query_params()
     {
         $request = Request::create('/x', 'GET', [

@@ -1,1 +1,0 @@
-import{j as t}from"./index-Bx0mEKnD.js";import{C as s}from"./ClinicalNotesForm-CwTmDefo.js";const e=({theme:o="light"})=>t.jsx(s,{theme:o,onSaved:()=>{},onCancel:()=>{}});export{e as ClinicalNotesFocus,e as default};

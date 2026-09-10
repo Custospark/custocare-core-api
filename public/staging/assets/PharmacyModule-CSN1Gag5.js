@@ -1,1 +1,0 @@
-import{j as a,bp as e,bx as s,n as t,by as o}from"./index-Bx0mEKnD.js";const P=()=>a.jsx(e,{contextTitle:"Pharmacy Services",operations:o,basePath:t.PHARMACY,defaultOperationPath:s.PATIENT_QUEUE});export{P as default};

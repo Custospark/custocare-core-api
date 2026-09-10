@@ -66,7 +66,9 @@ class WalkInCustomerService implements \App\Services\Contracts\WalkInCustomerSer
                 'facility_id'        => $facilityId,
                 'visit_id'           => $visit->id,
                 'patient_id'         => $walkinData['patient']->id,
-                'cycle_type'         => 'walk_in',
+                // No `walk_in` in the cycle_type enum — a walk-in is
+                // single-visit billing, i.e. `visit_based`.
+                'cycle_type'         => 'visit_based',
                 'period_start'       => now(),
                 'period_end'         => now()->addDays(1),
                 'created_by_staff_id' => $staffId,

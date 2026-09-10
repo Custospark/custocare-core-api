@@ -1,1 +1,0 @@
-import{j as a,bp as t,bJ as e,n as s,bK as o}from"./index-n70Z8iFP.js";const n=()=>a.jsx(t,{contextTitle:"Billing Operations",operations:o,basePath:s.BILLING,defaultOperationPath:e.PATIENT_QUEUE});export{n as default};

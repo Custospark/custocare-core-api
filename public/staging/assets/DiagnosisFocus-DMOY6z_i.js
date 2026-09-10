@@ -1,1 +1,0 @@
-import{j as s}from"./index-n70Z8iFP.js";import{D as r}from"./DiagnosisForm-D0zYcB8R.js";const i=({theme:o="light"})=>s.jsx(r,{theme:o,onSaved:()=>{},onCancel:()=>{}});export{i as DiagnosisFocus,i as default};

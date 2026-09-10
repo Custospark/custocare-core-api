@@ -1,1 +1,0 @@
-import{j as a,bp as e,bB as o,n as t,bC as R}from"./index-n70Z8iFP.js";const E=()=>a.jsx(e,{contextTitle:"Referral coordination",operations:R,basePath:t.REFERRAL,defaultOperationPath:o.PATIENT_QUEUE});export{E as default};

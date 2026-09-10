@@ -103,7 +103,7 @@ class PesaPalDriver implements GatewayDriverInterface
         if ($response->status() === 401) {
             // Marker format matters: initiate() retries exactly this signal once.
             throw new GatewayException(
-                'PesaPal order submission failed: HTTP 401 (stale cached token)',
+                'Payment order submission failed: HTTP 401 (stale cached token)',
                 'pesapal',
                 $data
             );
@@ -112,7 +112,7 @@ class PesaPalDriver implements GatewayDriverInterface
         if (! $response->successful() || empty($data['redirect_url'])) {
             Log::error('[PesaPal] Order submission failed', ['response' => $data, 'body' => $body]);
             throw new GatewayException(
-                'PesaPal order submission failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
+                'Payment order submission failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
                 'pesapal',
                 $data
             );
@@ -129,7 +129,7 @@ class PesaPalDriver implements GatewayDriverInterface
             'gateway_txn_id' => $data['order_tracking_id'],
             'redirect_url'   => $data['redirect_url'],
             'type'           => 'redirect',
-            'message'        => 'Redirecting to PesaPal payment page.',
+            'message'        => 'Redirecting to the secure payment page.',
             'raw_response'   => $data,
         ];
     }
@@ -294,7 +294,7 @@ class PesaPalDriver implements GatewayDriverInterface
 
             if (! $response->successful() || empty($data['token'])) {
                 throw new GatewayException(
-                    'PesaPal token request failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
+                    'Payment token request failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
                     'pesapal',
                     $data
                 );
@@ -325,7 +325,7 @@ class PesaPalDriver implements GatewayDriverInterface
 
         if (! $response->successful() || empty($data['ipn_id'])) {
             throw new GatewayException(
-                'PesaPal IPN registration failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
+                'Payment notification registration failed: ' . ($data['message'] ?? "HTTP {$response->status()}"),
                 'pesapal',
                 $data
             );

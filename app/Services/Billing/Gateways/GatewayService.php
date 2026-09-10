@@ -390,6 +390,39 @@ class GatewayService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Cancel a pending payment (user gives up / starts over)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Move a pending gateway payment to expired so re-initiation opens.
+     * Terminal states can never be cancelled; completed money is never
+     * touched by this path (refunds are a separate pipeline).
+     *
+     * @return array{status: string, message: string}
+     */
+    public function cancelPendingPayment(Payment $payment, string $reason = 'user_cancelled'): array
+    {
+        if (! $payment->isPending()) {
+            throw new GatewayException(
+                "Only pending payments can be cancelled (current: {$payment->status->value}).",
+                $payment->gateway_name ?? 'gateway'
+            );
+        }
+
+        $this->paymentRepo->update($payment, [
+            'status' => 'expired',
+            'rejection_reason' => $reason,
+        ]);
+
+        Log::info('[GatewayService] Pending payment expired by user', [
+            'payment_id' => $payment->id,
+            'facility_id' => $payment->facility_id,
+        ]);
+
+        return ['status' => 'expired', 'message' => 'Payment cancelled. You can start a new payment.'];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Live-verify a pending payment (status poll with ?verify=1)
     // ─────────────────────────────────────────────────────────────────────────
 

@@ -182,7 +182,7 @@ class GatewayPaymentController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Payment status retrieved.',
+            'message' => $verifiedMessage ?? 'Payment status retrieved.',
             'data'    => [
                 'payment_id'   => $payment->id,
                 'status'       => $payment->status->value,
@@ -193,5 +193,45 @@ class GatewayPaymentController extends Controller
                 'approved_at'  => $payment->approved_at?->toISOString(),
             ],
         ]);
+    }
+
+    /**
+     * POST /api/facilities/{facility}/payments/gateway/{reference}/cancel
+     * Give up on a pending payment (moves it to expired) so a new payment
+     * can be started. History is kept - expired rows stay visible.
+     */
+    public function cancel(Request $request, Facility $facility, string $reference): JsonResponse
+    {
+        $payment = \App\Models\Payment::where('facility_id', $facility->id)
+            ->where(function ($q) use ($reference) {
+                $q->where('gateway_transaction_id', $reference)
+                  ->orWhere('transaction_reference', $reference)
+                  ->orWhere('id', is_numeric($reference) ? $reference : null);
+            })
+            ->first();
+
+        if (! $payment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Payment not found.',
+                'data'    => null,
+            ], 404);
+        }
+
+        try {
+            $result = $this->gatewayService->cancelPendingPayment($payment);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data'    => ['payment_id' => $payment->id, 'status' => $result['status']],
+            ]);
+        } catch (GatewayException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data'    => null,
+            ], 422);
+        }
     }
 }

@@ -31,6 +31,16 @@ class PaymentResource extends JsonResource
             'payment_type_label'    => $this->payment_type->label(),
             'status'                => $this->status->value,
             'status_label'          => $this->status->label(),
+            // Subscription outcome narrates the row (Custosell parity):
+            // UIs show subscription status, not payment plumbing.
+            'subscription_status'       => $this->whenLoaded(
+                'subscription',
+                fn () => $this->subscription?->status?->value,
+            ),
+            'subscription_status_label' => $this->whenLoaded(
+                'subscription',
+                fn () => $this->subscription?->status?->label(),
+            ),
             'transaction_reference' => $this->transaction_reference,
             'receipt_number'        => $this->receipt_number,
             'invoice_id'            => $this->invoice_id,

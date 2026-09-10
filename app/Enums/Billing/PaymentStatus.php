@@ -10,6 +10,7 @@ namespace App\Enums\Billing;
  * pending   → Payment recorded; completes automatically on gateway confirmation.
  * completed → Money confirmed; triggers subscription activation.
  * failed    → Gateway rejected the payment or verification failed.
+ * expired   → Abandoned (user-cancelled or TTL sweeper). Re-initiation open.
  * refunded  → Money returned after completion.
  */
 enum PaymentStatus: string
@@ -17,6 +18,7 @@ enum PaymentStatus: string
     case PENDING   = 'pending';
     case COMPLETED = 'completed';
     case FAILED    = 'failed';
+    case EXPIRED   = 'expired';
     case REFUNDED  = 'refunded';
 
     public function label(): string
@@ -25,6 +27,7 @@ enum PaymentStatus: string
             self::PENDING   => 'Pending Payment',
             self::COMPLETED => 'Completed',
             self::FAILED    => 'Failed',
+            self::EXPIRED   => 'Expired',
             self::REFUNDED  => 'Refunded',
         };
     }

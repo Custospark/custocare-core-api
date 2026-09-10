@@ -73,4 +73,9 @@ Route::middleware(['auth:sanctum'])
         Route::get('/{reference}/status',
             [GatewayPaymentController::class, 'status'])
             ->name('status');
+
+        // Cancel a pending gateway payment (expired, history kept)
+        Route::post('/{reference}/cancel',
+            [GatewayPaymentController::class, 'cancel'])
+            ->name('cancel');
     });

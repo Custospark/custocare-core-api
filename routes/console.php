@@ -78,3 +78,9 @@ Schedule::command('queue:prune-failed --hours=72')
 Schedule::command('billing:monitor --hours=24')
     ->dailyAt('06:00')
     ->withoutOverlapping();
+
+// Expire abandoned pending gateway payments (verify-first: arrived money
+// approves instead). Keeps failed/expired history; opens re-initiation.
+Schedule::command('payments:expire-stale --minutes=1440')
+    ->dailyAt('06:30')
+    ->withoutOverlapping();

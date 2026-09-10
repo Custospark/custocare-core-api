@@ -450,3 +450,9 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 **Context:** `approved/rejected` was manual-workflow language; Custosell speaks `completed/failed`. Separately, status strings, labels and actions were scattered across dropdown, Payments, FacilitySubscriptions, AvailablePlans and admin tables.
 
 **Decision:** backend `PaymentStatus` is now `pending|completed|failed|refunded` (forward-only migration remapping rows first, then narrowing the enum; MySQL DDL runs outside transactions). New `utils/subscriptionMatrix.ts` ports Custosell's matrix standard with Custocare's design tokens: subscription meta (label/tone/access/payment-need), payment meta (label/tone/terminal/retry), plan-action matrix (status x relation, incl. trial flows), quote-type resolver. Dropdown, Payments, FacilitySubscriptions (both), restore logic and optimistic updates all read it; 8 matrix unit tests lock every cell. Test tally now: BE 27/27, FE 19/19, tsc clean, vera both green.
+
+## 2026-09-10: Expired State + Modal-Driven Plan Actions (Custosell parity)
+
+**Context:** stuck pendings blocked re-initiation with no way out; history badged payment plumbing instead of subscription outcome; plan actions navigated away instead of guiding through payment.
+
+**Decision:** new `expired` terminal state (migration, matrix, labels) + `POST .../gateway/{ref}/cancel` + `payments:expire-stale` sweeper (verify-first: arrived money approves, never expires). History rows show subscription-status pills via new `SubscriptionOutcomePill` (payment status only as fallback). New `PaymentModal` wraps checkout; AvailablePlans (subscribe, upgrade-now) and FacilitySubscriptions (make-payment, pay-now) open it directly with server quotes - money first, service follows. Stuck staging payment expired via sweeper (0 approved, 1 expired). Test tally: BE 31/31, FE 21/21.

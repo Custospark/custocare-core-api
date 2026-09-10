@@ -210,6 +210,12 @@ class PesaPalDriver implements GatewayDriverInterface
                 'key_len' => strlen($this->consumerKey),
                 'message' => 'Token request succeeded.',
             ];
+        } catch (GatewayException $e) {
+            // Diagnostics only: response keys, never credential values.
+            $raw = $e->getRawResponse();
+            $keys = is_array($raw) ? implode(',', array_keys($raw)) : 'none';
+
+            return ['ok' => false, 'key_len' => 0, 'message' => $e->getMessage() . ' [keys: ' . $keys . ']'];
         } catch (\Throwable $e) {
             return ['ok' => false, 'key_len' => 0, 'message' => $e->getMessage()];
         }

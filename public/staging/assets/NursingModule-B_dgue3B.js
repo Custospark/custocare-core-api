@@ -1,1 +1,0 @@
-import{j as s,bp as a,bD as t,n as e,bE as o}from"./index-C-D7Wwll.js";const n=()=>s.jsx(a,{contextTitle:"Nursing",operations:o,basePath:e.NURSING,defaultOperationPath:t.OVERVIEW});export{n as default};

@@ -1,1 +1,0 @@
-import{j as r}from"./index-C-D7Wwll.js";import{D as s}from"./DischargeForm-Ck_oR0QT.js";const e=({theme:o="light"})=>r.jsx(s,{theme:o,onSaved:()=>{},onCancel:()=>{}});export{e as DischargeFocus,e as default};

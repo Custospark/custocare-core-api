@@ -323,13 +323,13 @@ public function generateAuthToken(string $deviceName = 'auth-token', bool $force
                     ->withTimestamps();
     }
 
-    // In User model temporarily add:
+    // NOTE: users table has NO `email` column (encrypted + hash only).
+    // Never write an `email` attribute — MySQL throws 1054 on insert.
 public function setEmailAttribute($value)
 {
-    $this->attributes['email'] = $value;
+    $this->attributes['email_encrypted'] = encrypt($value);
     $this->attributes['email_hash'] = hash('sha256', strtolower(trim($value)));
     Log::debug('Setting user email', [
-        'email' => $value,
         'email_hash' => $this->attributes['email_hash']
     ]);
 }

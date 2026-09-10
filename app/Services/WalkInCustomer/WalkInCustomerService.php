@@ -150,23 +150,41 @@ class WalkInCustomerService implements \App\Services\Contracts\WalkInCustomerSer
             ];
         }
 
-        // Create a system walk-in user if one does not exist.
-        $systemUser = User::firstOrCreate(
-            ['email' => self::SYSTEM_WALKIN_EMAIL],
-            [
-                'name'              => 'System Walk-in',
-                'password'          => bcrypt(Str::random(32)),
-                'email_verified_at' => now(),
-            ],
-        );
+        // Users table has no `email` column (emails live encrypted +
+        // hashed). Look the system user up by email_hash like the rest
+        // of the codebase, and create it with real column names only —
+        // otherwise MySQL throws 1054 and the session 400s.
+        $emailHash = hash('sha256', strtolower(trim(self::SYSTEM_WALKIN_EMAIL)));
+        $systemUser = User::where('email_hash', $emailHash)->first();
 
-        // Create the facility-specific walk-in patient.
+        if (! $systemUser) {
+            $systemUser = User::create([
+                'global_user_uuid' => (string) Str::uuid(),
+                'email_encrypted' => encrypt(self::SYSTEM_WALKIN_EMAIL),
+                'email_hash' => $emailHash,
+                'first_name' => 'System',
+                'last_name' => 'Walk-in',
+                'display_name' => 'System Walk-in',
+                'password_hash' => bcrypt(Str::random(32)),
+                'identity_state' => 'verified',
+                'identity_verified_at' => now(),
+                'created_from_facility_id' => $facility->id,
+            ]);
+        }
+
+        // Patients table uses MRN hash/encrypted + dob/sex — not
+        // facility_id/patient_number/name. Unknown dob/sex get neutral
+        // sentinels, corrected when the walk-in upgrades to a real patient.
+        $mrn = 'WALKIN-' . $facility->id . '-' . Str::upper(Str::random(6));
         $patient = Patient::create([
-            'user_id'          => $systemUser->id,
-            'facility_id'      => $facility->id,
-            'patient_number'   => 'WALKIN-' . $facility->id . '-' . Str::random(6),
-            'name'             => 'Walk-in Patient (' . $facility->name . ')',
-            'status'           => 'active',
+            'patient_uuid' => (string) Str::uuid(),
+            'user_id' => $systemUser->id,
+            'medical_record_number_hash' => hash('sha256', $mrn),
+            'medical_record_number_encrypted' => encrypt($mrn),
+            'date_of_birth' => '1970-01-01',
+            'biological_sex' => 'unknown',
+            'status' => 'system_patient',
+            'primary_care_facility_id' => $facility->id,
         ]);
 
         $walkin = FacilityWalkinCustomer::create([

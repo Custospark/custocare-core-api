@@ -7,9 +7,9 @@ namespace App\Enums\Billing;
 /**
  * Payment record statuses.
  *
- * pending  → Payment recorded by facility; awaiting admin confirmation.
- * approved → Admin confirmed receipt/evidence; triggers subscription activation.
- * rejected → Admin rejected payment evidence.
+ * pending  → Payment recorded; completes automatically on gateway confirmation.
+ * approved → Payment confirmed; triggers subscription activation.
+ * rejected → Payment rejected or failed at the gateway.
  * refunded → Payment was refunded.
  */
 enum PaymentStatus: string
@@ -22,7 +22,7 @@ enum PaymentStatus: string
     public function label(): string
     {
         return match($this) {
-            self::PENDING  => 'Pending Review',
+            self::PENDING  => 'Pending Payment',
             self::APPROVED => 'Approved',
             self::REJECTED => 'Rejected',
             self::REFUNDED => 'Refunded',

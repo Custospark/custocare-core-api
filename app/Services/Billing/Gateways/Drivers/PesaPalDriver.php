@@ -191,6 +191,44 @@ class PesaPalDriver implements GatewayDriverInterface
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Ops diagnostics (used by pesapal:status / pesapal:register-ipn)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Verify API connectivity by fetching a token. Returns metadata only -
+     * the token itself is never exposed to console output.
+     *
+     * @return array{ok: bool, key_len: int, message: string}
+     */
+    public function checkConnection(): array
+    {
+        try {
+            $this->getAccessToken();
+
+            return [
+                'ok' => true,
+                'key_len' => strlen($this->consumerKey),
+                'message' => 'Token request succeeded.',
+            ];
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'key_len' => 0, 'message' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Register the webhook IPN URL and return the ipn_id for .env persistence.
+     */
+    public function registerIpnId(): string
+    {
+        return $this->registerIpn($this->getAccessToken());
+    }
+
+    public function configuredIpnId(): string
+    {
+        return $this->ipnId;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 

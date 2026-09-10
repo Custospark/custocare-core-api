@@ -1,1 +1,0 @@
-import{j as e,bp as a,bq as s,n as t,br as o}from"./index-ClAm7T69.js";const R=()=>e.jsx(a,{contextTitle:"Medical Records",operations:o,basePath:t.MEDICAL_RECORDS,defaultOperationPath:s.PATIENTS_SEARCH});export{R as default};

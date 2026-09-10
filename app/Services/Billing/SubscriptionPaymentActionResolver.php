@@ -32,7 +32,7 @@ class SubscriptionPaymentActionResolver
                 'plan_id'            => $subscription->plan_id,
                 'intent'             => null,
                 'label'              => null,
-                'message'            => 'Your payment proof is pending review by our accountants.',
+                'message'            => 'Your payment is being processed. You will be notified once it is confirmed.',
             ];
         }
 

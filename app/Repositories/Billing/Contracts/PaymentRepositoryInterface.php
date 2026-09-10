@@ -18,4 +18,5 @@ interface PaymentRepositoryInterface
     public function getAllPaginated(array $filters = [], int $perPage = 15): LengthAwarePaginator;
     public function getPendingCount(): int;
     public function findPendingByFacility(int $facilityId): array;
+    public function findPendingBySubscription(int $subscriptionId): ?Payment;
 }

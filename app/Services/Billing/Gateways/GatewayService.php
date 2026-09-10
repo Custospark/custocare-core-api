@@ -7,10 +7,14 @@ namespace App\Services\Billing\Gateways;
 use App\Enums\Billing\PaymentType;
 use App\Models\Payment;
 use App\Repositories\Billing\Contracts\PaymentRepositoryInterface;
+use App\Services\Billing\Contracts\SubscriptionPaymentQuoteServiceInterface;
 use App\Services\Billing\Contracts\SubscriptionServiceInterface;
+use App\Services\Billing\Gateways\Concerns\FinalizesGatewayApprovals;
 use App\Services\Billing\Gateways\Exceptions\GatewayException;
 use App\Services\Billing\Gateways\Exceptions\WebhookVerificationException;
 use App\Models\Subscription;
+use App\Services\Billing\Contracts\SubscriptionBillingDocumentServiceInterface;
+use App\Services\Currency\Contracts\CurrencyExchangeServiceInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -26,16 +30,21 @@ use Illuminate\Support\Facades\Log;
  *  2. Call the gateway driver and update the Payment with the gateway reference
  *  3. Process incoming webhooks / callbacks from gateways
  *  4. Auto-approve confirmed payments and trigger subscription changes
- *     (no admin action needed for gateway payments — gateway IS the approval)
+ *     (gateway confirmation completes the payment immediately)
  *
  * The manual billing flow (PaymentService) is entirely separate and unchanged.
  */
 class GatewayService
 {
+    use FinalizesGatewayApprovals;
+
     public function __construct(
         private readonly GatewayManager                $gatewayManager,
         private readonly PaymentRepositoryInterface    $paymentRepo,
-        private readonly SubscriptionServiceInterface  $subscriptionService
+        private readonly SubscriptionServiceInterface  $subscriptionService,
+        private readonly SubscriptionPaymentQuoteServiceInterface $quoteService,
+        private readonly CurrencyExchangeServiceInterface $fxService,
+        private readonly SubscriptionBillingDocumentServiceInterface $billingDocuments
     ) {}
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -83,33 +92,126 @@ class GatewayService
             );
         }
 
+        $paymentType = $data['payment_type'] instanceof PaymentType
+            ? $data['payment_type']->value
+            : (string) $data['payment_type'];
+
+        // ── Guard 1: one pending payment per subscription (mirror manual flow)
+        $existingPending = $this->paymentRepo->findPendingBySubscription($subscription->id);
+        if ($existingPending) {
+            throw new GatewayException(
+                'This subscription already has a pending payment. Complete or cancel it before starting a new one.',
+                $gatewayName,
+                ['existing_payment_id' => $existingPending->id]
+            );
+        }
+
+        // ── Guard 2: charge currency - East African currencies as-is, else USD
+        // (same rule as Custosell: driver-supported local currency wins).
+        $requestedCurrency = strtoupper($data['currency']);
+        $chargeCurrency = in_array($requestedCurrency, $driver->getSupportedCurrencies(), true)
+            ? $requestedCurrency
+            : 'USD';
+
+        // ── Guard 3: amount must match the server-side quote. Quotes are USD;
+        // convert at the current rate when charging a local currency.
+        $targetPlanId = isset($data['target_plan_id']) ? (int) $data['target_plan_id'] : null;
+        $quoteIntent = match ($paymentType) {
+            PaymentType::ONBOARDING->value => 'first_activation',
+            PaymentType::SUBSCRIPTION->value => 'subscription',
+            PaymentType::RENEWAL->value => 'renewal',
+            PaymentType::UPGRADE_PRORATION->value => 'upgrade_now',
+            default => throw new GatewayException("Unsupported payment type '{$paymentType}'.", $gatewayName),
+        };
+        if ($paymentType === PaymentType::UPGRADE_PRORATION->value && ! $targetPlanId) {
+            throw new GatewayException('Upgrading requires a target plan.', $gatewayName);
+        }
+
+        $quote = $this->quoteService->buildQuote(
+            $subscription,
+            $targetPlanId ? Plan::findOrFail($targetPlanId) : null,
+            $quoteIntent
+        );
+        $expectedAmount = $this->convertQuoteTotal((float) $quote['total_usd'], $chargeCurrency, $gatewayName);
+        $tolerance = max($expectedAmount * 0.02, $chargeCurrency === 'USD' ? 0.5 : 50);
+        if (abs((float) $data['amount'] - $expectedAmount) > $tolerance) {
+            throw new GatewayException(
+                sprintf(
+                    'Payment amount %s %s does not match the quoted total %s %s.',
+                    number_format((float) $data['amount'], 2),
+                    $chargeCurrency,
+                    number_format($expectedAmount, 2),
+                    $chargeCurrency
+                ),
+                $gatewayName
+            );
+        }
+
         // ── Step 1: Create a pending payment record ───────────────────────
         $payment = $this->paymentRepo->create([
             'subscription_id' => $subscription->id,
             'facility_id'     => $subscription->facility_id,
             'amount'          => $data['amount'],
-            'currency'        => strtoupper($data['currency']),
+            'currency'        => $chargeCurrency,
             'method'          => 'gateway',
-            'payment_type'    => $data['payment_type'],
+            'payment_type'    => $paymentType,
             'status'          => 'pending',
             'gateway_name'    => $gatewayName,
             'paid_at'         => null,
-            'metadata'        => $data['metadata'] ?? null,
+            'metadata'        => array_merge($data['metadata'] ?? [], array_filter([
+                'target_plan_id' => $targetPlanId,
+                'quote_total_usd' => $quote['total_usd'],
+            ])),
         ]);
+
+        $ourRef = "CUSTOCARE-{$payment->id}-" . now()->format('YmdHis');
+
+        // ── Dev/local bypass (Custosell parity): guards above still run, but
+        // the gateway round-trip is skipped and the payment approves now.
+        // Double-gated on config flag AND local environment - never in prod.
+        if (config('billing_gateways.pesapal.bypass', false) && app()->isLocal()) {
+            // Same atomicity as autoApprove: status flip + invoice/receipt +
+            // subscription transition commit together or not at all.
+            DB::transaction(function () use ($payment, $ourRef) {
+                $this->paymentRepo->update($payment, [
+                    'status' => 'approved',
+                    'approved_at' => now(),
+                    'paid_at' => now(),
+                    'transaction_reference' => $ourRef,
+                    'gateway_response' => ['bypass' => true, 'our_reference' => $ourRef],
+                ]);
+                $payment->refresh();
+                $this->finalizeApprovedPayment($payment);
+            });
+
+            Log::info('[GatewayService] Payment approved via local bypass', [
+                'payment_id' => $payment->id,
+                'gateway' => $gatewayName,
+            ]);
+
+            return [
+                'success' => true,
+                'payment_id' => $payment->id,
+                'gateway' => $gatewayName,
+                'type' => 'bypass',
+                'redirect_url' => null,
+                'reference' => $ourRef,
+                'message' => 'Payment approved (local bypass).',
+            ];
+        }
 
         // ── Step 2: Build driver payload ──────────────────────────────────
         $plan        = $subscription->plan ?? $subscription->plan()->first();
         $facility    = $subscription->facility ?? $subscription->facility()->first();
-        $ourRef      = "CUSTOCARE-{$payment->id}-" . now()->format('YmdHis');
 
         $driverPayload = [
             'amount'          => $data['amount'],
-            'currency'        => strtoupper($data['currency']),
+            'currency'        => $chargeCurrency,
             'our_reference'   => $ourRef,
             'phone_number'    => $data['phone_number'] ?? null,
             'email'           => $data['email'] ?? null,
             'customer_name'   => $data['customer_name'] ?? null,
-            'description'     => 'Custocare subscription — ' . ($plan->name ?? 'Plan'),
+            'description'     => 'Custocare subscription - ' . ($plan->name ?? 'Plan'),
             'facility_name'   => $facility->facility_name ?? "Facility #{$subscription->facility_id}",
             'payment_id'      => $payment->id,
             'subscription_id' => $subscription->id,
@@ -207,7 +309,7 @@ class GatewayService
         }
 
         if (! $payment->isPending()) {
-            Log::info("[GatewayService] Payment #{$payment->id} already processed — skipping.");
+            Log::info("[GatewayService] Payment #{$payment->id} already processed - skipping.");
             return;
         }
 
@@ -270,7 +372,7 @@ class GatewayService
             ->first();
 
         if (! $payment) {
-            Log::error("[GatewayService] Callback — payment not found", $callbackData);
+            Log::error("[GatewayService] Callback - payment not found", $callbackData);
             return ['success' => false, 'message' => 'Payment record not found.', 'payment_id' => null];
         }
 
@@ -288,12 +390,55 @@ class GatewayService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Live-verify a pending payment (status poll with ?verify=1)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Re-check a pending payment directly with the gateway and auto-approve
+     * when it has succeeded. Lets the frontend unstick users when the async
+     * IPN is delayed or missed. Idempotent: non-pending payments short-circuit.
+     *
+     * @return array{status: string, message: string}
+     */
+    public function verifyPendingPayment(Payment $payment): array
+    {
+        if (! $payment->isPending()) {
+            return ['status' => $payment->status->value, 'message' => 'Payment already processed.'];
+        }
+
+        if (empty($payment->gateway_transaction_id)) {
+            return ['status' => 'pending', 'message' => 'Payment has not reached the gateway yet.'];
+        }
+
+        $driver = $this->gatewayManager->driver($payment->gateway_name ?? '');
+        $verification = $driver->verify($payment->gateway_transaction_id);
+
+        if (! $verification['success'] || $verification['status'] !== 'successful') {
+            $this->paymentRepo->update($payment, [
+                'gateway_response' => array_merge(
+                    $payment->gateway_response ?? [],
+                    ['poll_verification' => $verification]
+                ),
+            ]);
+
+            return [
+                'status' => 'pending',
+                'message' => 'Payment not confirmed yet. Complete it in the checkout window, then retry.',
+            ];
+        }
+
+        $this->autoApprove($payment, ['source' => 'status_poll'], $verification);
+
+        return ['status' => 'approved', 'message' => 'Payment confirmed. Subscription activated.'];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Auto-approve a gateway-confirmed payment and trigger the subscription transition.
-     * Gateway confirmation IS the approval — no admin action required.
+     * Gateway confirmation completes the payment - the subscription updates immediately.
      */
     private function autoApprove(Payment $payment, array $webhookData, array $verification): void
     {
@@ -311,17 +456,7 @@ class GatewayService
             ]);
 
             $payment->refresh();
-
-            // Trigger subscription state change — no admin Staff required
-            match ($payment->payment_type) {
-                PaymentType::ONBOARDING,
-                PaymentType::SUBSCRIPTION => $this->subscriptionService->activateSubscription(
-                    $payment->subscription, $payment, null
-                ),
-                PaymentType::RENEWAL => $this->subscriptionService->renewSubscription(
-                    $payment->subscription, $payment, null
-                ),
-            };
+            $this->finalizeApprovedPayment($payment);
 
             Log::info('[GatewayService] Payment auto-approved', [
                 'payment_id'      => $payment->id,

@@ -74,7 +74,7 @@ class PesaPalDriver implements GatewayDriverInterface
                 'email_address' => $payload['email'] ?? 'noreply@custocare.health',
                 'phone_number'  => $payload['phone_number'] ?? '',
                 'country_code'  => 'UG',
-                'first_name'    => $payload['customer_name'] ?? $payload['facility_name'],
+                'first_name'    => $payload['customer_name'] ?? $payload['facility_name'] ?? 'Custocare Facility',
                 'last_name'     => '',
             ],
         ];

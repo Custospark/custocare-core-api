@@ -35,23 +35,33 @@ function veraCollectChangedPhpFiles(string $root): array
     return array_values($files);
 }
 
+$failed = false;
 $files = veraCollectChangedPhpFiles($root);
 
 if ($files === []) {
-    echo "🧪 Vera fast: no changed PHP files — skipped.\n";
-    exit(0);
-}
-
-echo '🧪 Vera fast: php -l on ' . count($files) . " file(s)\n";
-
-$failed = false;
-
-foreach ($files as $file) {
-    $cmd = 'php -l ' . escapeshellarg($file);
-    passthru($cmd, $exitCode);
-    if ($exitCode !== 0) {
-        $failed = true;
+    echo "🧪 Vera fast: no changed PHP files - php -l skipped.\n";
+} else {
+    echo '🧪 Vera fast: php -l on ' . count($files) . " file(s)\n";
+    foreach ($files as $file) {
+        $cmd = 'php -l ' . escapeshellarg($file);
+        passthru($cmd, $exitCode);
+        if ($exitCode !== 0) {
+            $failed = true;
+        }
+    }
+    if (!$failed) {
+        echo "✅ Vera fast: php -l passed\n";
     }
 }
 
-exit($failed ? 1 : 0);
+passthru('php ' . escapeshellarg($root . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'vera-logic.php'), $logicExit);
+if ($logicExit !== 0) {
+    $failed = true;
+}
+
+if ($failed) {
+    echo "❌ Vera fast: failed\n";
+    exit(1);
+}
+
+echo "✅ Vera fast: passed (php -l + logic)\n";

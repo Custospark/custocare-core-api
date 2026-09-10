@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * CUSTOCARE — PAYMENT GATEWAY CONFIGURATION
+ * CUSTOCARE - PAYMENT GATEWAY CONFIGURATION
  *
  * All gateway drivers are disabled by default.
  * Enable individual gateways via .env when credentials are obtained.
@@ -16,14 +16,14 @@ return [
     /*
     |──────────────────────────────────────────────────────────────────────────
     | Default gateway used when none is specified.
-    | 'manual' means no gateway is used — admin approval required.
+    | 'manual' means no gateway is used - admin approval required.
     |──────────────────────────────────────────────────────────────────────────
     */
     'default' => env('BILLING_GATEWAY', 'manual'),
 
     /*
     |──────────────────────────────────────────────────────────────────────────
-    | MTN Mobile Money Uganda — Collections API
+    | MTN Mobile Money Uganda - Collections API
     |
     | Docs: https://momodeveloper.mtn.com/
     | Flow: Push USSD → Customer approves on phone → Webhook confirms
@@ -45,7 +45,7 @@ return [
 
     /*
     |──────────────────────────────────────────────────────────────────────────
-    | Airtel Money Uganda — Airtel Africa API
+    | Airtel Money Uganda - Airtel Africa API
     |
     | Docs: https://developers.airtel.africa/
     | Flow: Push USSD → Customer approves on phone → Webhook confirms
@@ -66,7 +66,7 @@ return [
 
     /*
     |──────────────────────────────────────────────────────────────────────────
-    | Flutterwave — v3 Payments API
+    | Flutterwave - v3 Payments API
     |
     | Docs: https://developer.flutterwave.com/
     | Flow: Initialize → Redirect to hosted page → Callback → Verify
@@ -86,7 +86,7 @@ return [
 
     /*
     |──────────────────────────────────────────────────────────────────────────
-    | PesaPal — v3 API
+    | PesaPal - v3 API
     |
     | Docs: https://developer.pesapal.com/
     | Flow: Get token → Submit order → Redirect → IPN callback → Verify
@@ -95,6 +95,9 @@ return [
     */
     'pesapal' => [
         'enabled'              => env('PESAPAL_ENABLED', false),
+        // Local/dev only: skip the gateway round-trip and approve immediately.
+        // Never true in staging/production (also gated on app()->isLocal()).
+        'bypass'               => env('PESAPAL_BYPASS', false),
         'environment'          => env('PESAPAL_ENVIRONMENT', 'sandbox'),
         'base_url_sandbox'     => 'https://cybqa.pesapal.com/pesapalv3',
         'base_url_production'  => 'https://pay.pesapal.com/v3',

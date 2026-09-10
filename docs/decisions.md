@@ -409,3 +409,26 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 **Context:** `StandardEmail` became `ShouldQueue` but Custocare had no cron/worker — 9 jobs sat pending in `jobs` (database driver). Custosell solves this with one hPanel cron per env firing `schedule:run` every minute.
 
 **Decision:** scheduled `queue:work --stop-when-empty --max-time=50 --sleep=3 --tries=3` every minute (`withoutOverlapping`) + `queue:prune-failed --hours=72` daily in `routes/console.php`. Requires one hPanel cron: `/usr/bin/php /home/u214605677/domains/custocareai-api.custospark.com/artisan schedule:run` every minute (`* * * * *`). No supervisor on shared hosting; `--stop-when-empty` guarantees exit before the next tick.
+
+---
+
+## 2026-09-10: PesaPal End-to-End (Subscription Payments Go Online)
+
+**Context:** Subscription billing was manual-only (bank proof upload + accountant review). Custosell already runs PesaPal v3 (raw HTTP, no SDK) with a verify-then-approve webhook pattern; Custocare had a complete but disabled scaffold (driver, manager, service, controllers, routes, FE hooks) with 10 integration bugs. Same company API credentials as Custosell (sandbox pair copied to `PESAPAL_CONSUMER_KEY/SECRET`; values never in git/chat).
+
+**Decision (fix in place, no rebuild):**
+- BE routes now match the FE hooks exactly: `POST /facilities/{facility}/payments/gateway/{gateway}/initiate`, `GET /facilities/{facility}/payments/gateway/{reference}/status` (status controller dropped its phantom `$gateway` param). Public webhook/callback/IPN untouched.
+- `initiatePayment` guards, in order: gateway enabled -> one pending per subscription (via new `PaymentRepository::findPendingBySubscription`, keeps tests DB-free) -> charge currency (EA currencies as-is, else USD - Custosell rule) -> amount vs server quote (USD totals converted via FX with 2% tolerance; missing FX rate aborts, never charges blind) -> upgrade requires `target_plan_id` (new request field, stored in payment metadata for `autoApprove`).
+- Approval is atomic everywhere: `autoApprove` (webhook/callback/poll), local bypass, and manual `approvePayment` all run status flip + invoice/receipt + subscription transition inside one `DB::transaction`. Shared body lives in `Concerns/FinalizesGatewayApprovals` (single path, no drift); `activateSubscription` null-approver crash fixed (`$approvedBy?->id`); `autoApprove` now creates invoice + receipt and handles `UPGRADE_PRORATION`.
+- `GET status?verify=1` live-verifies pending payments with the gateway so users never hang on a slow IPN.
+- `PESAPAL_BYPASS` (config + double-gated on `app()->isLocal()`, Custosell parity) approves instantly in dev; never reachable in staging/production.
+- Callback stays BE-side JSON (Custosell parity); FE uses popup + 5s polling + Verify button instead of a return page.
+- v1 charges USD (matches quotes exactly, zero FX risk); UGX path is implemented server-side for later (FE sends USD today).
+- No user-facing "accountant/admin/review" copy anywhere in the flow.
+- Vera scripts ported from Custosell on both stacks: `vera:logic` (file-size-500 with HEAD grandfathering, relative-imports/PHP parity, `no-long-dashes`) + `normalize-dashes.mjs` fixer + new `gateway-atomic-approval` rule pinning the transaction guarantee. Touched files normalized (52 BE + 11 FE dashes).
+
+**Files touched:** BE - `GatewayService` (+ new `Concerns/FinalizesGatewayApprovals`), `GatewayPaymentController`, `InitiateGatewayPaymentRequest` (+`target_plan_id`), `PaymentRepository(+Interface)`, `SubscriptionService` (null-approver), `SubscriptionPaymentActionResolver` (copy), `PaymentMethod` (gateway enabled), `PesaPalDriver` (name fallback), `payment_gateways.php` routes, `billing_gateways.php` (+bypass), `vera-logic.php` (new), `vera-fast.php` + `composer.json` wiring. FE - new `PesapalCheckout.tsx`, `Payments.tsx` (checkout mount + neutral copy + intentional-effect disable), `PaymentGatewayQueries/Types` (`verify` + `target_plan_id`), `vera-logic.mjs` + `normalize-dashes.mjs` (new), `vera-fast.mjs` + `package.json` wiring.
+
+**Tests:** `PesaPalDriverTest` (5: redirect shape, failure throws, status-code map, IPN parse, currencies) + `GatewayServiceGuardsTest` (5: pending-duplicate, quote mismatch, USD fallback, UGX conversion, upgrade-target required) - **10/10 pass (25 assertions)**. Webhook/autoApprove E2E left for MySQL CI (local sqlite cannot run the MySQL-only migrations - pre-existing env gap).
+
+**To go live:** set `PESAPAL_ENABLED=true` (+ `PESAPAL_IPN_ID` after first registration) in staging/prod `.env`, register the IPN once, run a sandbox subscription end-to-end, then enable prod.

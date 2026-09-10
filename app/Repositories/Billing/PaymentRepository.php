@@ -87,4 +87,9 @@ class PaymentRepository implements PaymentRepositoryInterface
             $q->where('facility_id', $facilityId);
         })->pending()->get()->all();
     }
+
+    public function findPendingBySubscription(int $subscriptionId): ?Payment
+    {
+        return Payment::where('subscription_id', $subscriptionId)->pending()->first();
+    }
 }

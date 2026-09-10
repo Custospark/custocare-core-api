@@ -19,7 +19,7 @@ use Illuminate\Http\Request;
  * GatewayPaymentController
  *
  * Handles facility-initiated payment via a specific gateway driver.
- * Requires authentication — facility must be authenticated to initiate.
+ * Requires authentication - facility must be authenticated to initiate.
  *
  * Routes:
  *   GET  /api/billing/gateways               → list available gateways
@@ -72,7 +72,7 @@ class GatewayPaymentController extends Controller
     }
 
     /**
-     * POST /api/billing/gateway/{gateway}/initiate
+     * POST /api/facilities/{facility}/payments/gateway/{gateway}/initiate
      *
      * Initiate a payment with the specified gateway.
      *
@@ -91,7 +91,7 @@ class GatewayPaymentController extends Controller
         try {
             $subscription = Subscription::findOrFail($request->integer('subscription_id'));
 
-            // Scope check — ensure subscription belongs to this facility
+            // Scope check - ensure subscription belongs to this facility
             if ($subscription->facility_id !== $facility->id) {
                 return response()->json([
                     'success' => false,
@@ -116,7 +116,7 @@ class GatewayPaymentController extends Controller
                     'redirect_url' => $result['redirect_url'],     // null for push gateways
                     'reference'    => $result['reference'],
                 ],
-            ], 202); // 202 Accepted — payment is being processed
+            ], 202); // 202 Accepted - payment is being processed
 
         } catch (GatewayException $e) {
             return response()->json([
@@ -125,6 +125,14 @@ class GatewayPaymentController extends Controller
                 'errors'  => ['gateway' => [$e->getMessage()]],
                 'data'    => null,
             ], 422);
+        } catch (\DomainException $e) {
+            // Quote/amount mismatches - client error, never a 500.
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'errors'  => ['amount' => [$e->getMessage()]],
+                'data'    => null,
+            ], $e->getCode() >= 400 && $e->getCode() < 500 ? $e->getCode() : 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -136,11 +144,12 @@ class GatewayPaymentController extends Controller
     }
 
     /**
-     * GET /api/billing/gateway/{gateway}/status/{reference}
+     * GET /api/facilities/{facility}/payments/gateway/{reference}/status
      * Poll the status of a gateway payment by our payment_id or gateway reference.
-     * Useful for push-based gateways while waiting for USSD approval.
+     * Useful for push-based gateways while waiting for USSD approval, and for
+     * redirect gateways while the user completes hosted checkout.
      */
-    public function status(Request $request, Facility $facility, string $gateway, string $reference): JsonResponse
+    public function status(Request $request, Facility $facility, string $reference): JsonResponse
     {
         $payment = \App\Models\Payment::where('facility_id', $facility->id)
             ->where(function ($q) use ($reference) {
@@ -156,6 +165,19 @@ class GatewayPaymentController extends Controller
                 'message' => 'Payment not found.',
                 'data'    => null,
             ], 404);
+        }
+
+        // ?verify=1 - live-check with the gateway when still pending, so the
+        // frontend can unstick users without waiting for the async IPN.
+        $verifiedMessage = null;
+        if ($request->boolean('verify') && $payment->isPending() && $payment->gateway_name) {
+            try {
+                $result = $this->gatewayService->verifyPendingPayment($payment);
+                $verifiedMessage = $result['message'];
+                $payment->refresh();
+            } catch (\Exception $e) {
+                $verifiedMessage = 'Verification is temporarily unavailable. Please try again.';
+            }
         }
 
         return response()->json([

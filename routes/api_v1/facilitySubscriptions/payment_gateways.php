@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |──────────────────────────────────────────────────────────────────────────────
-| [4] GATEWAY — PUBLIC endpoints (NO auth — called by gateways or open polling)
+| [4] GATEWAY - PUBLIC endpoints (NO auth - called by gateways or open polling)
 |
 | ⚠ These routes must NOT be behind auth:sanctum.
 |   They are called by external gateway servers, not by facility users.
@@ -37,7 +37,7 @@ Route::prefix('billing/gateway')
 
 /*
 |──────────────────────────────────────────────────────────────────────────────
-| [5] GATEWAY — AUTHENTICATED endpoints (facility-facing)
+| [5] GATEWAY - AUTHENTICATED endpoints (facility-facing)
 |
 | Facility staff initiate payments and check status here.
 |──────────────────────────────────────────────────────────────────────────────
@@ -50,17 +50,13 @@ Route::middleware(['auth:sanctum'])
         // List available (enabled) gateways
         Route::get('/gateways', [GatewayPaymentController::class, 'available'])
             ->name('gateways.available');
-
-        // Initiate a payment via a specific gateway
-        // POST /api/billing/gateway/{gateway}/initiate
-        Route::post('/gateway/{gateway}/initiate',
-            [GatewayPaymentController::class, 'initiate'])
-            ->name('gateway.initiate');
     });
 
 /*
 |──────────────────────────────────────────────────────────────────────────────
-| [6] GATEWAY STATUS — Per-facility payment status polling
+| [5b] GATEWAY INITIATE + STATUS - facility-scoped (matches FE hooks:
+| POST /facilities/{facility}/payments/gateway/{gateway}/initiate,
+| GET  /facilities/{facility}/payments/gateway/{reference}/status)
 |──────────────────────────────────────────────────────────────────────────────
 */
 Route::middleware(['auth:sanctum'])
@@ -68,7 +64,12 @@ Route::middleware(['auth:sanctum'])
     ->name('facilities.gateway.payments.')
     ->group(function () {
 
-        // GET /api/facilities/{facility}/payments/gateway/{reference}/status
+        // Initiate a payment via a specific gateway
+        Route::post('/{gateway}/initiate',
+            [GatewayPaymentController::class, 'initiate'])
+            ->name('initiate');
+
+        // Poll the status of a gateway payment by reference or payment id
         Route::get('/{reference}/status',
             [GatewayPaymentController::class, 'status'])
             ->name('status');

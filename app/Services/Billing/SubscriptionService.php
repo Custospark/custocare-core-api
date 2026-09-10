@@ -59,7 +59,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             // ── Guard: one active/trial/pending payment subscription per facility ──
             $existing = $this->subscriptionRepo->findByFacility($facility->id);
 
-            Log::debug('[Billing] createSubscription — existing lookup', [
+            Log::debug('[Billing] createSubscription - existing lookup', [
                 'facility_id' => $facility->id,
                 'existing_id' => $existing?->id,
                 'existing_status' => $existing?->status?->value,
@@ -68,7 +68,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             ]);
 
             if ($existing) {
-                // Active subscription that still grants access — update plan, don't create new
+                // Active subscription that still grants access - update plan, don't create new
                 if ($existing->hasAccess()) {
                     $updated = $this->subscriptionRepo->update($existing, array_filter([
                         'plan_id'       => $plan->id,
@@ -91,7 +91,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             // ── Calculate remaining trial days to prevent abuse ──
             $remainingTrialDays = $this->subscriptionRepo->getRemainingTrialDays($facility->id, $plan->trial_days);
 
-            // Suspended subscriptions stay suspended — payment required, no grace
+            // Suspended subscriptions stay suspended - payment required, no grace
             $isSuspended = $existing && $existing->status === SubscriptionStatus::SUSPENDED;
             $hasUsedGraceBefore = $existing && $existing->grace_period_ends_at !== null;
             $hasNoTrial = $remainingTrialDays <= 0;
@@ -103,7 +103,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     : SubscriptionStatus::PAST_DUE->value);
 
             $trialEndsAt = $remainingTrialDays > 0 ? $now->copy()->addDays($remainingTrialDays) : null;
-            Log::debug('[Billing] createSubscription — grace check', [
+            Log::debug('[Billing] createSubscription - grace check', [
                 'has_existing'         => $existing ? 'yes' : 'no',
                 'existing_grace'       => $existing?->grace_period_ends_at?->toDateString(),
                 'has_used_grace_before' => $hasUsedGraceBefore ? 'yes' : 'no',
@@ -140,7 +140,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 'metadata'           => $options['metadata'] ?? null,
             ];
 
-            // Only set trial_ends_at and grace_period_ends_at when granting — preserve historical markers
+            // Only set trial_ends_at and grace_period_ends_at when granting - preserve historical markers
             if ($trialEndsAt !== null) {
                 $payload['trial_ends_at'] = $trialEndsAt;
             }
@@ -160,7 +160,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     '_action'         => 'updated',
                 ]);
             } else {
-                // First-time subscription — create with facility_id
+                // First-time subscription - create with facility_id
                 $payload['facility_id'] = $facility->id;
                 $subscription = $this->subscriptionRepo->create($payload);
                 $subscription->_action = 'created';
@@ -184,14 +184,14 @@ class SubscriptionService implements SubscriptionServiceInterface
                 try {
                     $trialEnd = $subscription->trial_ends_at;
                     $this->sendBillingEmail($facility, $subscription,
-                        "Your {$plan->name} Trial Has Started — Welcome to Custocare",
+                        "Your {$plan->name} Trial Has Started - Welcome to Custocare",
                         "<p>Dear {$facility->facility_name},</p>
                         <p>Your <strong>{$plan->name}</strong> subscription for <strong>{$facility->facility_name}</strong> is now active and your {$plan->trial_days}-day free trial has begun.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
                         <p>During this trial period, you have full access to all features included in your plan.</p>
                         <ul>
-                            <li><strong>No charges yet</strong> — Your first payment will be due on " . ($trialEnd?->format('M j, Y') ?? 'TBD') . ".</li>
-                            <li><strong>Switch anytime</strong> — You can upgrade or downgrade your plan before the trial ends.</li>
+                            <li><strong>No charges yet</strong> - Your first payment will be due on " . ($trialEnd?->format('M j, Y') ?? 'TBD') . ".</li>
+                            <li><strong>Switch anytime</strong> - You can upgrade or downgrade your plan before the trial ends.</li>
                         </ul>
                         <p>We'll send you a reminder a few days before your trial ends.</p>
                         <p>Warm regards,<br>Custocare Team</p>"
@@ -250,7 +250,7 @@ class SubscriptionService implements SubscriptionServiceInterface
             Log::info('[Billing] Subscription activated', [
                 'subscription_id' => $updated->id,
                 'facility_id'     => $updated->facility_id,
-                'approved_by'     => $approvedBy->id,
+                'approved_by'     => $approvedBy?->id,
             ]);
 
             $this->moduleSyncService->syncForSubscription($updated->fresh(['plan']));
@@ -377,7 +377,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                     $meta['notifications'] = $meta['notifications'] ?? [];
                     if (!($meta['notifications']['grace_started'] ?? false)) {
                         $this->sendBillingEmail($facility, $updated,
-                            "Payment Required — Your {$plan?->name} Subscription Is Now Past Due",
+                            "Payment Required - Your {$plan?->name} Subscription Is Now Past Due",
                             "<p>Dear {$facility->facility_name},</p>
                             <p>The billing date for your <strong>{$plan?->name}</strong> subscription at <strong>{$facility->facility_name}</strong> has passed.</p>
                             <p>Your facility still has full access. We've started a <strong>7-day grace period</strong> to give you time to complete your payment.</p>
@@ -459,7 +459,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                         <li>Submit a payment proof for the amount due.</li>
                         <li>Once approved, your subscription will be reactivated immediately.</li>
                     </ol>
-                    <p>All your facility data — patient records, clinical notes, configurations — remains intact and will be accessible again as soon as your subscription is reactivated.</p>
+                    <p>All your facility data - patient records, clinical notes, configurations - remains intact and will be accessible again as soon as your subscription is reactivated.</p>
                     <p>If you need assistance, please contact our support team.</p>
                     <p>Warm regards,<br>Custocare Team</p>"
                 );
@@ -643,7 +643,7 @@ class SubscriptionService implements SubscriptionServiceInterface
 
     /**
      * Send billing notification emails based on subscription state.
-     * Each notification is sent at most once — tracked via metadata flags.
+     * Each notification is sent at most once - tracked via metadata flags.
      */
     private function sendBillingNotifications(Subscription $subscription): void
     {
@@ -661,9 +661,9 @@ class SubscriptionService implements SubscriptionServiceInterface
                 $trialEnd = $subscription->trial_ends_at;
                 if ($trialEnd && $trialEnd->isFuture() && (int) $now->diffInDays($trialEnd) === 2) {
                     $this->sendBillingEmail($facility, $subscription,
-                        "Your {$plan?->name} Trial Ends in 2 Days — Complete Payment to Stay Active",
+                        "Your {$plan?->name} Trial Ends in 2 Days - Complete Payment to Stay Active",
                         "<p>Dear {$facility->facility_name},</p>
-                        <p>Your <strong>{$plan?->name}</strong> trial for <strong>{$facility->facility_name}</strong> ends on <strong>{$trialEnd->format('M j, Y')}</strong> — that's just 2 days away.</p>
+                        <p>Your <strong>{$plan?->name}</strong> trial for <strong>{$facility->facility_name}</strong> ends on <strong>{$trialEnd->format('M j, Y')}</strong> - that's just 2 days away.</p>
                         <p>To keep your facility running without interruption, please complete your payment before the trial ends.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
                         <p><strong>How to pay:</strong></p>
@@ -673,7 +673,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                             <li>Choose Bank Transfer as your payment method.</li>
                             <li>Upload your payment receipt and submit for review.</li>
                         </ol>
-                        <p>Need to change your plan? You can upgrade or downgrade during your trial — visit the Plans page.</p>
+                        <p>Need to change your plan? You can upgrade or downgrade during your trial - visit the Plans page.</p>
                         <p>Warm regards,<br>Custocare Team</p>"
                     );
                     $notifications['trial_ending_soon'] = true;
@@ -685,7 +685,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                 $graceEnd = $subscription->grace_period_ends_at;
                 if ($graceEnd && $graceEnd->isFuture() && (int) $now->diffInDays($graceEnd) === 1) {
                     $this->sendBillingEmail($facility, $subscription,
-                        "Final Reminder — Your Grace Period Ends Tomorrow",
+                        "Final Reminder - Your Grace Period Ends Tomorrow",
                         "<p>Dear {$facility->facility_name},</p>
                         <p>This is a final reminder that your <strong>{$plan?->name}</strong> grace period for <strong>{$facility->facility_name}</strong> ends <strong>tomorrow, {$graceEnd->format('M j, Y')}</strong>.</p>
                         " . NotificationService::billingInfoBlock($subscription) . "
@@ -695,7 +695,7 @@ class SubscriptionService implements SubscriptionServiceInterface
                             <li>All patient data remains securely stored and preserved.</li>
                             <li>You can restore access anytime by submitting a payment proof.</li>
                         </ul>
-                        <p>Don't lose access — complete your payment today.</p>
+                        <p>Don't lose access - complete your payment today.</p>
                         <p>If you've already submitted a payment, please disregard this message.</p>
                         <p>Warm regards,<br>Custocare Team</p>"
                     );

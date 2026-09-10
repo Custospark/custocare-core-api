@@ -58,6 +58,9 @@
         "vera:fast": [
             "@php scripts/vera-fast.php"
         ],
+        "vera:logic": [
+            "@php scripts/vera-logic.php"
+        ],
         "vera:extended": [
             "@php scripts/vera-extended.php"
         ],

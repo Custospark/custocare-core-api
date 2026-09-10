@@ -32,6 +32,8 @@ class InitiateGatewayPaymentRequest extends FormRequest
             'phone_number'    => 'nullable|string|min:9|max:20',
             'email'           => 'nullable|email|max:200',
             'customer_name'   => 'nullable|string|max:200',
+            // Required for upgrade_proration: the plan being upgraded to.
+            'target_plan_id'  => 'nullable|integer|exists:plans,id',
         ];
     }
 

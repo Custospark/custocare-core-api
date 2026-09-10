@@ -33,7 +33,7 @@ enum PaymentMethod: string
     {
         return match($this) {
             self::MOBILE_MONEY, self::BANK_TRANSFER, self::CASH => true,
-            self::GATEWAY => false,   // flip to true when gateway is integrated
+            self::GATEWAY => true,   // PesaPal live via GatewayService
         };
     }
 }

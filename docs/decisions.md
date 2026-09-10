@@ -438,3 +438,9 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 **Context:** Staging reached sandbox but PesaPal answered HTTP 200 `{error,status}` (no token) for the company sandbox pair - dead creds. Per Oscar: staging mirrors production (like-for-like test bed); bypass stays local/dev-only.
 
 **Decision:** staging uses the **production** consumer pair (fingerprints matched live Custosell prod keys before copying; values never printed). `PESAPAL_ENVIRONMENT=production`, `ENABLED=true` via surgical server `.env` edit (backup first, `APP_KEY` preserved). Token OK, IPN registered + persisted via new `pesapal:status` / `pesapal:register-ipn` ops commands. Next: one real small-amount subscription payment on staging to prove end-to-end money movement.
+
+## 2026-09-10: Billing Test Blitz + Staging Broadcast Fix
+
+**Context:** brutally testing every billing path (27 BE + 8 FE tests, all green) caught a dead 401-retry branch and a dropped `Plan` import before users did. Manual-payment UI removed from `Payments.tsx` (online-only, provider-neutral copy); staging log showed the same dev-Reverb broadcast failure prod had.
+
+**Decision:** 401-retry now keys on an explicit marker exception; webhook/callback lookups moved into `PaymentRepository` (testable, no statics); `billing:monitor` command (log sweep, stuck pendings, queue depth, gateway availability) scheduled daily 06:00; staging `.env` broadcast deduped to `log` (backup first). Test tally: BE 27/27 (54 assertions), FE 8/8, tsc clean, vera both stacks green.

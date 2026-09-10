@@ -110,7 +110,7 @@ class PaymentService implements PaymentServiceInterface
             $subscription = $subscription->fresh(['plan', 'facility']);
             $this->billingDocuments->createInvoiceForPayment($subscription, $payment);
 
-            Log::info('[Billing] Payment recorded — awaiting admin approval', [
+            Log::info('[Billing] Payment recorded - awaiting admin approval', [
                 'payment_id'      => $payment->id,
                 'subscription_id' => $subscription->id,
                 'facility_id'     => $subscription->facility_id,
@@ -126,7 +126,7 @@ class PaymentService implements PaymentServiceInterface
                     $ref = $payment->transaction_reference ?? 'N/A';
                     $this->notificationService->sendBillingToFacility(
                         $facility,
-                        'Payment proof received — pending review',
+                        'Payment proof received - pending review',
                         "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been received.</p>
                         <p>Reference: <strong>{$ref}</strong></p>
                         " . \App\Services\Notification\NotificationService::billingInfoBlock($subscription) . "
@@ -170,7 +170,7 @@ class PaymentService implements PaymentServiceInterface
 
             // ── Approve the payment ───────────────────────────────────────
             $payment = $this->paymentRepo->update($payment, [
-                'status'               => PaymentStatus::APPROVED->value,
+                'status'               => PaymentStatus::COMPLETED->value,
                 'approved_at'          => Carbon::now(),
                 'approved_by_user_id'  => $approvedBy->id,
                 'receipt_notes'        => $notes
@@ -206,7 +206,7 @@ class PaymentService implements PaymentServiceInterface
 
                     $this->notificationService->sendBillingToFacility(
                         $facility,
-                        "Payment approved — receipt #{$payment->receipt_number}",
+                        "Payment approved - receipt #{$payment->receipt_number}",
                         "<p>Your payment of <strong>{$payment->currency} " . number_format((float) $payment->amount, 2) . "</strong> for <strong>{$subscription->plan?->name}</strong> has been approved.</p>
                         <p>Receipt: <strong>{$payment->receipt_number}</strong></p>
                         " . \App\Services\Notification\NotificationService::billingInfoBlock($subscription) . "
@@ -259,7 +259,7 @@ class PaymentService implements PaymentServiceInterface
         }
 
         $updated = $this->paymentRepo->update($payment, [
-            'status'               => PaymentStatus::REJECTED->value,
+            'status'               => PaymentStatus::FAILED->value,
             'approved_at'          => Carbon::now(),
             'approved_by_user_id'  => $rejectedBy->id,
             'rejection_reason'     => $reason,

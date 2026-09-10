@@ -121,7 +121,7 @@ class SubscriptionStatusTransitionTest extends TestCase
             'currency' => 'USD',
             'method' => 'gateway',
             'payment_type' => PaymentType::SUBSCRIPTION->value,
-            'status' => 'approved',
+            'status' => 'completed',
             'metadata' => [],
         ], $overrides));
 
@@ -319,7 +319,7 @@ class SubscriptionStatusTransitionTest extends TestCase
 
         $service->processWebhook('pesapal', $request);
 
-        $this->assertTrue($payment->isApproved());
+        $this->assertTrue($payment->isCompleted());
     }
 
     /** @test */
@@ -336,7 +336,7 @@ class SubscriptionStatusTransitionTest extends TestCase
         $driver->shouldReceive('verify')->never();
         $manager->shouldReceive('driver')->andReturn($driver);
 
-        $done = $this->pendingPayment(['status' => PaymentStatus::APPROVED->value, 'gateway_transaction_id' => 'trk-9']);
+        $done = $this->pendingPayment(['status' => PaymentStatus::COMPLETED->value, 'gateway_transaction_id' => 'trk-9']);
         $paymentRepo->shouldReceive('findByGatewayTransactionId')->with('trk-9')->andReturn($done);
         $paymentRepo->shouldReceive('update')->never();
         $subscriptionService->shouldReceive('activateSubscription')->never();
@@ -426,7 +426,7 @@ class SubscriptionStatusTransitionTest extends TestCase
 
         $service->processWebhook('pesapal', Request::create('/x', 'GET'));
 
-        $this->assertTrue($payment->isApproved());
+        $this->assertTrue($payment->isCompleted());
     }
 
     /** @test */
@@ -448,8 +448,8 @@ class SubscriptionStatusTransitionTest extends TestCase
 
         $result = $service->verifyPendingPayment($payment);
 
-        $this->assertSame('approved', $result['status']);
-        $this->assertTrue($payment->isApproved());
+        $this->assertSame('completed', $result['status']);
+        $this->assertTrue($payment->isCompleted());
     }
 
     /** @test */
@@ -459,10 +459,10 @@ class SubscriptionStatusTransitionTest extends TestCase
 
         $manager->shouldReceive('driver')->never();
 
-        $done = $this->pendingPayment(['status' => PaymentStatus::APPROVED->value]);
+        $done = $this->pendingPayment(['status' => PaymentStatus::COMPLETED->value]);
 
         $result = $service->verifyPendingPayment($done);
 
-        $this->assertSame('approved', $result['status']);
+        $this->assertSame('completed', $result['status']);
     }
 }

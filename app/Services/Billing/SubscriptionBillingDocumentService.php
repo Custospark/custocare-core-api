@@ -37,7 +37,7 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
 
     public function buildReceiptDocument(Payment $payment): array
     {
-        if ($payment->status !== PaymentStatus::APPROVED) {
+        if ($payment->status !== PaymentStatus::COMPLETED) {
             throw new \DomainException('Receipts are only available for approved payments.', 422);
         }
 
@@ -121,7 +121,7 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
 
     public function getReceiptsForFacility(int $facilityId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $filters['status'] = PaymentStatus::APPROVED->value;
+        $filters['status'] = PaymentStatus::COMPLETED->value;
 
         return $this->paymentRepo->getForFacility($facilityId, $filters, $perPage);
     }
@@ -149,8 +149,8 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
         $balanceDue = $invoice ? $invoice->balanceDue() : 0.0;
 
         $documentNumber = $documentType === 'receipt'
-            ? ($payment?->receipt_number ?? '—')
-            : ($invoice?->invoice_number ?? '—');
+            ? ($payment?->receipt_number ?? '-')
+            : ($invoice?->invoice_number ?? '-');
 
         return [
             'document_type'       => $documentType,
@@ -183,7 +183,7 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
             'balance_due'  => round($balanceDue, 2),
             'currency'     => strtoupper((string) $currency),
             'status'       => $documentType === 'receipt'
-                ? PaymentStatus::APPROVED->value
+                ? PaymentStatus::COMPLETED->value
                 : ($invoice?->status->value ?? InvoiceStatus::UNPAID->value),
             'status_label' => $documentType === 'receipt'
                 ? 'Paid'
@@ -238,7 +238,7 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
 
         if ($plan) {
             return [[
-                'description' => sprintf('%s — %s subscription', BillingIssuer::PRODUCT_NAME, $plan->name),
+                'description' => sprintf('%s - %s subscription', BillingIssuer::PRODUCT_NAME, $plan->name),
                 'quantity'    => 1,
                 'unit_price'  => round($amount, 2),
                 'total'       => round($amount, 2),
@@ -258,7 +258,7 @@ class SubscriptionBillingDocumentService implements SubscriptionBillingDocumentS
         $planName = $subscription?->plan?->name ?? 'plan';
 
         return sprintf(
-            '%s subscription — %s (%s)',
+            '%s subscription - %s (%s)',
             BillingIssuer::PRODUCT_NAME,
             $planName,
             $payment->payment_type->label(),

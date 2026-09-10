@@ -70,7 +70,7 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
                 ),
                 'payments as approved_payments_count' => fn ($q) => $q->where(
                     'status',
-                    PaymentStatus::APPROVED->value,
+                    PaymentStatus::COMPLETED->value,
                 ),
             ])
             ->when(
@@ -130,7 +130,7 @@ class SubscriptionRepository implements SubscriptionRepositoryInterface
 
     public function getRemainingTrialDays(int $facilityId, int $planTrialDays): int
     {
-        // Facility has used a trial before — no trial remaining, ever
+        // Facility has used a trial before - no trial remaining, ever
         if ($this->hasEverHadTrial($facilityId)) {
             return 0;
         }

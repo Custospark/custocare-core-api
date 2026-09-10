@@ -109,9 +109,9 @@ class Payment extends Model
         return $query->where('status', PaymentStatus::PENDING);
     }
 
-    public function scopeApproved($query)
+    public function scopeCompleted($query)
     {
-        return $query->where('status', PaymentStatus::APPROVED);
+        return $query->where('status', PaymentStatus::COMPLETED);
     }
 
     public function scopeForFacility($query, int $facilityId)
@@ -128,9 +128,9 @@ class Payment extends Model
         return $this->status === PaymentStatus::PENDING;
     }
 
-    public function isApproved(): bool
+    public function isCompleted(): bool
     {
-        return $this->status === PaymentStatus::APPROVED;
+        return $this->status === PaymentStatus::COMPLETED;
     }
 
     public function receiptUrl(): ?string

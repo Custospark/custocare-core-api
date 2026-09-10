@@ -80,7 +80,7 @@ class SubscriptionController extends Controller
                 'currency'     => 'UGX',
                 'method'       => 'cash',
                 'payment_type' => 'subscription',
-                'status'       => 'approved',
+                'status'       => 'completed',
                 'paid_at'      => now(),
                 'approved_at'  => now(),
                 'approved_by_staff_id' => $adminStaff->id,

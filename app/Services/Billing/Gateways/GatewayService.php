@@ -175,7 +175,7 @@ class GatewayService
             // subscription transition commit together or not at all.
             DB::transaction(function () use ($payment, $ourRef) {
                 $this->paymentRepo->update($payment, [
-                    'status' => 'approved',
+                    'status' => 'completed',
                     'approved_at' => now(),
                     'paid_at' => now(),
                     'transaction_reference' => $ourRef,
@@ -185,7 +185,7 @@ class GatewayService
                 $this->finalizeApprovedPayment($payment);
             });
 
-            Log::info('[GatewayService] Payment approved via local bypass', [
+            Log::info('[GatewayService] Payment completed via local bypass', [
                 'payment_id' => $payment->id,
                 'gateway' => $gatewayName,
             ]);
@@ -197,7 +197,7 @@ class GatewayService
                 'type' => 'bypass',
                 'redirect_url' => null,
                 'reference' => $ourRef,
-                'message' => 'Payment approved (local bypass).',
+                'message' => 'Payment completed (local bypass).',
             ];
         }
 
@@ -250,9 +250,9 @@ class GatewayService
             ];
 
         } catch (\Throwable $e) {
-            // Mark payment as rejected if driver call fails
+            // Mark payment as failed if driver call fails
             $this->paymentRepo->update($payment, [
-                'status'           => 'rejected',
+                'status'           => 'failed',
                 'rejection_reason' => "Gateway initiation failed: {$e->getMessage()}",
             ]);
 
@@ -429,7 +429,7 @@ class GatewayService
 
         $this->autoApprove($payment, ['source' => 'status_poll'], $verification);
 
-        return ['status' => 'approved', 'message' => 'Payment confirmed. Subscription activated.'];
+        return ['status' => 'completed', 'message' => 'Payment confirmed. Subscription activated.'];
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -445,7 +445,7 @@ class GatewayService
         DB::transaction(function () use ($payment, $webhookData, $verification) {
 
             $this->paymentRepo->update($payment, [
-                'status'               => 'approved',
+                'status'               => 'completed',
                 'approved_at'          => now(),
                 'paid_at'              => $payment->paid_at ?? now(),
                 'gateway_transaction_id' => $verification['gateway_txn_id'] ?? $payment->gateway_transaction_id,

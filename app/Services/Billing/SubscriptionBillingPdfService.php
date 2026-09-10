@@ -30,7 +30,7 @@ class SubscriptionBillingPdfService implements SubscriptionBillingPdfServiceInte
 
     public function downloadReceiptPdf(Payment $payment): Response
     {
-        if ($payment->status !== PaymentStatus::APPROVED) {
+        if ($payment->status !== PaymentStatus::COMPLETED) {
             throw new \DomainException('Receipts are only available for approved payments.', 422);
         }
 
@@ -52,7 +52,7 @@ class SubscriptionBillingPdfService implements SubscriptionBillingPdfServiceInte
 
     public function generateReceiptPdfContent(Payment $payment): string
     {
-        if ($payment->status !== PaymentStatus::APPROVED) {
+        if ($payment->status !== PaymentStatus::COMPLETED) {
             throw new \DomainException('Receipts are only available for approved payments.', 422);
         }
 

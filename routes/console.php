@@ -49,3 +49,26 @@ Schedule::command('billing:check-subscriptions')
     ->withoutOverlapping()
     ->onOneServer()
     ->runInBackground();
+
+/*
+|--------------------------------------------------------------------------
+| Queue worker (database driver) — same pattern as Custosell
+|--------------------------------------------------------------------------
+|
+| Mails are queued (StandardEmail implements ShouldQueue). On shared hosting
+| there is no supervisor, so the worker runs through the scheduler: every
+| system cron tick fires schedule:run, which drains the queue and exits.
+| --stop-when-empty + --max-time=50 guarantees the worker never overlaps
+| the next minute tick. withoutOverlapping is belt-and-braces.
+|
+| Requires ONE system cron in hPanel (per environment), every minute:
+|   /usr/bin/php /home/u214605677/domains/custocareai-api.custospark.com/artisan schedule:run
+|
+ */
+Schedule::command('queue:work --stop-when-empty --max-time=50 --sleep=3 --tries=3')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+// Keep the failed-jobs table from growing forever.
+Schedule::command('queue:prune-failed --hours=72')
+    ->daily();

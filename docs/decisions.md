@@ -444,3 +444,9 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 **Context:** brutally testing every billing path (27 BE + 8 FE tests, all green) caught a dead 401-retry branch and a dropped `Plan` import before users did. Manual-payment UI removed from `Payments.tsx` (online-only, provider-neutral copy); staging log showed the same dev-Reverb broadcast failure prod had.
 
 **Decision:** 401-retry now keys on an explicit marker exception; webhook/callback lookups moved into `PaymentRepository` (testable, no statics); `billing:monitor` command (log sweep, stuck pendings, queue depth, gateway availability) scheduled daily 06:00; staging `.env` broadcast deduped to `log` (backup first). Test tally: BE 27/27 (54 assertions), FE 8/8, tsc clean, vera both stacks green.
+
+## 2026-09-10: Completed/Failed Vocabulary + Central UI Matrix (Custosell standard)
+
+**Context:** `approved/rejected` was manual-workflow language; Custosell speaks `completed/failed`. Separately, status strings, labels and actions were scattered across dropdown, Payments, FacilitySubscriptions, AvailablePlans and admin tables.
+
+**Decision:** backend `PaymentStatus` is now `pending|completed|failed|refunded` (forward-only migration remapping rows first, then narrowing the enum; MySQL DDL runs outside transactions). New `utils/subscriptionMatrix.ts` ports Custosell's matrix standard with Custocare's design tokens: subscription meta (label/tone/access/payment-need), payment meta (label/tone/terminal/retry), plan-action matrix (status x relation, incl. trial flows), quote-type resolver. Dropdown, Payments, FacilitySubscriptions (both), restore logic and optimistic updates all read it; 8 matrix unit tests lock every cell. Test tally now: BE 27/27, FE 19/19, tsc clean, vera both green.

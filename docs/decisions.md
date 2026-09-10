@@ -432,3 +432,9 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 **Tests:** `PesaPalDriverTest` (5: redirect shape, failure throws, status-code map, IPN parse, currencies) + `GatewayServiceGuardsTest` (5: pending-duplicate, quote mismatch, USD fallback, UGX conversion, upgrade-target required) - **10/10 pass (25 assertions)**. Webhook/autoApprove E2E left for MySQL CI (local sqlite cannot run the MySQL-only migrations - pre-existing env gap).
 
 **To go live:** set `PESAPAL_ENABLED=true` (+ `PESAPAL_IPN_ID` after first registration) in staging/prod `.env`, register the IPN once, run a sandbox subscription end-to-end, then enable prod.
+
+## 2026-09-10: PesaPal Phase 2 — Production Creds on Staging (mirrors prod)
+
+**Context:** Staging reached sandbox but PesaPal answered HTTP 200 `{error,status}` (no token) for the company sandbox pair - dead creds. Per Oscar: staging mirrors production (like-for-like test bed); bypass stays local/dev-only.
+
+**Decision:** staging uses the **production** consumer pair (fingerprints matched live Custosell prod keys before copying; values never printed). `PESAPAL_ENVIRONMENT=production`, `ENABLED=true` via surgical server `.env` edit (backup first, `APP_KEY` preserved). Token OK, IPN registered + persisted via new `pesapal:status` / `pesapal:register-ipn` ops commands. Next: one real small-amount subscription payment on staging to prove end-to-end money movement.

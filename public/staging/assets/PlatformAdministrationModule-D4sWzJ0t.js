@@ -1,0 +1,1 @@
+import{j as t,bp as a,bU as o,n as s,bV as e}from"./index-Bd61Lp78.js";const A=()=>t.jsx(a,{contextTitle:"Platform Administration",operations:e,basePath:s.PLATFORM_ADMINISTRATION,defaultOperationPath:o.FACILITIES});export{A as default};

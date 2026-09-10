@@ -76,6 +76,28 @@ class InventoryItem extends Model
      *
      * @var array<string, string>
      */
+    /**
+     * Reasonable defaults applied before hitting the database.
+     * Keeps direct ::create() callers safe even if a service
+     * forgets to fill an optional/system field.
+     *
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'item_category' => 'other',
+        'unit_of_measure' => 'each',
+        'package_quantity' => 1,
+        'currency_code' => 'UGX',
+        'status' => 'active',
+        'requires_refrigeration' => false,
+        'requires_controlled_access' => false,
+        'requires_prescription' => false,
+        'is_hazardous' => false,
+        'is_billable' => true,
+        'track_by_lot' => false,
+        'track_by_serial' => false,
+    ];
+
     protected $casts = [
         'item_uuid' => 'string',
         'active_ingredients' => 'array',
@@ -108,6 +130,18 @@ class InventoryItem extends Model
     protected $dates = [
         'deleted_at',
     ];
+
+    protected static function booted(): void
+    {
+        // Defense-in-depth: never allow a null/blank item_code to reach
+        // the DB NOT NULL column (1048). Import service already auto-generates,
+        // this covers single-create and any direct ::create() callers.
+        static::creating(function (self $item) {
+            if (!isset($item->item_code) || trim((string) $item->item_code) === '') {
+                $item->item_code = 'INVT-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+            }
+        });
+    }
 
     /**
      * Get the route key for the model.

@@ -12,10 +12,20 @@ class StoreReferralRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Check if user has permission to create referrals
-        return auth()->check() && 
-               (auth()->user()->can('create referrals') || 
-                auth()->user()->role->hasPermission('create referrals'));
+        // Null-safe: unauthenticated or role-less users get 403, never
+        // "Call to a member function hasPermission() on null" (prod 500).
+        $user = auth()->user();
+        if (!$user) {
+            return false;
+        }
+
+        if (method_exists($user, 'can') && $user->can('create referrals')) {
+            return true;
+        }
+
+        $role = $user->role ?? null;
+
+        return (bool) ($role?->hasPermission('create referrals') ?? false);
     }
 
     /**

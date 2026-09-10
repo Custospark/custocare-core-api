@@ -113,12 +113,21 @@ class InventoryItemService implements InventoryItemServiceInterface
                 ]
             ];
         } catch (\Exception $e) {
-            Log::error('Failed to retrieve inventory items', [
+            // Client error (missing facility header) is a warning, not an
+            // error — keeps laravel.log focused on real server failures.
+            $context = [
                 'facility_id' => $this->facilityId,
                 'error' => $e->getMessage(),
                 'filters' => $filters,
-                'trace' => $e->getTraceAsString()
-            ]);
+            ];
+            if (str_contains($e->getMessage(), 'Facility ID is required')) {
+                Log::warning('Inventory items request missing facility header', $context);
+            } else {
+                Log::error('Failed to retrieve inventory items', [
+                    ...$context,
+                    'trace' => $e->getTraceAsString(),
+                ]);
+            }
 
             return [
                 'success' => false,
@@ -263,11 +272,16 @@ class InventoryItemService implements InventoryItemServiceInterface
         // Set facility_id from headers (cannot be overridden)
         $data['facility_id'] = $this->facilityId;
 
-        // Set default currency code
+        // Set default currency code (UGX matches migration + import + model)
         if (!isset($data['currency_code']) || trim((string) $data['currency_code']) === '') {
-            $data['currency_code'] = 'USD';
+            $data['currency_code'] = 'UGX';
         } else {
             $data['currency_code'] = strtoupper(trim((string) $data['currency_code']));
+        }
+
+        // Set default item category before validation (never hit DB with null)
+        if (!isset($data['item_category']) || trim((string) $data['item_category']) === '') {
+            $data['item_category'] = 'other';
         }
 
         // Set default unit of measure

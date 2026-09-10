@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Repositories\Contracts\InventoryItemRepositoryInterface;
 use App\Repositories\InventoryItem\InventoryItemRepository;
+use App\Services\Contracts\InventoryItemImportServiceInterface;
 use App\Services\Contracts\InventoryItemServiceInterface;
+use App\Services\InventoryItem\InventoryItemImportService;
 use App\Services\InventoryItem\InventoryItemService;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -26,6 +28,12 @@ class InventoryItemServiceProvider extends ServiceProvider
         $this->app->bind(
             InventoryItemServiceInterface::class,
             InventoryItemService::class
+        );
+
+        // Bind Import Service Interface to Implementation
+        $this->app->bind(
+            InventoryItemImportServiceInterface::class,
+            InventoryItemImportService::class
         );
     }
 

@@ -69,7 +69,7 @@ class FacilityController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Facilities retrieved successfully',
-                'data' => new FacilityResource($facilities),
+                'data' => FacilityResource::collection($facilities),
                 'meta' => [
                     'total' => $facilities->total(),
                     'per_page' => $facilities->perPage(),

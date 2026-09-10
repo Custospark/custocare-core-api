@@ -4,7 +4,9 @@ namespace App\Services\InventoryItem;
 
 use App\Models\InventoryItem;
 use App\Models\Staff;
+use App\Services\Contracts\InventoryItemImportServiceInterface;
 use App\Services\Contracts\InventoryLedgerServiceInterface;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -15,7 +17,7 @@ use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
-class InventoryItemImportService
+class InventoryItemImportService implements InventoryItemImportServiceInterface
 {
     protected const CHUNK_SIZE = 100;
 
@@ -132,7 +134,13 @@ class InventoryItemImportService
             $rowEntries[] = ['index' => $index, 'row' => $row];
         }
 
-        $results = ['imported' => 0, 'errors' => [], 'total_rows' => count($rowEntries)];
+        $results = [
+            'imported' => 0,
+            'skipped' => 0,
+            'total_rows' => count($rowEntries),
+            'errors' => [],
+            'generated_codes' => 0,
+        ];
         if ($rowEntries === []) {
             return $results;
         }
@@ -156,65 +164,164 @@ class InventoryItemImportService
             DB::transaction(function () use ($facilityId, $chunk, $existingCodes, &$importCodes, &$results, $staffId) {
                 foreach ($chunk as $entry) {
                     $rowNum = $entry['index'] + 2;
-                    $data = $this->mapRow($entry['row']);
-                    $codeKey = $data['item_code'] ? strtolower(trim($data['item_code'])) : null;
-
-                    $validator = Validator::make($data, $this->validationRules($facilityId));
-
-                    if ($codeKey) {
-                        if (isset($existingCodes[$codeKey]) || isset($importCodes[$codeKey])) {
-                            $validator->after(function ($v) {
-                                $v->errors()->add('item_code', 'The item code has already been taken.');
-                            });
-                        }
-                    }
-
-                    if ($validator->fails()) {
-                        $results['errors'][] = ['row' => $rowNum, 'errors' => $validator->errors()->toArray()];
-                        continue;
-                    }
-
-                    $data['facility_id'] = $facilityId;
-                    $data['item_uuid'] = (string) Str::uuid();
-                    $data['created_by_staff_id'] = $staffId;
-                    if (!isset($data['package_quantity']) || $data['package_quantity'] < 1) {
-                        $data['package_quantity'] = 1;
-                    }
-                    if (!isset($data['currency_code'])) {
-                        $data['currency_code'] = 'UGX';
-                    }
-
-                    $data = $this->setBooleans($data);
-                    unset($data['stock_quantity']);
-
-                    $item = InventoryItem::create($data);
 
                     try {
-                        $this->ledgerService->recordAdjustment([
-                            'facility_id' => $facilityId,
-                            'inventory_item_id' => $item->id,
-                            'quantity' => (float) $data['package_quantity'],
-                            'unit_of_measure' => $data['unit_of_measure'],
-                            'performed_by_staff_id' => $staffId,
-                            'transaction_notes' => 'Initial stock from import',
-                        ]);
+                        $data = $this->mapRow($entry['row']);
+
+                        // Null/default safety: auto-generate missing or duplicate codes
+                        // so we never hit DB NOT NULL (1048) or leak raw SQLSTATE.
+                        $rawCode = isset($data['item_code']) ? trim((string) $data['item_code']) : '';
+                        if ($rawCode === '') {
+                            $data['item_code'] = $this->generateUniqueItemCode($facilityId, $existingCodes, $importCodes);
+                            $results['generated_codes']++;
+                        } else {
+                            $data['item_code'] = $rawCode;
+                        }
+
+                        $codeKey = strtolower(trim($data['item_code']));
+
+                        // Pre-validation defaults: blanks become sensible values
+                        // so missing optional columns don't fail validation.
+                        if (empty($data['item_category'])) {
+                            $data['item_category'] = 'other';
+                        }
+                        if (empty($data['unit_of_measure'])) {
+                            $data['unit_of_measure'] = 'each';
+                        }
+                        if (!isset($data['package_quantity']) || (int) $data['package_quantity'] < 1) {
+                            $data['package_quantity'] = 1;
+                        }
+                        if (empty($data['currency_code'])) {
+                            $data['currency_code'] = 'UGX';
+                        } else {
+                            $data['currency_code'] = strtoupper(trim((string) $data['currency_code']));
+                        }
+                        if (empty($data['status'])) {
+                            $data['status'] = 'active';
+                        }
+
+                        $validator = Validator::make($data, $this->validationRules($facilityId));
+
+                        if (isset($existingCodes[$codeKey]) || isset($importCodes[$codeKey])) {
+                            // Duplicate within facility or file: auto-generate a fresh
+                            // code instead of failing the row, keep import flowing.
+                            $data['item_code'] = $this->generateUniqueItemCode($facilityId, $existingCodes, $importCodes);
+                            $codeKey = strtolower(trim($data['item_code']));
+                            $results['generated_codes']++;
+                            $validator = Validator::make($data, $this->validationRules($facilityId));
+                        }
+
+                        if ($validator->fails()) {
+                            $results['errors'][] = ['row' => $rowNum, 'errors' => $validator->errors()->toArray()];
+                            $results['skipped']++;
+                            continue;
+                        }
+
+                        $data['facility_id'] = $facilityId;
+                        $data['item_uuid'] = (string) Str::uuid();
+                        $data['created_by_staff_id'] = $staffId;
+                        if (!isset($data['package_quantity']) || (int) $data['package_quantity'] < 1) {
+                            $data['package_quantity'] = 1;
+                        }
+                        if (empty($data['unit_of_measure'])) {
+                            $data['unit_of_measure'] = 'each';
+                        }
+                        if (empty($data['currency_code'])) {
+                            $data['currency_code'] = 'UGX';
+                        } else {
+                            $data['currency_code'] = strtoupper(trim((string) $data['currency_code']));
+                        }
+                        if (empty($data['status'])) {
+                            $data['status'] = 'active';
+                        }
+                        if (empty($data['item_category'])) {
+                            $data['item_category'] = 'other';
+                        }
+
+                        $data = $this->setBooleans($data);
+                        unset($data['stock_quantity']);
+
+                        try {
+                            $item = InventoryItem::create($data);
+                        } catch (QueryException $e) {
+                            // Graceful per-row failure: never bubble raw SQLSTATE,
+                            // never roll back the whole 100-row chunk for one bad row.
+                            Log::warning('Inventory import row failed at DB layer', [
+                                'facility_id' => $facilityId,
+                                'row' => $rowNum,
+                                'item_name' => $data['item_name'] ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                            $results['errors'][] = [
+                                'row' => $rowNum,
+                                'errors' => ['database' => [$this->friendlyDbMessage($e)]],
+                            ];
+                            $results['skipped']++;
+                            continue;
+                        }
+
+                        try {
+                            $this->ledgerService->recordAdjustment([
+                                'facility_id' => $facilityId,
+                                'inventory_item_id' => $item->id,
+                                'quantity' => (float) $data['package_quantity'],
+                                'unit_of_measure' => $data['unit_of_measure'],
+                                'performed_by_staff_id' => $staffId,
+                                'transaction_notes' => 'Initial stock from import',
+                            ]);
+                        } catch (\Throwable $e) {
+                            Log::warning('Failed to seed initial ledger entry during import', [
+                                'item_id' => $item->id,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+
+                        $importCodes[$codeKey] = true;
+
+                        $results['imported']++;
                     } catch (\Throwable $e) {
-                        Log::warning('Failed to seed initial ledger entry during import', [
-                            'item_id' => $item->id,
+                        // Last-resort guard: one unexpected row error never kills the import.
+                        Log::error('Inventory import unexpected row error', [
+                            'facility_id' => $facilityId,
+                            'row' => $rowNum,
                             'error' => $e->getMessage(),
                         ]);
+                        $results['errors'][] = [
+                            'row' => $rowNum,
+                            'errors' => ['row' => ['We could not import this row. Please check the values and try again.']],
+                        ];
+                        $results['skipped']++;
+                        continue;
                     }
-
-                    if ($codeKey) {
-                        $importCodes[$codeKey] = true;
-                    }
-
-                    $results['imported']++;
                 }
             });
         }
 
         return $results;
+    }
+
+    protected function generateUniqueItemCode(int $facilityId, array $existingCodes, array $importCodes): string
+    {
+        do {
+            $code = 'INVT-' . str_pad((string) random_int(1, 9999), 4, '0', STR_PAD_LEFT);
+            $key = strtolower($code);
+        } while (isset($existingCodes[$key]) || isset($importCodes[$key]) || InventoryItem::where('facility_id', $facilityId)->where('item_code', $code)->exists());
+
+        return $code;
+    }
+
+    protected function friendlyDbMessage(QueryException $e): string
+    {
+        $message = $e->getMessage();
+
+        if (str_contains($message, "Column 'item_code' cannot be null") || str_contains($message, '1048')) {
+            return 'Item code was missing. Leave it blank to auto-generate, or provide a unique code.';
+        }
+        if (str_contains($message, 'Duplicate entry') || str_contains($message, '1062')) {
+            return 'This item code is already used at your facility. Leave it blank to auto-generate a unique code.';
+        }
+
+        return 'We could not save this row due to a database error. Please check the values and try again.';
     }
 
     protected function validationRules(int $facilityId): array
@@ -273,13 +380,29 @@ class InventoryItemImportService
             return $trimmed === '' ? null : $trimmed;
         };
 
+        // Safe integer: non-numeric garbage becomes null (validated per-row),
+        // never 0 or a DB type error. Bounds match validation max:65535.
+        $safeInt = function (?string $value): ?int {
+            if ($value === null) return null;
+            if (!is_numeric($value)) return null;
+            $int = (int) $value;
+            return ($int >= 0 && $int <= 65535) ? $int : null;
+        };
+
+        // Safe money: non-numeric becomes null so the validator returns a
+        // friendly per-row error instead of a DB exception.
+        $rawCost = $get(5);
+        $unitCost = ($rawCost !== null && is_numeric($rawCost) && (float) $rawCost >= 0)
+            ? $rawCost
+            : null;
+
         return [
             'item_name' => $get(0),
             'item_code' => $get(1),
             'item_category' => $this->normalizeCategory($get(2)),
             'unit_of_measure' => $get(3),
-            'package_quantity' => $get(4) !== null ? (int) $get(4) : 1,
-            'unit_cost' => $get(5),
+            'package_quantity' => $safeInt($get(4)) ?? 1,
+            'unit_cost' => $unitCost,
             'currency_code' => $get(6) ? strtoupper($get(6)) : 'UGX',
             'generic_name' => $get(7),
             'brand_name' => $get(8),
@@ -289,10 +412,10 @@ class InventoryItemImportService
             'route_of_administration' => $this->normalizeRoute($get(12)),
             'manufacturer' => $get(13),
             'supplier' => $get(14),
-            'reorder_point' => $get(15) !== null ? (int) $get(15) : null,
-            'reorder_quantity' => $get(16) !== null ? (int) $get(16) : null,
-            'safety_stock_level' => $get(17) !== null ? (int) $get(17) : null,
-            'max_stock_level' => $get(18) !== null ? (int) $get(18) : null,
+            'reorder_point' => $safeInt($get(15)),
+            'reorder_quantity' => $safeInt($get(16)),
+            'safety_stock_level' => $safeInt($get(17)),
+            'max_stock_level' => $safeInt($get(18)),
             'requires_prescription' => $this->normalizeYesNo($get(19)),
             'requires_refrigeration' => $this->normalizeYesNo($get(20)),
             'is_hazardous' => $this->normalizeYesNo($get(21)),

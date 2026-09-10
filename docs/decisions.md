@@ -387,3 +387,19 @@ Added 4 event-listener pairs following the existing Event → Listener → Notif
 - VisitResource now includes `discharge_diagnosis` field
 - Three API endpoints for discharge: GET (read), POST (initial discharge + status change), PUT (update after discharge)
 - No changes to `bootstrap/providers.php` or VisitServiceProvider
+
+---
+
+## 2026-09-10: Inventory Import Null-Safety + Prod Log Sweep (custocareai-api)
+
+**Context:** Prod `laravel.log` (3.4M, 405 ERRORs on `custocareai-api.custospark.com`) showed: 21× `item_code 1048 cannot be null`, 12× duplicate `PARACETA` 1062, GROUP BY 1055 on popular lab tests, `ANY_VALUE` crash (already fixed locally May-22, prod behind), `LengthAwarePaginator::$id` on facilities list, `hasPermission() on null` on referrals, SMTP 60s timeouts. Local log showed the same facility-header noise.
+
+**Decision:**
+- Import: auto-generate missing/duplicate `item_code` (`INVT-XXXX`) before validation; pre-validation defaults (`other`/`each`/1/`UGX`/`active`); safe int/money parsing (garbage → null → friendly per-row error); per-row try/catch so one bad row never rolls back a 100-row chunk or leaks SQLSTATE; controller returns 200/207/422 with `success/message/imported/skipped/total_rows/errors`; timeouts 600s→900s, 512M→768M; new `InventoryItemImportServiceInterface` bound in `InventoryItemServiceProvider`; new `ImportInventoryItemsRequest` (422 `{success:false}`).
+- Nulls before DB everywhere: model `$attributes` defaults + `creating` hook generates `item_code`; single-create defaults `category→other`, currency unified `USD→UGX`.
+- Prod bugs: popular tests `join+groupBy` → `withCount` (no GROUP BY/ANY_VALUE); facilities `new FacilityResource($paginator)` → `::collection`; referral `authorize()` null-safe; `StandardEmail` is now `ShouldQueue` and billing/transactional sends use `Mail::queue()`; missing-facility logs at `warning`, not `error`.
+- No migration changed (additive-only rule respected); no server writes performed — recon was read-only via `ssh_run.py`.
+
+**Files touched (12):** `InventoryItemImportService`, `InventoryItemService`, `InventoryItem` model, `InventoryItemImportController`, `ImportInventoryItemsRequest` (new), `InventoryItemImportServiceInterface` (new), provider binding, `LabTestRepository`, `FacilityController`, `StoreReferralRequest`, `StandardEmail`, `NotificationService`.
+
+**Trade-offs:** duplicate codes auto-regenerate instead of erroring (keeps bulk flowing; single-create still reports duplicates with friendly message); queued mail needs a worker (`queue:work`/`schedule:run`) or mails sit in `jobs` table — verify before prod.

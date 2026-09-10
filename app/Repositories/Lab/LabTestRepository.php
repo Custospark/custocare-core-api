@@ -312,14 +312,14 @@ class LabTestRepository implements LabTestRepositoryInterface
      */
     public function getPopularTests(int $facilityId, int $limit = 10): Collection
     {
+        // withCount avoids GROUP BY ... ONLY_FULL_GROUP_BY (1055) failures
+        // seen in prod on MySQL strict mode. No raw ANY_VALUE needed.
         return $this->model
-            ->select('lab_tests.*', DB::raw('COUNT(lab_request_items.id) as request_count'))
-            ->leftJoin('lab_request_items', 'lab_tests.id', '=', 'lab_request_items.lab_test_id')
+            ->withCount(['requestItems as request_count'])
             ->where(function ($query) use ($facilityId) {
                 $query->where('lab_tests.facility_id', $facilityId)
                       ->orWhere('lab_tests.is_shared', true);
             })
-            ->groupBy('lab_tests.id')
             ->orderBy('request_count', 'desc')
             ->limit($limit)
             ->get();

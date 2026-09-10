@@ -5,13 +5,17 @@ declare(strict_types=1);
 
 namespace App\Mail;
 
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
+use Illuminate\Queue\SerializesModels;
 
-class StandardEmail extends Mailable
+class StandardEmail extends Mailable implements ShouldQueue
 {
+    use Queueable, SerializesModels;
     /**
      * @param  array<int, array{data: string, name: string, mime: string}>  $fileAttachments
      */

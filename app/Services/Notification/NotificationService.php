@@ -107,7 +107,8 @@ class NotificationService
 
         foreach ($emails as $email) {
             try {
-                Mail::to($email)->send(new StandardEmail(
+                // Queued: never block HTTP on slow SMTP (prod 60s timeouts).
+                Mail::to($email)->queue(new StandardEmail(
                     title:           $subject,
                     mailBody:        $body,
                     isHtml:          true,
@@ -295,7 +296,7 @@ class NotificationService
         try {
             $email = decrypt($user->email_encrypted);
 
-            Mail::to($email)->send(new StandardEmail(
+            Mail::to($email)->queue(new StandardEmail(
                 title:    $title,
                 mailBody: $body,
                 ctaUrl:   $ctaUrl,
@@ -303,7 +304,7 @@ class NotificationService
                 isHtml:   true
             ));
 
-            Log::info('Email dispatched', ['user_id' => $user->id]);
+            Log::info('Email queued', ['user_id' => $user->id]);
 
         } catch (\Exception $e) {
             Log::error('Email dispatch failed', [

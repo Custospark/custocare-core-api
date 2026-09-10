@@ -31,7 +31,13 @@ class WalkInSessionResource extends JsonResource
                 'patient_id' => $this['visit']->patient_id ?? null,
                 'visit_type' => $this['visit']->visit_type ?? null,
                 'acuity_score' => $this['visit']->acuity_score ?? null,
-                'chief_complaints' => $this['visit']->chief_complaints ? json_decode($this['visit']->chief_complaints) : [],
+                // chief_complaints may already be cast to array on the
+                // model — only decode when it is still a JSON string.
+                'chief_complaints' => is_array($this['visit']->chief_complaints ?? null)
+                    ? $this['visit']->chief_complaints
+                    : (is_string($this['visit']->chief_complaints ?? null) && $this['visit']->chief_complaints !== ''
+                        ? json_decode($this['visit']->chief_complaints, true) ?? []
+                        : []),
                 'arrived_at' => $this['visit']->arrived_at ?? null,
                 'current_phase' => $this['visit']->current_phase ?? null,
                 'is_walk_in' => $this['visit']->is_walk_in ?? null,

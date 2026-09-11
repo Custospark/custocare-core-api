@@ -4,6 +4,7 @@ namespace App\Services\PatientConsent;
 
 use App\Models\PatientConsent;
 use App\Repositories\Contracts\PatientConsentRepositoryInterface;
+use App\Services\Compliance\PrivacyNotice;
 use App\Services\Contracts\PatientConsentServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -109,9 +110,23 @@ class PatientConsentService implements PatientConsentServiceInterface
      * @param array $data
      * @return array
      */
+    /**
+     * Fresh-consent tripwire: consents record the privacy notice version
+     * they were granted under. Anything recorded under an older version
+     * (or none) must be re-taken after a notice change.
+     */
+    public function consentNeedsRefresh(?string $recordedVersion): bool
+    {
+        return PrivacyNotice::isStale($recordedVersion);
+    }
+
     public function createConsent(array $data): array
     {
         try {
+            // Default the notice version so every consent is traceable to
+            // the exact privacy text the subject saw.
+            $data['consent_form_version'] ??= PrivacyNotice::version();
+
             // Validate required fields
             $validator = Validator::make($data, [
                 'patient_id' => 'required|exists:patients,id',

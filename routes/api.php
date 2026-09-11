@@ -84,3 +84,4 @@ require __DIR__.'/api_v1/ambulanceTrips/_index.php';
 require __DIR__.'/api_v1/ambulanceCrew/_index.php';
 require __DIR__.'/api_v1/currency/_index.php';
 require __DIR__.'/api_v1/compliance/_index.php';
+require __DIR__.'/api_v1/fhir/_index.php';

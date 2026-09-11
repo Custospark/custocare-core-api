@@ -71,6 +71,13 @@ Schedule::command('backup:verify')
     ->onOneServer()
     ->runInBackground();
 
+// HMIS aggregate push (due every 7th): monthly on the 7th at 06:00.
+Schedule::command('hmis:push')
+    ->monthlyOn(7, '06:00')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 /*
 |--------------------------------------------------------------------------
 | Queue worker (database driver) — same pattern as Custosell

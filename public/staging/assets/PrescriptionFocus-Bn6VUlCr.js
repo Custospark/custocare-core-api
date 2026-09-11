@@ -1,1 +1,0 @@
-import{k as a,j as o,fR as c,bq as r}from"./index-Bd61Lp78.js";const u=({theme:s="light"})=>{const e=a(),n=()=>{e(r.CLINICAL_CARE)},t=()=>{};return o.jsx(c,{theme:s,onCancel:n,onSuccess:t})};export{u as PrescriptionFocus,u as default};

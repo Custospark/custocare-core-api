@@ -1,0 +1,1 @@
+import{j as t,br as a,bW as o,p as s,bX as e}from"./index-BeVWGl4T.js";const A=()=>t.jsx(a,{contextTitle:"Platform Administration",operations:e,basePath:s.PLATFORM_ADMINISTRATION,defaultOperationPath:o.FACILITIES});export{A as default};

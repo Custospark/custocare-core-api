@@ -1,0 +1,1 @@
+import{j as e,br as a,bB as s,p as t,bC as o}from"./index-BeVWGl4T.js";const E=()=>e.jsx(a,{contextTitle:"Ambulance Services",operations:o,basePath:t.AMBULANCE,defaultOperationPath:s.PATIENT_QUEUE});export{E as default};

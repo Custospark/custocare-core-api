@@ -1,0 +1,1 @@
+import{m as n,j as c,bs as r}from"./index-kAebliYx.js";import{L as u}from"./LabRequestForm-DOTx2Sw1.js";import"./LabResultViewModal-CTroQg1T.js";const R=({theme:s="light",cancelTo:e=r.CLINICAL_CARE})=>{const t=n(),a=()=>{t(e)},o=()=>{};return c.jsx(u,{theme:s,onCancel:a,onSuccess:o})};export{R as LabRequestFocus,R as default};

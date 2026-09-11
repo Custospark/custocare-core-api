@@ -1,1 +1,0 @@
-import{j as a,bp as t,bW as e,n as s,bX as o}from"./index-Bd61Lp78.js";const E=()=>a.jsx(t,{contextTitle:"Custocare Hub",operations:o,basePath:s.CUSTOCARE_HUB,defaultOperationPath:e.LEARNING_CENTER});export{E as default};

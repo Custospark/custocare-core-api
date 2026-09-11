@@ -1,0 +1,1 @@
+import{j as a,br as t,bH as e,p as s,bI as o}from"./index-BeVWGl4T.js";const i=()=>a.jsx(t,{contextTitle:"Clinical",operations:o,basePath:s.CLINICAL,defaultOperationPath:e.PATIENTS_SEARCH});export{i as default};

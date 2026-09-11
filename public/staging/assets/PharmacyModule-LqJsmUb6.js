@@ -1,0 +1,1 @@
+import{j as a,br as e,bz as s,p as t,bA as r}from"./index-kAebliYx.js";const A=()=>a.jsx(e,{contextTitle:"Pharmacy Services",operations:r,basePath:t.PHARMACY,defaultOperationPath:s.PATIENT_QUEUE});export{A as default};

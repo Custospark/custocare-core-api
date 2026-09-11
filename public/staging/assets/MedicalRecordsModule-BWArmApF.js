@@ -1,0 +1,1 @@
+import{j as e,br as a,bs as s,p as t,bt as o}from"./index-kAebliYx.js";const R=()=>e.jsx(a,{contextTitle:"Medical Records",operations:o,basePath:t.MEDICAL_RECORDS,defaultOperationPath:s.PATIENTS_SEARCH});export{R as default};

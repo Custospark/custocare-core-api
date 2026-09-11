@@ -1,0 +1,1 @@
+import{j as a,br as t,bJ as e,p as o,bK as r}from"./index-BeVWGl4T.js";const O=()=>a.jsx(t,{contextTitle:"Laboratory Services",operations:r,basePath:o.LABORATORY,defaultOperationPath:e.PATIENT_QUEUE});export{O as default};

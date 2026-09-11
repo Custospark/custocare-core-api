@@ -206,16 +206,12 @@ class AuditLog extends Model
 
         // Prevent updates to existing audit logs
         static::updating(function ($model) {
-            throw new \RuntimeException('Audit logs are immutable and cannot be updated.');
+            self::blockMutation($model, 'update');
         });
 
         // Log deletion attempts (soft delete not appropriate for audit logs)
         static::deleting(function ($model) {
-            // In production, you might want to prevent deletion entirely
-            // or implement a legal hold check
-            if ($model->legal_hold_flag) {
-                throw new \RuntimeException('Audit log is under legal hold and cannot be deleted.');
-            }
+            self::blockMutation($model, 'delete');
         });
     }
 
@@ -293,11 +289,27 @@ class AuditLog extends Model
     }
 
     /**
-     * Scope a query to only include logs for a specific facility.
+     * Append-only enforcement, extracted for direct testing (model events
+     * delegate here). Updates always throw; deletes throw under legal hold.
      *
-     * @param \Illuminate\Database\Eloquent\Builder $query
-     * @param int $facilityId
-     * @return \Illuminate\Database\Eloquent\Builder
+     * @throws \RuntimeException
+     */
+    public static function blockMutation(self $model, string $action): void
+    {
+        if ($action === 'update') {
+            throw new \RuntimeException('Audit logs are immutable and cannot be updated.');
+        }
+
+        if ($action === 'delete' && (bool) $model->legal_hold_flag) {
+            throw new \RuntimeException('Audit log is under legal hold and cannot be deleted.');
+        }
+    }
+
+    /**
+     * Scope a query to only include logs for a specific entity.
+     *
+     * @param string $entityType
+     * @param int|null $entityId
      */
     public function scopeForFacility($query, int $facilityId)
     {

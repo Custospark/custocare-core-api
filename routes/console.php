@@ -57,6 +57,13 @@ Schedule::command('retention:review')
     ->onOneServer()
     ->runInBackground();
 
+// Audit review rota (read-only): 1st of month, 08:00.
+Schedule::command('audit:review --days=30')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 /*
 |--------------------------------------------------------------------------
 | Queue worker (database driver) — same pattern as Custosell

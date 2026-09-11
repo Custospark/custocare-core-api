@@ -18,6 +18,8 @@ class DataTransferRecord extends Model
         'data_categories',
         'legal_basis',
         'adequacy_notes',
+        'safeguards',
+        'justification',
         'pdpo_authorisation_ref',
         'moh_consent',
         'status',

@@ -33,6 +33,18 @@ class DataTransferRecordTest extends TestCase
     }
 
     /** @test */
+    public function inspection_record_carries_safeguards_and_justification()
+    {
+        $record = $this->record([
+            'safeguards' => 'TLS 1.3 in transit, AES-256 at rest, scoped API token',
+            'justification' => 'Reference lab processing unavailable in-country',
+        ]);
+
+        $this->assertSame('TLS 1.3 in transit, AES-256 at rest, scoped API token', $record->safeguards);
+        $this->assertTrue($record->isAuthorized());
+    }
+
+    /** @test */
     public function missing_any_pillar_blocks_authorization()
     {
         // No PDPO reference.

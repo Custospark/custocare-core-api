@@ -191,6 +191,20 @@ class VitalService implements VitalServiceInterface
             // Validate the data
             $validatedData = $this->validateVitalData($data);
 
+            // Plausibility gate (Uganda Clinical Guidelines): impossible
+            // combinations never reach the record; warnings ride along.
+            $rangeCheck = app(\App\Services\Clinical\ClinicalRangeCheck::class)->validate($validatedData);
+            if (! $rangeCheck['valid']) {
+                DB::rollBack();
+
+                return [
+                    'success' => false,
+                    'message' => 'Vital signs failed clinical plausibility checks.',
+                    'errors' => $rangeCheck['errors'],
+                ];
+            }
+            $rangeWarnings = $rangeCheck['warnings'];
+
             // Add staff_id
             $validatedData['staff_id'] = $recordedByStaffId;
 
@@ -228,6 +242,7 @@ class VitalService implements VitalServiceInterface
                 'success' => true,
                 'data' => $vital->fresh(),
                 'message' => 'Vital record created successfully',
+                'warnings' => $rangeWarnings ?? [],
             ];
         } catch (ValidationException $e) {
             DB::rollBack();

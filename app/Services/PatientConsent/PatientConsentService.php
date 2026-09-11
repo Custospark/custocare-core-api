@@ -2,6 +2,7 @@
 
 namespace App\Services\PatientConsent;
 
+use App\Models\Patient;
 use App\Models\PatientConsent;
 use App\Repositories\Contracts\PatientConsentRepositoryInterface;
 use App\Services\Compliance\PrivacyNotice;
@@ -111,6 +112,31 @@ class PatientConsentService implements PatientConsentServiceInterface
      * @return array
      */
     /**
+     * Guardian requirements for consent, extracted for direct testing.
+     * Returns an error message when the record would be unlawful, else null.
+     */
+    public function guardianRequirements(?Patient $patient, array $data): ?string
+    {
+        if ($patient === null || $patient->date_of_birth === null) {
+            return null;
+        }
+
+        if ($patient->date_of_birth->age >= 18) {
+            return null;
+        }
+
+        if (empty($data['legal_guardian_id'])) {
+            return 'Consent for a minor requires a legal guardian with proof of relationship.';
+        }
+
+        if (empty($data['witnessed_by_staff_id'])) {
+            return 'Minor consent must be witnessed by staff to verify the guardian relationship.';
+        }
+
+        return null;
+    }
+
+    /**
      * Fresh-consent tripwire: consents record the privacy notice version
      * they were granted under. Anything recorded under an older version
      * (or none) must be re-taken after a notice change.
@@ -157,6 +183,21 @@ class PatientConsentService implements PatientConsentServiceInterface
                     'message' => 'Patient already has an active consent of this type',
                     'data' => $existingConsent,
                     'status' => 409
+                ];
+            }
+
+            // Minor + incapacity guard (Guidelines: parental consent with
+            // proof of relationship; nominee hierarchy for incapacitated).
+            // A witnessed guardian record is mandatory, never implied.
+            if ($guardianError = $this->guardianRequirements(
+                Patient::find($data['patient_id'] ?? null),
+                $data
+            )) {
+                return [
+                    'success' => false,
+                    'message' => $guardianError,
+                    'errors' => ['legal_guardian_id' => [$guardianError]],
+                    'status' => 422
                 ];
             }
 

@@ -64,6 +64,13 @@ Schedule::command('audit:review --days=30')
     ->onOneServer()
     ->runInBackground();
 
+// Backup verification (read-only): daily 07:30.
+Schedule::command('backup:verify')
+    ->dailyAt('07:30')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 /*
 |--------------------------------------------------------------------------
 | Queue worker (database driver) — same pattern as Custosell

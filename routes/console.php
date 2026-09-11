@@ -50,6 +50,13 @@ Schedule::command('billing:check-subscriptions')
     ->onOneServer()
     ->runInBackground();
 
+// Retention sweep (read-only report, never deletes): Mondays 07:00.
+Schedule::command('retention:review')
+    ->weeklyOn(1, '07:00')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 /*
 |--------------------------------------------------------------------------
 | Queue worker (database driver) — same pattern as Custosell

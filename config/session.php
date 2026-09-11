@@ -169,7 +169,10 @@ return [
     |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    // Secure cookies by default in every non-local environment. Local dev
+    // stays false for plain-http localhost; staging/production must serve
+    // https (verified: APP_URL is https on both servers).
+    'secure' => env('SESSION_SECURE_COOKIE', env('APP_ENV') !== 'local'),
 
     /*
     |--------------------------------------------------------------------------

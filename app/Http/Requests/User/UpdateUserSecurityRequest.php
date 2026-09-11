@@ -37,7 +37,7 @@ class UpdateUserSecurityRequest extends FormRequest
         return [
             // Password change block — all three required together
             'current_password'        => 'required_with:password|string',
-            'password'                => 'sometimes|nullable|string|min:8|confirmed',
+            'password'                => \App\Validation\PasswordRules::update(),
             'password_confirmation'   => 'required_with:password|string',
 
             // Administrative flags

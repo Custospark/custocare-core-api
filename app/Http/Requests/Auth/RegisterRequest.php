@@ -31,7 +31,7 @@ class RegisterRequest extends FormRequest
             'phone' => 'required|string|max:20',
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => \App\Validation\PasswordRules::create(),
             'data_residency_region' => 'nullable|string|in:EU,US,APAC,MEA,SA',
         ];
     }

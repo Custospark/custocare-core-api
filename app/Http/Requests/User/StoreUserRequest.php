@@ -48,7 +48,7 @@ class StoreUserRequest extends FormRequest
             'state' => 'nullable|string|max:100',
             'country' => 'nullable|string|max:100',
             'postal_code' => 'nullable|string|max:20',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => \App\Validation\PasswordRules::create(),
             'data_residency_region' => 'required|string|in:EU,US,APAC,MEA,SA',
             'allowed_processing_regions' => 'nullable|array',
             'allowed_processing_regions.*' => 'string|in:EU,US,APAC,MEA,SA',
